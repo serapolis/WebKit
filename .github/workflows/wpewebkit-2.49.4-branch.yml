@@ -180,13 +180,11 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: wpewebkit-2.49.4-WinCairo
-        path: |
-           WebKitBuild/Release/bin/*
-           !WebKitBuild/Release/bin/*.pdb
+        path: .
         retention-days: 62
         
     - name: Setup test environment (optional)
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: true
       run: |
         # Stop Apache service if running
         try { Stop-Service "Apache2.4" -ErrorAction SilentlyContinue } catch {}
