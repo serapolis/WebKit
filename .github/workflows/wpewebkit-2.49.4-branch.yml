@@ -203,6 +203,6 @@ jobs:
     - name: Run basic tests (if enabled)
       if: true  # Disable by default due to complexity
       run: |
-        python Tools/Scripts/run-webkit-tests --release --no-show-results --exit-after-n-failures=10
+        python Tools/Scripts/run-webkit-tests --release
       shell: cmd
       continue-on-error: true
