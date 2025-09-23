@@ -7,7 +7,7 @@ on:
     branches: [ wpewebkit-2.49.4-branch ]
 
 jobs:
-  build:
+  WenKit-Build:
     runs-on: windows-latest
     
     steps:
@@ -183,6 +183,13 @@ jobs:
         path: .
         retention-days: 62
         
+      
+  WenKit-Test:
+    needs: WenKit-Build
+    runs-on: windows-latest
+    
+    steps:
+
     - name: Setup test environment (optional)
       if: true
       run: |
