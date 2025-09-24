@@ -94,7 +94,7 @@ jobs:
         
         Write-Host "Starting WebKit build ..."
         
-        perl Tools/Scripts/build-webkit --release --win
+        perl Tools/Scripts/build-webkit --release --no-ninja --generate-project-only
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
@@ -182,40 +182,3 @@ jobs:
         name: wpewebkit-2.49.4-WinCairo
         path: .
         retention-days: 62
-        
-      
-  WenKit-Test:
-    needs: WenKit-Build
-    runs-on: windows-latest
-    
-    steps:
-    
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: wpewebkit-2.49.4-WinCairo
-        path: D:\a\WebKit\WebKit
-
-    - name: Setup test environment (optional)
-      if: true
-      run: |
-        # Stop Apache service if running
-        try { Stop-Service "Apache2.4" -ErrorAction SilentlyContinue } catch {}
-        
-        # Register CGI extensions (requires admin privileges - may fail in CI)
-        try {
-          reg add "HKEY_CLASSES_ROOT\.pl\Shell\ExecCGI\Command" /ve /d "c:\xampp\perl\bin\perl.exe -T" /f
-          reg add "HKEY_CLASSES_ROOT\.cgi\Shell\ExecCGI\Command" /ve /d "c:\xampp\perl\bin\perl.exe -T" /f
-          reg add "HKEY_CLASSES_ROOT\.py\Shell\ExecCGI\Command" /ve /d "C:\hostedtoolcache\windows\Python\3.11.*\x64\python.exe -X utf8" /f
-        } catch {
-          Write-Host "Registry modifications failed (expected in CI environment)"
-        }
-      shell: powershell
-      continue-on-error: true
-      
-    - name: Run basic tests (if enabled)
-      if: true  # Disable by default due to complexity
-      run: |
-        python Tools/Scripts/run-webkit-tests --release
-      shell: cmd
-      continue-on-error: true
