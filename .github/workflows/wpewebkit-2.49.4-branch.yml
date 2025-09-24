@@ -95,6 +95,7 @@ jobs:
         Write-Host "Starting WebKit build ..."
         
         perl Tools/Scripts/build-webkit --release --no-ninja --generate-project-only
+        devenv WebKitBuild/Release/WebKit.sln
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
