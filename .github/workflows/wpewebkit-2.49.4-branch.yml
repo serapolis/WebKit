@@ -189,6 +189,12 @@ jobs:
     runs-on: windows-latest
     
     steps:
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: wpewebkit-2.49.4-WinCairo
+        #path: D:\a\WebKit\WebKit
 
     - name: Setup test environment (optional)
       if: true
