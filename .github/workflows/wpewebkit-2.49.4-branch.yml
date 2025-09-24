@@ -7,7 +7,183 @@ on:
     branches: [ wpewebkit-2.49.4-branch ]
 
 jobs:
-  WenKit-Build:
+  WenKit-Build-For-Release:
+    runs-on: windows-latest
+    
+    steps:
+    
+    - name: Enable Developer Mode
+      run: |
+        reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /v "AllowDevelopmentWithoutDevLicense" /t REG_DWORD /d 1 /f
+      shell: cmd
+      
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: latest
+        msbuild-architecture: x64
+
+    - name: Configure CMake
+      run: |
+        setx CMAKE_CXX_STANDARD 17
+        setx CMAKE_BUILD_PARALLEL_LEVEL 4
+        
+    - name: Install required tools via Chocolatey
+      run: |
+        choco install -y python311 ruby git ninja llvm
+        choco install -y xampp-81
+        choco install -y gperf --source="'https://community.chocolatey.org/api/v2/'"
+        # Install CMake version compatible with 3.5
+        choco install -y cmake --version 3.31.7 --allow-downgrade
+      shell: powershell
+      
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install pywin32
+        
+    - name: Install Ruby dependencies  
+      run: |
+        gem install webrick
+
+    - name: Checkout WebKit
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 20
+        lfs: true
+        
+    - name: Configure Git settings
+      run: |
+        git config --global core.autocrlf input
+        
+    - name: Setup VCPKG and Visual Studio paths
+      run: |
+        # Install vcpkg manually since it's not available via Chocolatey
+        Write-Host "Installing vcpkg..."
+        git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+        cd C:\vcpkg
+        .\bootstrap-vcpkg.bat
+        echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+        echo "C:\vcpkg" >> $env:GITHUB_PATH
+        Write-Host "VCPKG installed and configured at C:\vcpkg"
+        
+        # Verify Visual Studio installation and vswhere.exe path
+        $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vsWherePath) {
+          Write-Host "vswhere.exe found at: $vsWherePath"
+        } else {
+          Write-Host "vswhere.exe not found in standard location"
+          # Try alternative locations
+          $altLocations = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe",
+            "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          )
+          foreach ($path in $altLocations) {
+            if (Test-Path $path) {
+              Write-Host "vswhere.exe found at: $path"
+              break
+            }
+          }
+        }
+      shell: powershell
+      
+    - name: Create WebKit build script for PowerShell environment
+      run: |
+        $buildScript = @"
+        # WebKit build script to run in the proper environment
+        
+        Write-Host "Starting WebKit build ..."
+        
+        perl Tools/Scripts/build-webkit --release --win
+        
+        if (`$LASTEXITCODE -ne 0) {
+          Write-Host "WebKit build failed"
+          exit `$LASTEXITCODE
+        }
+
+        "@
+        $buildScript | Out-File -FilePath "webkit-build.ps1" -Encoding UTF8
+      shell: powershell
+      
+    - name: Setup WebKit environment and build
+      run: |
+        # Get VCPKG_ROOT from environment
+        $vcpkgRoot = $env:VCPKG_ROOT
+        if (-not $vcpkgRoot) {
+          $vcpkgRoot = "C:\vcpkg"
+        }
+        
+        # Create a batch file that sets up environment and runs the PowerShell build script
+        $wrapperScript = @"
+        @echo off
+        cd %~dp0
+        path C:\xampp\apache\bin;%path%
+        path C:\xampp\perl\bin;%path%
+        path %ProgramFiles%\CMake\bin;%path%
+        path %ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%path%
+        
+        rem Try to find vswhere.exe in multiple locations
+        set VSWHERE_PATH="%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+        if not exist %VSWHERE_PATH% (
+          set VSWHERE_PATH="%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
+        )
+        if not exist %VSWHERE_PATH% (
+          echo Warning: vswhere.exe not found, trying alternative method
+          goto :skip_vswhere
+        )
+        
+        for /F "usebackq delims=" %%I in (`%VSWHERE_PATH% -latest -property installationPath`) do set VSPATH=%%I
+        if "%VSPATH%"=="" (
+          echo Warning: Could not determine Visual Studio path
+          goto :skip_vswhere
+        )
+        
+        :skip_vswhere
+        rem Set VCPKG_ROOT
+        set VCPKG_ROOT=$vcpkgRoot
+        
+        rem set WEBKIT_LIBRARIES=%~dp0WebKitLibraries\win
+        path %~dp0WebKitLibraries\win\bin;%path%
+        set WEBKIT_TESTFONTS=%~dp0Tools\WebKitTestRunner\fonts
+        set DUMPRENDERTREE_TEMP=%TEMP%
+        set CC=clang-cl
+        set CXX=clang-cl
+        rem You can pass necessary JSC options https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h#L83-L607.
+        rem set JSC_dumpOptions=1
+        rem set JSC_useJIT=0
+        rem set JSC_useDFGJIT=0
+        rem set JSC_useRegExpJIT=0
+        rem set JSC_useDOMJIT=0
+        rem You can show check TextureMapper FPS via WEBKIT_SHOW_FPS.
+        rem set WEBKIT_SHOW_FPS=1
+        
+        if not "%VSPATH%"=="" (
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+        ) else (
+          echo Using alternative MSVC setup
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul
+          if errorlevel 1 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul
+        )
+        
+        cd %~dp0
+        powershell -ExecutionPolicy Bypass -File webkit-build.ps1
+        "@
+        $wrapperScript | Out-File -FilePath "webkit-wrapper.bat" -Encoding ASCII
+        
+        # Execute the wrapper batch file
+        .\webkit-wrapper.bat
+      shell: powershell
+      timeout-minutes: 480
+      
+    - name: Archive build artifacts
+      if: success()
+      uses: actions/upload-artifact@v5
+      with:
+        name: wpewebkit-2.49.4-WinCairo
+        path: .
+        retention-days: 62
+
+  WenKit-Generate-Files-For-VS:
     runs-on: windows-latest
     
     steps:
@@ -95,7 +271,6 @@ jobs:
         Write-Host "Starting WebKit build ..."
         
         perl Tools/Scripts/build-webkit --release --no-ninja --generate-project-only
-        devenv WebKitBuild/Release/WebKit.sln
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
@@ -174,12 +349,194 @@ jobs:
         # Execute the wrapper batch file
         .\webkit-wrapper.bat
       shell: powershell
-      timeout-minutes: 480
+      continue-on-error: true
+      timeout-minutes: 40
       
     - name: Archive build artifacts
       if: success()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
-        name: wpewebkit-2.49.4-WinCairo
+        name: wpewebkit-2.49.4-WinCairo-For-VS
         path: .
         retention-days: 62
+
+  WenKit-Test:
+    needs: WenKit-Build-For-Release
+    runs-on: windows-latest
+    
+    steps:
+    
+    - name: Enable Developer Mode
+      run: |
+        reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /v "AllowDevelopmentWithoutDevLicense" /t REG_DWORD /d 1 /f
+      shell: cmd
+      
+    - name: Setup Visual Studio environment
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: latest
+        msbuild-architecture: x64
+
+    - name: Configure CMake
+      run: |
+        setx CMAKE_CXX_STANDARD 17
+        setx CMAKE_BUILD_PARALLEL_LEVEL 4
+        
+    - name: Install required tools via Chocolatey
+      run: |
+        choco install -y python311 ruby git ninja llvm
+        choco install -y xampp-81
+        choco install -y gperf --source="'https://community.chocolatey.org/api/v2/'"
+        # Install CMake version compatible with 3.5
+        choco install -y cmake --version 3.31.7 --allow-downgrade
+      shell: powershell
+      
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install pywin32
+        
+    - name: Install Ruby dependencies  
+      run: |
+        gem install webrick
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v5
+      with:
+        name: wpewebkit-2.49.4-WinCairo
+        path: D:\a\WebKit\WebKit
+        
+    - name: Setup VCPKG and Visual Studio paths
+      run: |
+        # Install vcpkg manually since it's not available via Chocolatey
+        Write-Host "Installing vcpkg..."
+        git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+        cd C:\vcpkg
+        .\bootstrap-vcpkg.bat
+        echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+        echo "C:\vcpkg" >> $env:GITHUB_PATH
+        Write-Host "VCPKG installed and configured at C:\vcpkg"
+        
+        # Verify Visual Studio installation and vswhere.exe path
+        $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vsWherePath) {
+          Write-Host "vswhere.exe found at: $vsWherePath"
+        } else {
+          Write-Host "vswhere.exe not found in standard location"
+          # Try alternative locations
+          $altLocations = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe",
+            "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          )
+          foreach ($path in $altLocations) {
+            if (Test-Path $path) {
+              Write-Host "vswhere.exe found at: $path"
+              break
+            }
+          }
+        }
+      shell: powershell
+      
+    - name: Create WebKit build script for PowerShell environment
+      run: |
+        $buildScript = @"
+        # WebKit build script to run in the proper environment
+        
+        Write-Host "Starting WebKit test ..."
+        
+        python Tools/Scripts/run-webkit-tests --release
+        
+        if (`$LASTEXITCODE -ne 0) {
+          Write-Host "WebKit build failed"
+          exit `$LASTEXITCODE
+        }
+
+        "@
+        $buildScript | Out-File -FilePath "webkit-build.ps1" -Encoding UTF8
+      shell: powershell
+
+    - name: Setup test environment (optional)
+      if: true
+      run: |
+        # Stop Apache service if running
+        try { Stop-Service "Apache2.4" -ErrorAction SilentlyContinue } catch {}
+        
+        # Register CGI extensions (requires admin privileges - may fail in CI)
+        try {
+          reg add "HKEY_CLASSES_ROOT\.pl\Shell\ExecCGI\Command" /ve /d "c:\xampp\perl\bin\perl.exe -T" /f
+          reg add "HKEY_CLASSES_ROOT\.cgi\Shell\ExecCGI\Command" /ve /d "c:\xampp\perl\bin\perl.exe -T" /f
+          reg add "HKEY_CLASSES_ROOT\.py\Shell\ExecCGI\Command" /ve /d "C:\hostedtoolcache\windows\Python\3.11.*\x64\python.exe -X utf8" /f
+        } catch {
+          Write-Host "Registry modifications failed (expected in CI environment)"
+        }
+      shell: powershell
+      
+    - name: Setup WebKit environment and build
+      run: |
+        # Get VCPKG_ROOT from environment
+        $vcpkgRoot = $env:VCPKG_ROOT
+        if (-not $vcpkgRoot) {
+          $vcpkgRoot = "C:\vcpkg"
+        }
+        
+        # Create a batch file that sets up environment and runs the PowerShell build script
+        $wrapperScript = @"
+        @echo off
+        cd %~dp0
+        path C:\xampp\apache\bin;%path%
+        path C:\xampp\perl\bin;%path%
+        path %ProgramFiles%\CMake\bin;%path%
+        path %ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%path%
+        
+        rem Try to find vswhere.exe in multiple locations
+        set VSWHERE_PATH="%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+        if not exist %VSWHERE_PATH% (
+          set VSWHERE_PATH="%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe"
+        )
+        if not exist %VSWHERE_PATH% (
+          echo Warning: vswhere.exe not found, trying alternative method
+          goto :skip_vswhere
+        )
+        
+        for /F "usebackq delims=" %%I in (`%VSWHERE_PATH% -latest -property installationPath`) do set VSPATH=%%I
+        if "%VSPATH%"=="" (
+          echo Warning: Could not determine Visual Studio path
+          goto :skip_vswhere
+        )
+        
+        :skip_vswhere
+        rem Set VCPKG_ROOT
+        set VCPKG_ROOT=$vcpkgRoot
+        
+        rem set WEBKIT_LIBRARIES=%~dp0WebKitLibraries\win
+        path %~dp0WebKitLibraries\win\bin;%path%
+        set WEBKIT_TESTFONTS=%~dp0Tools\WebKitTestRunner\fonts
+        set DUMPRENDERTREE_TEMP=%TEMP%
+        set CC=clang-cl
+        set CXX=clang-cl
+        rem You can pass necessary JSC options https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h#L83-L607.
+        rem set JSC_dumpOptions=1
+        rem set JSC_useJIT=0
+        rem set JSC_useDFGJIT=0
+        rem set JSC_useRegExpJIT=0
+        rem set JSC_useDOMJIT=0
+        rem You can show check TextureMapper FPS via WEBKIT_SHOW_FPS.
+        rem set WEBKIT_SHOW_FPS=1
+        
+        if not "%VSPATH%"=="" (
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+        ) else (
+          echo Using alternative MSVC setup
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul
+          if errorlevel 1 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat" 2>nul
+        )
+        
+        cd %~dp0
+        powershell -ExecutionPolicy Bypass -File webkit-build.ps1
+        "@
+        $wrapperScript | Out-File -FilePath "webkit-wrapper.bat" -Encoding ASCII
+        
+        # Execute the wrapper batch file
+        .\webkit-wrapper.bat
+      shell: powershell
+      timeout-minutes: 480
