@@ -146,7 +146,7 @@ Ref<BrowserWindow> WebKitBrowserWindow::create(BrowserWindowClient& client, HWND
     auto context = adoptWK(WKContextCreateWithConfiguration(contextConf.get()));
 
     auto preferences = adoptWK(WKPreferencesCreate());
-    WKPreferencesSetMediaCapabilitiesEnabled(preferences.get(), false);
+    WKPreferencesSetMediaCapabilitiesEnabled(preferences.get(), true);
     WKPreferencesSetDeveloperExtrasEnabled(preferences.get(), true);
 
     auto pageConf = adoptWK(WKPageConfigurationCreate());
