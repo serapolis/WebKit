@@ -148,6 +148,7 @@ Ref<BrowserWindow> WebKitBrowserWindow::create(BrowserWindowClient& client, HWND
     auto preferences = adoptWK(WKPreferencesCreate());
     WKPreferencesSetMediaCapabilitiesEnabled(preferences.get(), false);
     WKPreferencesSetDeveloperExtrasEnabled(preferences.get(), true);
+    WKPreferencesSetWebAudioEnabled(preferences.get(), true);
 
     auto pageConf = adoptWK(WKPageConfigurationCreate());
     WKPageConfigurationSetWebsiteDataStore(pageConf.get(), websiteDataStore.get());
