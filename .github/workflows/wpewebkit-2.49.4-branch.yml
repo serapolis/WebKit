@@ -20,7 +20,7 @@ jobs:
     - name: Setup Visual Studio environment
       uses: microsoft/setup-msbuild@v2
       with:
-        vs-version: '[14.5,14.6)'
+        vs-version: latest
         msbuild-architecture: x64
 
     - name: Configure CMake
@@ -30,7 +30,7 @@ jobs:
         
     - name: Install required tools via Chocolatey
       run: |
-        choco install -y python311 ruby git ninja llvm
+        choco install -y python313 ruby git ninja llvm
         choco install -y xampp-81
         choco install -y gperf --source="'https://community.chocolatey.org/api/v2/'"
         # Install CMake version compatible with 3.5
@@ -49,7 +49,7 @@ jobs:
     - name: Checkout WebKit
       uses: actions/checkout@v4
       with:
-        fetch-depth: 20
+        fetch-depth: 10
         lfs: true
         
     - name: Configure Git settings
