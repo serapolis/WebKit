@@ -94,7 +94,7 @@ jobs:
         
         Write-Host "Starting WebKit build ..."
         
-        perl Tools/Scripts/build-webkit --release --win --video --webgl --webxr --web-audio --jpegxl --woff2 --media-capture --media-source --media-statistics --pdfjs --skia --pdfkit-plugin --smooth-scrolling --video-uses-element-fullscreen --picture-in-picture-api
+        perl Tools/Scripts/build-webkit --release --win --video --webgl --webxr --web-audio --jpegxl --woff2 --pdfjs --skia --pdfkit-plugin --smooth-scrolling --video-uses-element-fullscreen --picture-in-picture-api
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
