@@ -25,9 +25,10 @@ jobs:
 
     - name: Configure CMake
       run: |
-        setx CMAKE_CXX_STANDARD 14
-        setx CMAKE_BUILD_PARALLEL_LEVEL 4
-        
+        echo "CMAKE_CXX_STANDARD=14" >> $GITHUB_ENV
+        echo "CMAKE_BUILD_PARALLEL_LEVEL=4" >> $GITHUB_ENV
+        # echo "CMAKE_CXX_FLAGS=/DUSE_DENORMAL_DISABLED=0" >> $GITHUB_ENV
+
     - name: Install required tools via Chocolatey
       run: |
         choco install -y python313 ruby git ninja llvm
@@ -94,7 +95,7 @@ jobs:
         
         Write-Host "Starting WebKit build ..."
         
-        perl Tools/Scripts/build-webkit --release --win --video --webgl --web-audio --jpegxl --woff2 --pdfjs --pdfkit-plugin --smooth-scrolling
+        perl Tools/Scripts/build-webkit --release --win --video --webgl --web-audio --jpegxl --woff2 --pdfjs --pdfkit-plugin
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
