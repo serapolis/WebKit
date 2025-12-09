@@ -93,7 +93,7 @@ jobs:
         
         Write-Host "Starting WebKit build ..."
         
-        perl Tools/Scripts/build-webkit --release --win --no-unified-builds --video --webgl --web-audio --jpegxl --woff2 --pdfjs --pdfkit-plugin
+        perl Tools/Scripts/build-webkit --release --win --video --webgl --jpegxl --woff2 --pdfjs --pdfkit-plugin
         
         if (`$LASTEXITCODE -ne 0) {
           Write-Host "WebKit build failed"
