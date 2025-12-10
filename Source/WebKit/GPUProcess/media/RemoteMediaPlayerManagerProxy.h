@@ -43,9 +43,6 @@
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
-#if ENABLE(LINEAR_MEDIA_PLAYER)
-#include <WebCore/VideoReceiverEndpoint.h>
-#endif
 #if ENABLE(MEDIA_SOURCE)
 #include "RemoteMediaSourceIdentifier.h"
 #endif
@@ -77,6 +74,7 @@ public:
 
     RefPtr<GPUConnectionToWebProcess> gpuConnectionToWebProcess() { return m_gpuConnectionToWebProcess.get(); }
     void clear();
+    void connectionToWebProcessClosed();
 
 #if !RELEASE_LOG_DISABLED
     Logger& logger() { return m_logger; }
@@ -90,13 +88,6 @@ public:
     RefPtr<WebCore::MediaPlayer> mediaPlayer(std::optional<WebCore::MediaPlayerIdentifier>);
 
     std::optional<WebCore::ShareableBitmap::Handle> bitmapImageForCurrentTime(WebCore::MediaPlayerIdentifier);
-
-#if ENABLE(LINEAR_MEDIA_PLAYER)
-    WebCore::PlatformVideoTarget videoTargetForIdentifier(const std::optional<WebCore::VideoReceiverEndpointIdentifier>&);
-    WebCore::PlatformVideoTarget takeVideoTargetForMediaElementIdentifier(WebCore::HTMLMediaElementIdentifier, WebCore::MediaPlayerIdentifier);
-    void handleVideoReceiverEndpointMessage(const VideoReceiverEndpointMessage&);
-    void handleVideoReceiverSwapEndpointsMessage(const VideoReceiverSwapEndpointsMessage&);
-#endif
 
 #if ENABLE(MEDIA_SOURCE)
     RefPtr<RemoteMediaSourceProxy> pendingMediaSource(RemoteMediaSourceIdentifier);
@@ -129,17 +120,8 @@ private:
     HashMap<WebCore::MediaPlayerIdentifier, Ref<RemoteMediaPlayerProxy>> m_proxies;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
 
-#if ENABLE(LINEAR_MEDIA_PLAYER)
-    HashMap<WebCore::VideoReceiverEndpointIdentifier, WebCore::PlatformVideoTarget> m_videoTargetCache;
-    struct VideoRecevierEndpointCacheEntry {
-        Markable<WebCore::MediaPlayerIdentifier> playerIdentifier;
-        Markable<WebCore::VideoReceiverEndpointIdentifier> endpointIdentifier;
-    };
-    HashMap<WebCore::HTMLMediaElementIdentifier, VideoRecevierEndpointCacheEntry> m_videoReceiverEndpointCache;
-#endif
-
 #if ENABLE(MEDIA_SOURCE)
-    HashMap<RemoteMediaSourceIdentifier, RefPtr<RemoteMediaSourceProxy>> m_pendingMediaSources;
+    HashMap<RemoteMediaSourceIdentifier, Ref<RemoteMediaSourceProxy>> m_pendingMediaSources;
 #endif
 
 #if !RELEASE_LOG_DISABLED

@@ -45,9 +45,15 @@ String::String(std::span<const char16_t> characters)
 {
 }
 
-// Construct a string with Latin-1 data.
+// Construct a string with latin1 data.
 String::String(std::span<const Latin1Character> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(characters) } : nullptr)
+{
+}
+
+// Construct a string with UTF-8 data.
+String::String(std::span<const char8_t> characters)
+    : m_impl(StringImpl::create(characters))
 {
 }
 
@@ -59,13 +65,7 @@ String::String(std::span<const char> characters)
 
 // Construct a string with Latin-1 data, from a null-terminated source.
 String::String(const char* nullTerminatedString)
-    : m_impl(nullTerminatedString ? RefPtr { StringImpl::createFromCString(nullTerminatedString) } : nullptr)
-{
-}
-
-// Construct a string from UTF-8 data, null string if it contains invalid UTF-8 sequences.
-String::String(std::span<const char8_t> characters)
-    : m_impl(characters.data() ? StringImpl::create(characters, StringImpl::ReplaceInvalidSequences::No) : nullptr)
+    : m_impl(nullTerminatedString ? RefPtr { StringImpl::create(byteCast<Latin1Character>(unsafeSpan(nullTerminatedString))) } : nullptr)
 {
 }
 
@@ -473,16 +473,37 @@ void String::convertTo16Bit()
     *this = WTFMove(convertedString);
 }
 
-String String::fromUTF8ReplacingInvalidSequences(std::span<const char8_t> characters)
+String String::fromUTF8(std::span<const char8_t> codeUnits)
 {
-    if (!characters.data())
+    return codeUnits;
+}
+
+String String::fromUTF8ReplacingInvalidSequences(std::span<const char8_t> string)
+{
+    if (!string.data())
         return { };
-    return StringImpl::create(characters, StringImpl::ReplaceInvalidSequences::Yes);
+
+    RELEASE_ASSERT(string.size() <= String::MaxLength);
+
+    if (string.empty())
+        return emptyString();
+
+    if (charactersAreAllASCII(string))
+        return StringImpl::create(byteCast<Latin1Character>(string));
+
+    Vector<char16_t, 1024> buffer(string.size());
+
+    auto result = Unicode::convertReplacingInvalidSequences(string, buffer.mutableSpan());
+    if (result.code != Unicode::ConversionResultCode::Success)
+        return { };
+
+    RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(result.buffer.size() <= string.size());
+    return StringImpl::create(result.buffer);
 }
 
 String String::fromUTF8WithLatin1Fallback(std::span<const char8_t> string)
 {
-    String utf8 = fromUTF8(string);
+    String utf8 { string };
     if (!utf8) {
         // Do this assertion before chopping the size_t down to unsigned.
         RELEASE_ASSERT(string.size() <= String::MaxLength);

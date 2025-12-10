@@ -393,7 +393,7 @@ void SliderThumbElement::willDetachRenderers()
             frame->eventHandler().setCapturingMouseEventsElement(nullptr);
     }
 #if ENABLE(IOS_TOUCH_EVENTS)
-    unregisterForTouchEvents();
+    unregisterForTouchEvents(EventHandlerRemovalReason::RendererDetached);
 #endif
 }
 
@@ -415,13 +415,14 @@ void SliderThumbElement::clearExclusiveTouchIdentifier()
     m_exclusiveTouchIdentifier = NoIdentifier;
 }
 
+// FIXME: Share these functions with CheckboxInputType somehow?
 static Touch* findTouchWithIdentifier(TouchList& list, unsigned identifier)
 {
     unsigned length = list.length();
     for (unsigned i = 0; i < length; ++i) {
-        RefPtr<Touch> touch = list.item(i);
+        auto* touch = list.item(i);
         if (touch->identifier() == identifier)
-            return touch.get();
+            return touch;
     }
     return nullptr;
 }
@@ -459,7 +460,7 @@ void SliderThumbElement::handleTouchMove(TouchEvent& touchEvent)
     if (!targetTouches)
         return;
 
-    RefPtr<Touch> touch = findTouchWithIdentifier(*targetTouches, identifier);
+    RefPtr touch = findTouchWithIdentifier(*targetTouches, identifier);
     if (!touch)
         return;
 
@@ -479,7 +480,7 @@ void SliderThumbElement::handleTouchEndAndCancel(TouchEvent& touchEvent)
         return;
     // If our exclusive touch still exists, it was not the touch
     // that ended, so we should not stop dragging.
-    RefPtr<Touch> exclusiveTouch = findTouchWithIdentifier(*targetTouches, identifier);
+    RefPtr exclusiveTouch = findTouchWithIdentifier(*targetTouches, identifier);
     if (exclusiveTouch)
         return;
 
@@ -492,7 +493,7 @@ void SliderThumbElement::handleTouchEndAndCancel(TouchEvent& touchEvent)
 
 void SliderThumbElement::didAttachRenderers()
 {
-    if (shouldAcceptTouchEvents())
+    if (!isDisabledFormControl())
         registerForTouchEvents();
 }
 
@@ -526,23 +527,18 @@ void SliderThumbElement::handleTouchEvent(TouchEvent& touchEvent)
     HTMLDivElement::defaultEventHandler(touchEvent);
 }
 
-bool SliderThumbElement::shouldAcceptTouchEvents()
-{
-    return renderer() && !isDisabledFormControl();
-}
-
 void SliderThumbElement::registerForTouchEvents()
 {
     if (m_isRegisteredAsTouchEventListener)
         return;
 
-    ASSERT(shouldAcceptTouchEvents());
+    ASSERT(!isDisabledFormControl());
 
     document().addTouchEventHandler(*this);
     m_isRegisteredAsTouchEventListener = true;
 }
 
-void SliderThumbElement::unregisterForTouchEvents()
+void SliderThumbElement::unregisterForTouchEvents(EventHandlerRemovalReason reason)
 {
     if (!m_isRegisteredAsTouchEventListener)
         return;
@@ -550,7 +546,7 @@ void SliderThumbElement::unregisterForTouchEvents()
     clearExclusiveTouchIdentifier();
     stopDragging();
 
-    document().removeTouchEventHandler(*this);
+    document().removeTouchEventHandler(*this, EventHandlerRemoval::One, reason);
     m_isRegisteredAsTouchEventListener = false;
 }
 
@@ -562,7 +558,7 @@ void SliderThumbElement::hostDisabledStateChanged()
         stopDragging();
 
 #if ENABLE(IOS_TOUCH_EVENTS)
-    if (shouldAcceptTouchEvents())
+    if (!isDisabledFormControl())
         registerForTouchEvents();
     else
         unregisterForTouchEvents();

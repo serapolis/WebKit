@@ -29,6 +29,7 @@
 
 #include <JavaScriptCore/WasmBranchHints.h>
 #include <JavaScriptCore/WasmFormat.h>
+#include <JavaScriptCore/WasmModuleDebugInfo.h>
 
 #include <wtf/FixedBitVector.h>
 #include <wtf/HashMap.h>
@@ -211,12 +212,14 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     Vector<Ref<const RTT>> rtts;
     Vector<Vector<uint8_t>> constantExpressions;
     Name sourceMappingURL;
+    std::unique_ptr<Wasm::ModuleDebugInfo> debugInfo;
 
     BitVector m_declaredFunctions;
     BitVector m_declaredExceptions;
     mutable FixedBitVector m_referencedFunctions;
     mutable FixedBitVector m_clobberingTailCalls;
     size_t m_totalFunctionSize { 0 };
+    uint32_t m_numSmallFunctions { 0 };
 
 private:
     void populateImportShouldBeHidden();

@@ -125,7 +125,7 @@ def parse_args(args):
         optparse.make_option("--no-remote-layer-tree", action="store_true", default=False,
             help="Disable the remote layer tree drawing model (OS X WebKit2 only)"),
         optparse.make_option("--wpe-legacy-api", action="store_true", default=False,
-            help="Use the WPE legacy API (WPE only)"),
+            help="Use the WPE legacy API (WPE only), including its own expectations and result report flavor"),
         optparse.make_option("--internal-feature", type="string", action="append", default=[],
             help="Enable (disable) an internal feature (--internal-feature FeatureName[=true|false])"),
         optparse.make_option("--experimental-feature", type="string", action="append", default=[],
@@ -357,7 +357,7 @@ def parse_args(args):
             help=("Enable all GPU process related features, also set additional expectations and the result report flavor.")),
         optparse.make_option(
             "--site-isolation", action="store_true", default=False,
-            help=("Run each test in a cross origin iframe with and without site isolation enabled and compare the results. Uses site-isolation test expectations")),
+            help=("Run each test with and without site isolation enabled and compare the results. Uses site-isolation test expectations")),
         optparse.make_option(
             "--load-in-cross-origin-iframe", action="store_true", default=False,
             help=("Run each test in a cross origin iframe.")),
@@ -377,7 +377,6 @@ def parse_args(args):
     option_group_definitions.append(("Web Platform Test Server Options", [
         optparse.make_option("--disable-wpt-hostname-aliases", action="store_true", default=False, help="Disable running tests from WPT against the web-platform.test domain, if the port supports it."),
         optparse.make_option("--wptserver-doc-root", type="string", help=("Set web platform server document root, relative to LayoutTests directory")),
-        optparse.make_option("--local-dns-resolver", action="store_true", default=False, help="Run and use a local DNS resolver, if the port supports it.")
     ]))
 
     option_group_definitions.append(('Upload Options', upload_options()))
@@ -434,6 +433,11 @@ def parse_args(args):
             options.internal_feature = []
         options.internal_feature.append('UseAsyncUIKitInteractions=0')
 
+    if options.wpe_legacy_api:
+        if options.result_report_flavor:
+            raise RuntimeError('--wpe-legacy-api implicitly sets the result flavor, this should not be overriden')
+        options.result_report_flavor = 'wpe-legacy-api'
+
     return options, args
 
 
@@ -483,11 +487,6 @@ def _set_up_derived_options(port, options):
             options.additional_platform_directory = []
         options.additional_platform_directory.insert(0, port.host.filesystem.join(host.scm().checkout_root, 'LayoutTests/platform/mac-gpup'))
 
-    if options.site_isolation:
-        if not options.load_in_cross_origin_iframe:
-            _log.warning("Option --site-isolation will set --load-in-cross-origin-iframe")
-        options.load_in_cross_origin_iframe = True
-
     if options.load_in_cross_origin_iframe:
         options.additional_header = 'runInCrossOriginFrame=true'
 
@@ -498,6 +497,17 @@ def _set_up_derived_options(port, options):
         if not options.additional_platform_directory:
             options.additional_platform_directory = []
         options.additional_platform_directory.insert(0, port.host.filesystem.join(host.scm().checkout_root, 'LayoutTests/platform/mac-site-isolation'))
+        if options.result_report_flavor:
+            raise RuntimeError('--site-isolation implicitly sets the result flavor, this should not be overridden')
+        options.result_report_flavor = 'site-isolation'
+
+    if (port.port_name.startswith('ios')) and options.site_isolation:
+        host = Host()
+        host.initialize_scm()
+        options.additional_expectations.insert(0, port.host.filesystem.join(host.scm().checkout_root, 'LayoutTests/platform/ios-site-isolation/TestExpectations'))
+        if not options.additional_platform_directory:
+            options.additional_platform_directory = []
+        options.additional_platform_directory.insert(0, port.host.filesystem.join(host.scm().checkout_root, 'LayoutTests/platform/ios-site-isolation'))
         if options.result_report_flavor:
             raise RuntimeError('--site-isolation implicitly sets the result flavor, this should not be overridden')
         options.result_report_flavor = 'site-isolation'

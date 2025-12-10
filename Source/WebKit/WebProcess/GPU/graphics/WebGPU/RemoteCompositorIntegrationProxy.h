@@ -77,6 +77,8 @@ private:
     RemoteCompositorIntegrationProxy& operator=(const RemoteCompositorIntegrationProxy&) = delete;
     RemoteCompositorIntegrationProxy& operator=(RemoteCompositorIntegrationProxy&&) = delete;
 
+    bool isRemoteCompositorIntegrationProxy() const final { return true; }
+
     WebGPUIdentifier backing() const { return m_backing; }
     
     template<typename T>
@@ -91,7 +93,7 @@ private:
     }
 
 #if PLATFORM(COCOA)
-    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, WebCore::WebGPU::Device&) override;
+    Vector<MachSendRight> recreateRenderBuffers(int width, int height, WebCore::DestinationColorSpace&&, WebCore::AlphaPremultiplication, WebCore::WebGPU::TextureFormat, unsigned bufferCount, WebCore::WebGPU::Device&) override;
 #endif
 
     void prepareForDisplay(uint32_t frameIndex, CompletionHandler<void()>&&) override;
@@ -104,5 +106,9 @@ private:
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteCompositorIntegrationProxy)
+    static bool isType(const WebCore::WebGPU::CompositorIntegration& integration) { return integration.isRemoteCompositorIntegrationProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

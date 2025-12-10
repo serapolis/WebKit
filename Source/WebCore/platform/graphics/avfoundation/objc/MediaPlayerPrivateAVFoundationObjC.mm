@@ -176,9 +176,9 @@ SOFT_LINK_PRIVATE_FRAMEWORK(MediaExperience)
 SOFT_LINK_CONSTANT(MediaExperience, AVController_RouteDescriptionKey_RouteCurrentlyPicked, NSString *)
 SOFT_LINK_CONSTANT(MediaExperience, AVController_RouteDescriptionKey_RouteName, NSString *)
 SOFT_LINK_CONSTANT(MediaExperience, AVController_RouteDescriptionKey_AVAudioRouteName, NSString *)
-#define AVController_RouteDescriptionKey_RouteCurrentlyPicked getAVController_RouteDescriptionKey_RouteCurrentlyPicked()
-#define AVController_RouteDescriptionKey_RouteName getAVController_RouteDescriptionKey_RouteName()
-#define AVController_RouteDescriptionKey_AVAudioRouteName getAVController_RouteDescriptionKey_AVAudioRouteName()
+#define AVController_RouteDescriptionKey_RouteCurrentlyPicked getAVController_RouteDescriptionKey_RouteCurrentlyPickedSingleton()
+#define AVController_RouteDescriptionKey_RouteName getAVController_RouteDescriptionKey_RouteNameSingleton()
+#define AVController_RouteDescriptionKey_AVAudioRouteName getAVController_RouteDescriptionKey_AVAudioRouteNameSingleton()
 #endif // HAVE(MEDIAEXPERIENCE_AVSYSTEMCONTROLLER)
 
 #endif // PLATFORM(IOS_FAMILY)
@@ -255,20 +255,17 @@ static NSArray *playerKVOProperties();
 
 static dispatch_queue_t globalLoaderDelegateQueue()
 {
-    static dispatch_queue_t globalQueue;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        globalQueue = dispatch_queue_create("WebCoreAVFLoaderDelegate queue", DISPATCH_QUEUE_SERIAL);
-    });
-    return globalQueue;
+    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> globalQueue = adoptOSObject(dispatch_queue_create("WebCoreAVFLoaderDelegate queue", DISPATCH_QUEUE_SERIAL));
+    return globalQueue.get().get();
 }
 
 class MediaPlayerPrivateAVFoundationObjC::Factory final : public MediaPlayerFactory {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(Factory);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(Factory);
 private:
     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::AVFoundation; };
 
-    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer* player) const final
+    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer& player) const final
     {
         return adoptRef(*new MediaPlayerPrivateAVFoundationObjC(player));
     }
@@ -423,7 +420,7 @@ void MediaPlayerPrivateAVFoundationObjC::clearMediaCacheForOrigins(const String&
     }
 }
 
-MediaPlayerPrivateAVFoundationObjC::MediaPlayerPrivateAVFoundationObjC(MediaPlayer* player)
+MediaPlayerPrivateAVFoundationObjC::MediaPlayerPrivateAVFoundationObjC(MediaPlayer& player)
     : MediaPlayerPrivateAVFoundation(player)
     , m_videoLayerManager(makeUniqueRef<VideoLayerManagerObjC>(protectedLogger(), logIdentifier()))
     , m_objcObserver(adoptNS([[WebCoreAVFMovieObserver alloc] initWithPlayer:*this]))
@@ -431,13 +428,13 @@ MediaPlayerPrivateAVFoundationObjC::MediaPlayerPrivateAVFoundationObjC(MediaPlay
     , m_cachedItemStatus(MediaPlayerAVPlayerItemStatusDoesNotExist)
 {
     ALWAYS_LOG(LOGIDENTIFIER);
-    m_muted = player->muted();
+    m_muted = player.muted();
 #if HAVE(SPATIAL_TRACKING_LABEL)
-    m_defaultSpatialTrackingLabel = player->defaultSpatialTrackingLabel();
-    m_spatialTrackingLabel = player->spatialTrackingLabel();
+    m_defaultSpatialTrackingLabel = player.defaultSpatialTrackingLabel();
+    m_spatialTrackingLabel = player.spatialTrackingLabel();
 #endif
 #if ENABLE(LINEAR_MEDIA_PLAYER)
-    setVideoTarget(player->videoTarget());
+    setVideoTarget(player.videoTarget());
 #endif
 }
 
@@ -813,7 +810,7 @@ void MediaPlayerPrivateAVFoundationObjC::createAVAssetForURL(const URL& url)
 
         if (cookies.size()) {
             auto nsCookies = createNSArray(cookies, [] (auto& cookie) -> NSHTTPCookie * {
-                return cookie;
+                return cookie.createNSHTTPCookie().autorelease();
             });
 
             [options setObject:nsCookies.get() forKey:AVURLAssetHTTPCookiesKey];
@@ -1485,7 +1482,7 @@ void MediaPlayerPrivateAVFoundationObjC::startVideoFrameMetadataGathering()
     // the QueuedVideoOutput so paints of the current frame succeed;
     updateLastPixelBuffer();
 
-    m_currentImageChangedObserver = WTF::makeUnique<Observer<void()>>([weakThis = ThreadSafeWeakPtr { *this }] {
+    m_currentImageChangedObserver = Observer<void()>::create([weakThis = ThreadSafeWeakPtr { *this }] {
         if (RefPtr protectedThis = weakThis.get()) {
             protectedThis->m_currentImageChangedObserver = nullptr;
             protectedThis->checkNewVideoFrameMetadata();
@@ -1493,7 +1490,7 @@ void MediaPlayerPrivateAVFoundationObjC::startVideoFrameMetadataGathering()
     });
 
     if (RefPtr videoOutput = m_videoOutput)
-        videoOutput->addCurrentImageChangedObserver(*m_currentImageChangedObserver);
+        videoOutput->addCurrentImageChangedObserver(Ref { *m_currentImageChangedObserver });
 
     m_isGatheringVideoFrameMetadata = true;
 }
@@ -2357,8 +2354,10 @@ void MediaPlayerPrivateAVFoundationObjC::tracksChanged()
         updateAudioTracks();
         updateVideoTracks();
 
-        hasAudio |= (m_audibleGroup && m_audibleGroup->selectedOption());
-        hasVideo |= (m_visualGroup && m_visualGroup->selectedOption());
+        RefPtr audibleGroup = m_audibleGroup;
+        RefPtr visualGroup = m_visualGroup;
+        hasAudio |= (audibleGroup && audibleGroup->selectedOption());
+        hasVideo |= (visualGroup && visualGroup->selectedOption());
 
         // HLS streams will occasionally recreate all their tracks; during seek and after
         // buffering policy changes. "debounce" notifications which result in no enabled
@@ -2485,7 +2484,7 @@ void determineChangedTracksFromNewTracksAndOldItems(MediaSelectionGroupAVFObjC* 
     for (auto& option : group->options()) {
         if (!option)
             continue;
-        AVMediaSelectionOption* avOption = option->avMediaSelectionOption();
+        RetainPtr avOption = option->avMediaSelectionOption();
         if (!avOption)
             continue;
         newSelectionOptions.add(option);
@@ -2666,11 +2665,11 @@ void MediaPlayerPrivateAVFoundationObjC::createVideoOutput()
         ERROR_LOG(LOGIDENTIFIER, "-[AVPlayerItemVideoOutput initWithPixelBufferAttributes:] failed!");
         return;
     }
-    if (m_currentImageChangedObserver)
-        videoOutput->addCurrentImageChangedObserver(*m_currentImageChangedObserver);
+    if (RefPtr observer = m_currentImageChangedObserver)
+        videoOutput->addCurrentImageChangedObserver(*observer);
 
-    if (m_waitForVideoOutputMediaDataWillChangeObserver)
-        videoOutput->addCurrentImageChangedObserver(*m_waitForVideoOutputMediaDataWillChangeObserver);
+    if (RefPtr observer = m_waitForVideoOutputMediaDataWillChangeObserver)
+        videoOutput->addCurrentImageChangedObserver(*observer);
 
     setNeedsRenderingModeChanged();
 }
@@ -2860,12 +2859,12 @@ auto MediaPlayerPrivateAVFoundationObjC::waitForVideoOutputMediaDataWillChange()
     std::optional<RunLoop::Timer> timeoutTimer;
 
     if (!m_runLoopNestingLevel) {
-        m_waitForVideoOutputMediaDataWillChangeObserver = WTF::makeUnique<Observer<void()>>([weakThis = ThreadSafeWeakPtr { *this }] {
+        m_waitForVideoOutputMediaDataWillChangeObserver = Observer<void()>::create([weakThis = ThreadSafeWeakPtr { *this }] {
             if (RefPtr protectedThis = weakThis.get(); protectedThis && protectedThis->m_runLoopNestingLevel)
                 RunLoop::mainSingleton().stop();
         });
         if (RefPtr videoOutput = m_videoOutput)
-            videoOutput->addCurrentImageChangedObserver(*m_waitForVideoOutputMediaDataWillChangeObserver);
+            videoOutput->addCurrentImageChangedObserver(Ref { *m_waitForVideoOutputMediaDataWillChangeObserver });
 
         timeoutTimer.emplace(RunLoop::mainSingleton(), "MediaPlayerPrivateAVFoundationObjC::TimeoutTimer"_s, [&] {
             RunLoop::mainSingleton().stop();
@@ -3316,7 +3315,7 @@ bool MediaPlayerPrivateAVFoundationObjC::isCurrentPlaybackTargetWireless() const
 
 #if !PLATFORM(IOS_FAMILY)
     if (RefPtr playbackTarget = m_playbackTarget) {
-        if (playbackTarget->targetType() == MediaPlaybackTarget::TargetType::AVFoundation)
+        if (playbackTarget->type() == MediaPlaybackTarget::Type::AVOutputContext)
             wirelessTarget = m_avPlayer && m_avPlayer.get().externalPlaybackActive;
         else
             wirelessTarget = m_shouldPlayToPlaybackTarget && playbackTarget->hasActiveRoute();
@@ -3452,6 +3451,11 @@ void MediaPlayerPrivateAVFoundationObjC::setWirelessVideoPlaybackDisabled(bool d
     [m_avPlayer setAllowsExternalPlayback:!disabled];
 }
 
+OptionSet<MediaPlaybackTargetType> MediaPlayerPrivateAVFoundationObjC::supportedPlaybackTargetTypes() const
+{
+    return { MediaPlaybackTargetType::AVOutputContext, MediaPlaybackTargetType::Mock };
+}
+
 #if !PLATFORM(IOS_FAMILY)
 
 void MediaPlayerPrivateAVFoundationObjC::setWirelessPlaybackTarget(Ref<MediaPlaybackTarget>&& target)
@@ -3479,7 +3483,7 @@ void MediaPlayerPrivateAVFoundationObjC::setShouldPlayToPlaybackTarget(bool shou
 
     INFO_LOG(LOGIDENTIFIER, shouldPlay);
 
-    if (playbackTarget->targetType() == MediaPlaybackTarget::TargetType::AVFoundation) {
+    if (playbackTarget->type() == MediaPlaybackTarget::Type::AVOutputContext) {
         AVOutputContext *newContext = shouldPlay ? m_outputContext.get() : nil;
 
         if (!m_avPlayer)
@@ -3494,7 +3498,7 @@ void MediaPlayerPrivateAVFoundationObjC::setShouldPlayToPlaybackTarget(bool shou
         return;
     }
 
-    ASSERT(playbackTarget->targetType() == MediaPlaybackTarget::TargetType::Mock);
+    ASSERT(playbackTarget->type() == MediaPlaybackTarget::Type::Mock);
 
     if (RefPtr player = this->player()) {
         player->queueTaskOnEventLoop([weakThis = ThreadSafeWeakPtr { *this }] {
@@ -3947,11 +3951,7 @@ auto MediaPlayerPrivateAVFoundationObjC::asyncVideoPlaybackQualityMetrics() -> R
 {
     assertIsMainThread();
 
-    static std::once_flag onceKey;
-    static LazyNeverDestroyed<Ref<WorkQueue>> metricsWorkQueue;
-    std::call_once(onceKey, [] {
-        metricsWorkQueue.construct(WorkQueue::create("VideoPlaybackQualityMetrics"_s, WorkQueue::QOS::Background));
-    });
+    static NeverDestroyed<Ref<WorkQueue>> metricsWorkQueue = WorkQueue::create("VideoPlaybackQualityMetrics"_s, WorkQueue::QOS::Background);
 
     if (!m_videoLayer)
         return VideoPlaybackQualityMetricsPromise::createAndReject(PlatformMediaError::NotSupportedError);
@@ -4035,7 +4035,7 @@ void MediaPlayerPrivateAVFoundationObjC::audioOutputDeviceChanged()
 }
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-const String& MediaPlayerPrivateAVFoundationObjC::defaultSpatialTrackingLabel() const
+String MediaPlayerPrivateAVFoundationObjC::defaultSpatialTrackingLabel() const
 {
     return m_defaultSpatialTrackingLabel;
 }
@@ -4044,11 +4044,11 @@ void MediaPlayerPrivateAVFoundationObjC::setDefaultSpatialTrackingLabel(const St
 {
     if (m_defaultSpatialTrackingLabel == defaultSpatialTrackingLabel)
         return;
-    m_defaultSpatialTrackingLabel = WTFMove(defaultSpatialTrackingLabel);
+    m_defaultSpatialTrackingLabel = defaultSpatialTrackingLabel;
     updateSpatialTrackingLabel();
 }
 
-const String& MediaPlayerPrivateAVFoundationObjC::spatialTrackingLabel() const
+String MediaPlayerPrivateAVFoundationObjC::spatialTrackingLabel() const
 {
     return m_spatialTrackingLabel;
 }
@@ -4057,7 +4057,7 @@ void MediaPlayerPrivateAVFoundationObjC::setSpatialTrackingLabel(const String& s
 {
     if (m_spatialTrackingLabel == spatialTrackingLabel)
         return;
-    m_spatialTrackingLabel = WTFMove(spatialTrackingLabel);
+    m_spatialTrackingLabel = spatialTrackingLabel;
     updateSpatialTrackingLabel();
 }
 

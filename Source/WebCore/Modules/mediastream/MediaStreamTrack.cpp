@@ -33,7 +33,7 @@
 #include "CommonAtomStrings.h"
 #include "ContextDestructionObserverInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
@@ -58,6 +58,7 @@
 #include "Page.h"
 #include "PhotoCapabilities.h"
 #include "PlatformMediaSessionManager.h"
+#include "Quirks.h"
 #include "RealtimeMediaSourceCenter.h"
 #include "ScriptExecutionContext.h"
 #include "Settings.h"
@@ -89,12 +90,17 @@ MediaStreamTrack::MediaStreamTrack(ScriptExecutionContext& context, Ref<MediaStr
     , m_muted(m_private->muted())
     , m_isCaptureTrack(is<Document>(context) && m_private->isCaptureTrack())
 {
+    relaxAdoptionRequirement();
     ALWAYS_LOG(LOGIDENTIFIER);
 
     m_private->addObserver(*this);
 
-    if (!isCaptureTrack())
+    if (!isCaptureTrack()) {
+        RefPtr document = dynamicDowncast<Document>(context);
+        if (document && document->quirks().shouldEnableRemoteTrackLabelQuirk())
+            m_private->updateLabelIfRemoteTrack();
         return;
+    }
 
     ASSERT(isMainThread());
     ASSERT(is<Document>(context));

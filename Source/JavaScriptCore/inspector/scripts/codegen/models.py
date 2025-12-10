@@ -53,8 +53,11 @@ def validate_target_types(debuggable_types, target_types):
         elif target_type == 'service-worker':
             if 'service-worker' not in debuggable_types:
                 return False
-        elif target_type == 'web-page':
+        elif target_type == 'web-page' or target_type == 'frame':
             if 'web-page' not in debuggable_types:
+                return False
+        elif target_type == 'wasm-debugger':
+            if 'wasm-debugger' not in debuggable_types:
                 return False
     return True
 
@@ -94,8 +97,8 @@ _FRAMEWORK_CONFIG_MAP = {
     }
 }
 
-_ALLOWED_DEBUGGABLE_TYPE_STRINGS = ['itml', 'javascript', 'page', 'service-worker', 'web-page']
-_ALLOWED_TARGET_TYPE_STRINGS = ['itml', 'javascript', 'page', 'service-worker', 'web-page', 'worker']
+_ALLOWED_DEBUGGABLE_TYPE_STRINGS = ['itml', 'javascript', 'page', 'service-worker', 'web-page', 'wasm-debugger']
+_ALLOWED_TARGET_TYPE_STRINGS = ['itml', 'javascript', 'page', 'service-worker', 'web-page', 'wasm-debugger', 'frame', 'worker']
 
 
 class ParseException(Exception):

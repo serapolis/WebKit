@@ -37,7 +37,7 @@
 #include "InspectorInstrumentation.h"
 #include "JSBlob.h"
 #include "MIMETypeRegistry.h"
-#include "ReadableStreamSink.h"
+#include "ReadableStreamToSharedBufferSink.h"
 #include "ResourceError.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSONObject.h>
@@ -196,7 +196,7 @@ FetchResponse::FetchResponse(ScriptExecutionContext* context, std::optional<Fetc
 {
 }
 
-ExceptionOr<Ref<FetchResponse>> FetchResponse::clone()
+ExceptionOr<Ref<FetchResponse>> FetchResponse::clone(JSDOMGlobalObject& globalObject)
 {
     if (isDisturbedOrLocked())
         return Exception { ExceptionCode::TypeError, "Body is disturbed or locked"_s };
@@ -219,7 +219,7 @@ ExceptionOr<Ref<FetchResponse>> FetchResponse::clone()
 
     Ref headers = FetchHeaders::create(this->headers());
     auto clone = FetchResponse::create(context.get(), std::nullopt, WTFMove(headers), ResourceResponse { m_internalResponse });
-    clone->cloneBody(*this);
+    clone->cloneBody(globalObject, *this);
     clone->m_opaqueLoadIdentifier = m_opaqueLoadIdentifier;
     clone->m_bodySizeWithPadding = m_bodySizeWithPadding;
     return clone;
@@ -499,7 +499,22 @@ void FetchResponse::consumeBodyReceivedByChunk(ConsumeDataByChunkCallback&& call
     m_isDisturbed = true;
 
     if (hasReadableStreamBody()) {
-        m_body->checkedConsumer()->extract(*m_body->protectedReadableStream(), WTFMove(callback));
+        m_body->checkedConsumer()->extract(*m_body->protectedReadableStream(), [callback = WTFMove(callback), weakThis = WeakPtr { *this }](auto&& result) {
+            WTF::switchOn(WTFMove(result), [&](std::nullptr_t) {
+                callback(nullptr);
+            }, [&](std::span<const uint8_t> chunk) {
+                callback(&chunk);
+            }, [&](JSC::JSValue value) {
+                RefPtr protectedThis = weakThis.get();
+                RefPtr context = protectedThis ? protectedThis->scriptExecutionContext() : nullptr;
+                auto* globalObject = context ? context->globalObject() : nullptr;
+                String message = globalObject ? value.toWTFString(globalObject) : "Load failed"_s;
+                // FIXME: Move ConsumeDataByChunkCallback to ReadableStreamToSharedBufferSink::Callback.
+                callback(Exception { ExceptionCode::TypeError, WTFMove(message) });
+            }, [&](Exception&& error) {
+                callback(WTFMove(error));
+            });
+        });
         return;
     }
 

@@ -36,6 +36,7 @@
 #include "IntRect.h"
 #include "NativeImage.h"
 #include "NotImplemented.h"
+#include "PathSegment.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
 #include "SkiaPaintingEngine.h"
@@ -251,7 +252,7 @@ static SkSamplingOptions toSkSamplingOptions(InterpolationQuality quality)
     return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNearest);
 }
 
-void GraphicsContextSkia::drawNativeImageInternal(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void GraphicsContextSkia::drawNativeImage(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     auto image = nativeImage.platformImage();
     if (!image)
@@ -402,6 +403,66 @@ void GraphicsContextSkia::drawSkiaPath(const SkPath& path, SkPaint& paint)
         endTransparencyLayer();
 }
 
+bool GraphicsContextSkia::drawPathAsSingleElement(const Path& path, SkPaint& paint)
+{
+    if (hasDropShadow())
+        return false;
+
+    auto segment = path.singleSegment();
+    if (!segment)
+        return false;
+
+    auto drawArc = [&](const PathArc& arc, bool isClosedArc) -> bool {
+        if (arc.radius < 1)
+            return false;
+
+        float endAngle = arc.endAngle;
+        if (arc.direction == RotationDirection::Clockwise && arc.startAngle > endAngle)
+            endAngle = arc.startAngle + (2 * std::numbers::pi_v<float> - fmodf(arc.startAngle - arc.endAngle, 2 * std::numbers::pi_v<float>));
+        else if (arc.direction == RotationDirection::Counterclockwise && arc.startAngle < arc.endAngle)
+            endAngle = arc.startAngle - (2 * std::numbers::pi_v<float> - fmodf(arc.endAngle - arc.startAngle, 2 * std::numbers::pi_v<float>));
+
+        auto sweepAngle = endAngle - arc.startAngle;
+        SkScalar startDegrees = SkFloatToScalar(arc.startAngle * 180 / std::numbers::pi_v<float>);
+        SkScalar sweepDegrees = SkFloatToScalar(sweepAngle * 180 / std::numbers::pi_v<float>);
+        static constexpr SkScalar s360 = SkIntToScalar(360);
+        bool isClosedOval = SkScalarNearlyEqual(std::abs(sweepDegrees), s360);
+        if (isClosedArc && !isClosedOval)
+            return false;
+
+        SkRect oval = { arc.center.x() - arc.radius, arc.center.y() - arc.radius, arc.center.x() + arc.radius, arc.center.y() + arc.radius };
+        if (isClosedArc)
+            m_canvas.drawOval(oval, paint);
+        else
+            m_canvas.drawArc(oval, startDegrees, sweepDegrees, false, paint);
+
+        return true;
+    };
+
+    bool handled = false;
+    WTF::switchOn(segment->data(),
+        [&](const PathArc& arc) {
+            handled = drawArc(arc, false);
+        },
+        [&](const PathClosedArc& closedArc) {
+            handled = drawArc(closedArc.arc, true);
+        },
+        [&](const PathDataLine& line) {
+            if (paint.getStyle() != SkPaint::kFill_Style)
+                m_canvas.drawLine(line.start().x(), line.start().y(), line.end().x(), line.end().y(), paint);
+            handled = true;
+        },
+        [&](const PathMoveTo&) {
+            handled = true;
+        },
+        [&](const auto&) {
+            handled = false;
+        }
+    );
+
+    return handled;
+}
+
 void GraphicsContextSkia::fillPath(const Path& path)
 {
     if (path.isEmpty())
@@ -412,6 +473,9 @@ void GraphicsContextSkia::fillPath(const Path& path)
 
     SkPaint paint = createFillPaint();
     setupFillSource(paint);
+
+    if (drawPathAsSingleElement(path, paint))
+        return;
 
     auto fillRule = toSkiaFillType(state().fillRule());
     auto& skiaPath= *path.platformPath();
@@ -435,6 +499,10 @@ void GraphicsContextSkia::strokePath(const Path& path)
 
     SkPaint strokePaint = createStrokePaint();
     setupStrokeSource(strokePaint);
+
+    if (drawPathAsSingleElement(path, strokePaint))
+        return;
+
     drawSkiaPath(*path.platformPath(), strokePaint);
 }
 

@@ -218,18 +218,18 @@ static GstStreamType gstStreamType(TrackPrivateBaseGStreamer::TrackType type)
 }
 
 #ifndef GST_DISABLE_GST_DEBUG
-static const char* streamTypeToString(TrackPrivateBaseGStreamer::TrackType type)
+static ASCIILiteral streamTypeToString(TrackPrivateBaseGStreamer::TrackType type)
 {
     switch (type) {
     case TrackPrivateBaseGStreamer::TrackType::Audio:
-        return "Audio";
+        return "Audio"_s;
     case TrackPrivateBaseGStreamer::TrackType::Video:
-        return "Video";
+        return "Video"_s;
     case TrackPrivateBaseGStreamer::TrackType::Text:
-        return "Text";
+        return "Text"_s;
     default:
     case TrackPrivateBaseGStreamer::TrackType::Unknown:
-        return "Unknown";
+        return "Unknown"_s;
     }
 }
 #endif // GST_DISABLE_GST_DEBUG
@@ -273,7 +273,7 @@ static void webkit_media_src_class_init(WebKitMediaSrcClass* klass)
 
     // In GStreamer 1.20 and older urisourcebin mishandles source elements with dynamic pads. This
     // is not an issue in 1.22.
-    if (webkitGstCheckVersion(1, 22, 0))
+    if (gst_check_version(1, 22, 0))
         eklass->query = GST_DEBUG_FUNCPTR(webKitMediaSrcQuery);
 
     g_object_class_install_property(oklass,
@@ -309,7 +309,8 @@ void webKitMediaSrcEmitStreams(WebKitMediaSrc* source, const Vector<RefPtr<Media
     source->priv->collection = adoptGRef(gst_stream_collection_new("WebKitMediaSrc"));
     for (const auto& track : tracks) {
 #ifndef GST_DISABLE_GST_DEBUG
-        GST_DEBUG_OBJECT(source, "Adding stream with trackId '%" PRIu64 "' of type %s with caps %" GST_PTR_FORMAT, track->id(), streamTypeToString(track->type()), track->initialCaps().get());
+        GST_DEBUG_OBJECT(source, "Adding stream with trackId '%" PRIu64 "' of type %s with caps %" GST_PTR_FORMAT,
+            track->id(), streamTypeToString(track->type()).characters(), track->initialCaps().get());
 #endif // GST_DISABLE_GST_DEBUG
         if (source->priv->streams.contains(track->id())) {
             GST_ERROR_OBJECT(source, "stream with trackId '%" PRIu64 "' already exists", track->id());
@@ -339,7 +340,7 @@ void webKitMediaSrcEmitStreams(WebKitMediaSrc* source, const Vector<RefPtr<Media
                 return GST_PAD_PROBE_OK;
             }, nullptr, nullptr);
 
-        if (!webkitGstCheckVersion(1, 20, 6)) {
+        if (!gst_check_version(1, 20, 6)) {
             // Workaround: gst_element_add_pad() should already call gst_pad_set_active() if the element is PAUSED or
             // PLAYING. Unfortunately, as of GStreamer 1.18.2 it does so with the element lock taken, causing a deadlock
             // in gst_pad_start_task(), who tries to post a `stream-status` message in the element, which also requires
@@ -713,7 +714,7 @@ static void webKitMediaSrcStreamFlush(Stream* stream, bool isSeekingFlush)
             streamingMembers->isFlushing = false;
             streamingMembers->doesNeedSegmentEvent = true;
 
-            if (!webkitGstCheckVersion(1, 22, 0)) {
+            if (!gst_check_version(1, 22, 0)) {
                 // In older GST versions STREAM_COLLECTION event is delivered to decodebin3
                 // from parsebin src pad probe. On the way, this event is cached inside
                 // parser element (GstBaseParse) and pushed downstream with first frame.

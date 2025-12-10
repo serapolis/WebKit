@@ -106,7 +106,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawNativeImageInternal(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
+    void drawNativeImage(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
     void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
     ImageDrawResult drawImage(Image&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { ImageOrientation::Orientation::FromImage }) final;
@@ -115,7 +115,7 @@ public:
     void drawControlPart(ControlPart&, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle&) final;
 
 #if ENABLE(VIDEO)
-    void drawVideoFrame(VideoFrame&, const FloatRect& destination, WebCore::ImageOrientation, bool shouldDiscardAlpha) final;
+    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, WebCore::ImageOrientation, bool shouldDiscardAlpha) final;
 #endif
 
     using GraphicsContext::scale;

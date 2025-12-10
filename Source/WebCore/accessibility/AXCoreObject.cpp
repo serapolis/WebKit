@@ -29,10 +29,12 @@
 #include "config.h"
 #include "AXCoreObject.h"
 
-#include "DocumentInlines.h"
+#include "AXUtilities.h"
+#include "DocumentView.h"
 #include "HTMLAreaElement.h"
 #include "LocalFrameView.h"
 #include "RenderObjectStyle.h"
+#include "RenderStyleInlines.h"
 #include "Settings.h"
 #include "TextDecorationPainter.h"
 #include <wtf/Deque.h>
@@ -339,23 +341,146 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::unignoredChildren(bool u
     return unignoredChildren;
 }
 
-AXCoreObject* AXCoreObject::firstUnignoredChild()
+bool AXCoreObject::hasUnignoredChild()
 {
     const auto& children = childrenIncludingIgnored(/* updateChildrenIfNeeded */ true);
     RefPtr descendant = children.size() ? children[0].ptr() : nullptr;
     if (onlyAddsUnignoredChildren())
-        return descendant.get();
+        return descendant;
 
     bool isExposedTable = isExposableTable();
     while (descendant && descendant != this) {
         bool childIsValid = !isExposedTable || isValidChildForTable(*descendant);
         if (childIsValid && !descendant->isIgnored())
-            return descendant.get();
+            return true;
         descendant = descendant->nextInPreOrder(/* updateChildrenIfNeeded */ true, /* stayWithin */ this);
     }
+    return false;
+}
+
+#endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+
+static AXCoreObject::AccessibilityChildrenVector childrenAfterStitching(AXCoreObject::AccessibilityChildrenVector&& children)
+{
+    children.removeAllMatching([] (const auto& child) {
+        if (!child->hasStitchableRole())
+            return false;
+
+        std::optional stitchedIntoID = child->stitchedIntoID();
+        return stitchedIntoID && *stitchedIntoID != child->objectID();
+    });
+
+    return children;
+}
+
+
+#if !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+static AXCoreObject::AccessibilityChildrenVector childrenAfterStitching(const AXCoreObject::AccessibilityChildrenVector& children)
+{
+    auto childrenCopy = children;
+    return childrenAfterStitching(WTFMove(childrenCopy));
+}
+#endif // !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+
+AXCoreObject::AccessibilityChildrenVector AXCoreObject::stitchedUnignoredChildren()
+{
+    return childrenAfterStitching(unignoredChildren());
+}
+
+AXCoreObject* AXCoreObject::blockFlowAncestor() const
+{
+    return Accessibility::findAncestor(*this, /* includeSelf */ false, [] (const auto& ancestor) {
+        return ancestor.isBlockFlow();
+    });
+}
+
+std::optional<AXStitchGroup> AXCoreObject::stitchGroupFromGroups(const Vector<AXStitchGroup>* groups, IncludeGroupMembers includeGroupMembers) const
+{
+    if (!groups)
+        return { };
+
+    AXID thisAXID = objectID();
+    for (const auto& group : *groups) {
+        // Stitching zero or one elements doesn't make sense, so ensure our group is two or larger.
+        ASSERT(group.members().size() >= 2);
+
+        if (group.members().contains(thisAXID)) {
+            if (includeGroupMembers == IncludeGroupMembers::No) {
+                // If the caller doesn't need the group we belong to, don't bother doing the copy.
+                return std::optional(AXStitchGroup { { }, group.representativeID() });
+            }
+            return std::optional(group);
+        }
+    }
+    return { };
+}
+
+AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameUnignoredChildren()
+{
+    AXCoreObject::AccessibilityChildrenVector result = stitchedUnignoredChildren();
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    if (result.isEmpty()) {
+        if (RefPtr crossFrameChild = crossFrameChildObject())
+            result.append(*crossFrameChild);
+    } else {
+        for (size_t i = 0; i < result.size(); i++) {
+            if (auto* crossFrameChild = result[i]->crossFrameChildObject())
+                result[i] = *crossFrameChild;
+        }
+    }
+#endif
+
+    return result;
+}
+
+AXCoreObject* AXCoreObject::crossFrameParentObjectUnignored() const
+{
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* result = parentObjectUnignored())
+        return result;
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    return crossFrameParentObject();
+#endif
     return nullptr;
 }
-#endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+
+AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameChildrenIncludingIgnored(bool updateChildrenIfNeeded)
+{
+    AXCoreObject::AccessibilityChildrenVector result = childrenIncludingIgnored(updateChildrenIfNeeded);
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    if (result.isEmpty()) {
+        AXCoreObject* crossFrameChild = crossFrameChildObject();
+        if (crossFrameChild)
+            result.append(*crossFrameChild);
+    }
+#endif
+
+    return result;
+}
+
+bool AXCoreObject::crossFrameIsAncestorOfObject(const AXCoreObject& axObject) const
+{
+    return this == &axObject || axObject.crossFrameIsDescendantOfObject(*this);
+}
+
+bool AXCoreObject::crossFrameIsDescendantOfObject(const AXCoreObject& axObject) const
+{
+    return Accessibility::crossFrameFindAncestor<AXCoreObject>(*this, false, [&axObject] (const AXCoreObject& object) {
+        return &object == &axObject;
+    }) != nullptr;
+}
+
+AXCoreObject* AXCoreObject::parentObjectIncludingCrossFrame() const
+{
+    if (SUPPRESS_UNCOUNTED_LOCAL auto* parent = parentObject())
+        return parent;
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    return crossFrameParentObject();
+#else
+    return nullptr;
+#endif
+}
 
 #ifndef NDEBUG
 void AXCoreObject::verifyChildrenIndexInParent(const AccessibilityChildrenVector& children) const
@@ -373,15 +498,21 @@ void AXCoreObject::verifyChildrenIndexInParent(const AccessibilityChildrenVector
 }
 #endif
 
-AXCoreObject* AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin)
+RefPtr<AXCoreObject> AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin)
 {
-    const auto& children = childrenIncludingIgnored(updateChildrenIfNeeded);
+    return nextInPreOrder(updateChildrenIfNeeded, stayWithin, false);
+}
+
+RefPtr<AXCoreObject> AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded , AXCoreObject* stayWithin, bool includeCrossFrame)
+{
+    const auto& children = includeCrossFrame ? crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded) : childrenIncludingIgnored(updateChildrenIfNeeded);
+
     if (!children.isEmpty()) {
         auto role = this->role();
         if (role != AccessibilityRole::Column && role != AccessibilityRole::TableHeaderContainer) {
             // Table columns and header containers add cells despite not being their "true" parent (which are the rows).
             // Don't allow a pre-order traversal of these object types to return cells to avoid an infinite loop.
-            return children[0].ptr();
+            return children[0].copyRef();
         }
     }
 
@@ -389,16 +520,21 @@ AXCoreObject* AXCoreObject::nextInPreOrder(bool updateChildrenIfNeeded, AXCoreOb
         return nullptr;
 
     RefPtr current = this;
-    RefPtr next = nextSiblingIncludingIgnored(updateChildrenIfNeeded);
-    for (; !next; next = current->nextSiblingIncludingIgnored(updateChildrenIfNeeded)) {
-        current = current->parentObject();
+    RefPtr next = nextSiblingIncludingIgnored(updateChildrenIfNeeded, includeCrossFrame);
+    for (; !next; next = current->nextSiblingIncludingIgnored(updateChildrenIfNeeded, includeCrossFrame)) {
+#if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+        current = includeCrossFrame ? current->parentObjectIncludingCrossFrame() : current->parentObject();
+#else
+        current = includeCrossFrame ? current->crossFrameParentObjectUnignored() : current->parentObjectUnignored();
+#endif
+
         if (!current || stayWithin == current)
             return nullptr;
     }
-    return next.get();
+    return next;
 }
 
-AXCoreObject* AXCoreObject::previousInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin)
+RefPtr<AXCoreObject> AXCoreObject::previousInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin)
 {
     if (stayWithin == this)
         return nullptr;
@@ -407,7 +543,7 @@ AXCoreObject* AXCoreObject::previousInPreOrder(bool updateChildrenIfNeeded, AXCo
         const auto& children = sibling->childrenIncludingIgnored(updateChildrenIfNeeded);
         if (children.size())
             return sibling->deepestLastChildIncludingIgnored(updateChildrenIfNeeded);
-        return sibling.get();
+        return sibling;
     }
     return parentObject();
 }
@@ -425,7 +561,7 @@ AXCoreObject* AXCoreObject::deepestLastChildIncludingIgnored(bool updateChildren
             break;
         deepestChild = descendants[descendants.size() - 1];
     }
-    return deepestChild.ptr();
+    return deepestChild.unsafePtr();
 }
 
 size_t AXCoreObject::indexInSiblings(const AccessibilityChildrenVector& siblings) const
@@ -444,16 +580,25 @@ size_t AXCoreObject::indexInSiblings(const AccessibilityChildrenVector& siblings
 
 AXCoreObject* AXCoreObject::nextSiblingIncludingIgnored(bool updateChildrenIfNeeded) const
 {
+    return nextSiblingIncludingIgnored(updateChildrenIfNeeded, /* crossFrame = */ false);
+}
+
+AXCoreObject* AXCoreObject::nextSiblingIncludingIgnored(bool updateChildrenIfNeeded, bool includeCrossFrame) const
+{
+#if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     RefPtr parent = parentObject();
+#else
+    RefPtr parent = parentObjectUnignored();
+#endif
     if (!parent)
         return nullptr;
 
-    const auto& siblings = parent->childrenIncludingIgnored(updateChildrenIfNeeded);
+    const auto& siblings = includeCrossFrame ? parent->crossFrameChildrenIncludingIgnored(updateChildrenIfNeeded) : parent->childrenIncludingIgnored(updateChildrenIfNeeded);
     size_t indexOfThis = indexInSiblings(siblings);
     if (indexOfThis == notFound)
         return nullptr;
 
-    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].ptr() : nullptr;
+    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].unsafePtr() : nullptr;
 }
 
 AXCoreObject* AXCoreObject::previousSiblingIncludingIgnored(bool updateChildrenIfNeeded)
@@ -486,15 +631,16 @@ AXCoreObject* AXCoreObject::nextUnignoredSibling(bool updateChildrenIfNeeded, AX
     if (indexOfThis == notFound)
         return nullptr;
 
-    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].ptr() : nullptr;
+    return indexOfThis + 1 < siblings.size() ? siblings[indexOfThis + 1].unsafePtr() : nullptr;
 }
 
 AXCoreObject* AXCoreObject::nextSiblingIncludingIgnoredOrParent() const
 {
-    RefPtr parent = parentObject();
-    if (RefPtr nextSibling = nextSiblingIncludingIgnored(/* updateChildrenIfNeeded */ true))
-        return nextSibling.get();
-    return parent.get();
+    // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+    // as we merely return it right away (rdar://165602290).
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* nextSibling = nextSiblingIncludingIgnored(/* updateChildrenIfNeeded */ true))
+        return nextSibling;
+    return parentObject();
 }
 
 String AXCoreObject::autoCompleteValue() const
@@ -518,7 +664,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::contents()
     if (isScrollView()) {
         // A scroll view's contents are everything except the scroll bars.
         AccessibilityChildrenVector nonScrollbarChildren;
-        for (const auto& child : unignoredChildren()) {
+        for (const auto& child : stitchedUnignoredChildren()) {
             if (!child->isScrollbar())
                 nonScrollbarChildren.append(child);
         }
@@ -1035,7 +1181,7 @@ AXCoreObject* AXCoreObject::rowHeader()
     for (const auto& child : rowChildren) {
         // We found a non-header cell, so this is not an entire row of headers -- return the original header cell.
         if (!isARIAGridRow && !child->hasElementName(ElementName::HTML_th))
-            return firstCell.ptr();
+            return firstCell.unsafePtr();
 
         // For grid rows, the first header encountered is the row header.
         if (isARIAGridRow && child->isRowHeader())
@@ -1313,7 +1459,7 @@ unsigned AXCoreObject::hierarchicalLevel() const
 
 bool AXCoreObject::supportsPressAction() const
 {
-    if (role() == AccessibilityRole::Presentational)
+    if (role() == AccessibilityRole::Presentational || hasPointerEventsNone())
         return false;
 
     if (isImplicitlyInteractive() || hasClickHandler())
@@ -1324,54 +1470,65 @@ bool AXCoreObject::supportsPressAction() const
         // other appropriate ARIA markup indicating interactivity (e.g. by applying role="button"). We can repair these
         // scenarios by checking for a clickable ancestor. But want to do so selectively, as naively exposing press on
         // every text can be annoying as some screenreaders read "clickable" for each static text.
-        if (!hasCursorPointer()) {
+        bool foundCursor = hasCursorPointer();
+
+        RefPtr clickableAncestor = Accessibility::findAncestor(*this, /* includeSelf */ true, /* matchFunction */ [&foundCursor] (const auto& ancestor) {
+            if (!foundCursor)
+                foundCursor = ancestor.hasCursorPointer() || ancestor.showsCursorOnHover();
+            return ancestor.hasClickHandler();
+        }, /* stopTraversalFunction */ [] (const auto& ancestor) {
+            // Stop traversing and return nullptr if we walk over an implicitly interactive element on our
+            // way to the click handler, as we can rely on the semantics of that element to imply pressability.
+            // Also stop when encountering the body or main to avoid exposing pressability for everything in
+            // web apps that implement an event-delegation mechanism.
+            auto role = ancestor.role();
+            return ancestor.isImplicitlyInteractive() || role == AccessibilityRole::LandmarkMain || role == AccessibilityRole::Presentational || ancestor.hasBodyTag();
+        });
+
+        if (!clickableAncestor)
+            return false;
+
+        if (!foundCursor) {
             // If the author hasn't provided a pointer cursor, the visual experience also doesn't express
             // pressability, so return.
             return false;
         }
 
-        if (RefPtr clickableAncestor = Accessibility::clickableSelfOrAncestor(*this, /* stopFunction */ [&] (const auto& ancestor) {
-            // Stop iterating and return nullptr if we walk over an implicitly interactive element on our way to the
-            // click handler, as we can rely on the semantics of that element to imply pressability. Also stop when
-            // encountering the body or main to avoid exposing pressability for everything in web apps that implement
-            // an event-delegation mechanism.
-            return ancestor.isImplicitlyInteractive() || ancestor.role() == AccessibilityRole::LandmarkMain || ancestor.hasBodyTag();
-        })) {
-            unsigned matches = 0;
-            unsigned candidatesChecked = 0;
-            RefPtr candidate = clickableAncestor;
-            while ((candidate = candidate->nextInPreOrder(/* updateChildren */ true, /* stayWithin */ clickableAncestor.get()))) {
-                if (candidate->isStaticText() || candidate->isControl() || candidate->isImage() || candidate->isHeading() || candidate->isLink()) {
-                    if (!candidate->isIgnored()) {
-                        if (!matches && this != candidate.get()) {
-                            // Only support press action for the first descendant. Some ATs, like VoiceOver, use the result of this function
-                            // to read "clickable", but reading it for every descendant of the clickable ancestor would be excessive.
-                            return false;
-                        }
-                        ++matches;
-                    }
-
-                    static constexpr unsigned MAX_MATCHES = 6;
-                    if (matches >= MAX_MATCHES) {
-                        // If something has more than the arbitrarily-chosen number of valid matches,
-                        // this click handler is probably too coarse to be useful.
+        unsigned matches = 0;
+        unsigned candidatesChecked = 0;
+        RefPtr candidate = clickableAncestor;
+        while ((candidate = candidate->nextInPreOrder(/* updateChildren */ true, /* stayWithin */ clickableAncestor.get()))) {
+            if (candidate->isStaticText() || candidate->isControl() || candidate->isImage() || candidate->isHeading() || candidate->isLink()) {
+                if (!candidate->isIgnored()) {
+                    if (!matches && this != candidate.get()) {
+                        // Only support press action for the first descendant. Some ATs, like VoiceOver, use the result of this function
+                        // to read "clickable", but reading it for every descendant of the clickable ancestor would be excessive.
                         return false;
                     }
+                    ++matches;
                 }
 
-                ++candidatesChecked;
-                static constexpr unsigned MAX_CANDIDATES = 256;
-                if (candidatesChecked > MAX_CANDIDATES) {
-                    // If we've walked over the arbitrarily-chosen max number of potential candidates,
-                    // this click handler is probably too coarse to be useful, and too much traversing
-                    // can harm performance.
+                static constexpr unsigned MAX_MATCHES = 6;
+                if (matches >= MAX_MATCHES) {
+                    // If something has more than the arbitrarily-chosen number of valid matches,
+                    // this click handler is probably too coarse to be useful.
                     return false;
                 }
             }
-            // If we get here, and matches is greater than zero, we can assume we were the first matching
-            // candidate for the click handler, and that there weren't too many matches or candidates checked.
-            return matches > 0;
+
+            ++candidatesChecked;
+            static constexpr unsigned MAX_CANDIDATES = 256;
+            if (candidatesChecked > MAX_CANDIDATES) {
+                // If we've walked over the arbitrarily-chosen max number of potential candidates,
+                // this click handler is probably too coarse to be useful, and too much traversing
+                // can harm performance.
+                return false;
+            }
         }
+
+        // If we get here, and matches is greater than zero, we can assume we were the first matching
+        // candidate for the click handler, and that there weren't too many matches or candidates checked.
+        return matches > 0;
     }
     return false;
 }
@@ -1398,7 +1555,7 @@ AXCoreObject* AXCoreObject::activeDescendant() const
     auto activeDescendants = relatedObjects(AXRelation::ActiveDescendant);
     ASSERT(activeDescendants.size() <= 1);
     if (!activeDescendants.isEmpty())
-        return activeDescendants[0].ptr();
+        return activeDescendants[0].unsafePtr();
     return nullptr;
 }
 
@@ -1613,9 +1770,9 @@ AXCoreObject* AXCoreObject::titleUIElement() const
 #if PLATFORM(COCOA)
     // We impose the restriction that if there is more than one label, then we should return none.
     // FIXME: the behavior should be the same in all platforms.
-    return labels.size() == 1 ? labels.first().ptr() : nullptr;
+    return labels.size() == 1 ? labels.first().unsafePtr() : nullptr;
 #else
-    return labels.size() ? labels.first().ptr() : nullptr;
+    return labels.size() ? labels.first().unsafePtr() : nullptr;
 #endif
 }
 
@@ -1693,8 +1850,10 @@ void AXCoreObject::appendRadioButtonGroupMembers(AccessibilityChildrenVector& li
 AXCoreObject* AXCoreObject::parentObjectUnignored() const
 {
     if (role() == AccessibilityRole::Row) {
-        if (RefPtr table = exposedTableAncestor())
-            return table.get();
+        // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+        // as we merely return it right away (rdar://165602290).
+        SUPPRESS_UNCOUNTED_LOCAL if (auto* table = exposedTableAncestor())
+            return table;
     }
 
     return Accessibility::findAncestor<AXCoreObject>(*this, false, [&] (const AXCoreObject& object) {

@@ -36,7 +36,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TrackPrivateBase);
 
-std::optional<AtomString> TrackPrivateBase::trackUID() const
+std::optional<String> TrackPrivateBase::trackUID() const
 {
     return std::nullopt;
 }
@@ -71,8 +71,8 @@ void TrackPrivateBase::notifyClients(Task&& task)
         auto& [dispatcher, weakClient, mainThread] = tuple;
         if (dispatcher) {
             dispatcher->get()([weakClient = WTFMove(weakClient), sharedTask] {
-                if (weakClient)
-                    sharedTask->run(*weakClient);
+                if (RefPtr client = weakClient.get())
+                    sharedTask->run(*client);
             });
         }
     }
@@ -91,8 +91,8 @@ void TrackPrivateBase::notifyMainThreadClient(Task&& task)
         auto& [dispatcher, weakClient, isMainThread] = tuple;
         if (dispatcher && isMainThread) {
             dispatcher->get()([weakClient = WTFMove(weakClient), task = WTFMove(task)] {
-                if (weakClient)
-                    task(*weakClient);
+                if (RefPtr client = weakClient.get())
+                    task(*client);
             });
             break;
         }

@@ -335,7 +335,7 @@ void WebPrintOperationGtk::endPage(cairo_t* cr)
 void WebPrintOperationGtk::endPrint(cairo_t* cr)
 {
     cairo_surface_finish(cairo_get_target(cr));
-    printDone(m_buffer.take(), { });
+    printDone(m_buffer.takeBuffer(), { });
 }
 #elif USE(SKIA)
 void WebPrintOperationGtk::startPage(SkPictureRecorder& recorder)

@@ -2950,7 +2950,7 @@ void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
 
     auto dumpCharacter = [&](ByteTerm& term) {
         out.print(" ");
-        dumpUChar32(out, term.atom.patternCharacter);
+        dumpChar32(out, term.atom.patternCharacter);
     };
 
     auto dumpCharClass = [&](ByteTerm& term) {

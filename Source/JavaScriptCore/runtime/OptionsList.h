@@ -87,7 +87,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useJIT, jitEnabledByDefault(), Normal, "allows the executable pages to be allocated for JIT and thunks if true"_s) \
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, true, Normal, "allows the DFG JIT to be used if true"_s) \
-    v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, useRegExpJIT, jitEnabledByDefault() && is64Bit(), Normal, "allows the RegExp JIT to be used if true"_s) \
     v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true"_s) \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
@@ -111,11 +111,12 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, initialRepatchBufferingCountdown, 6, Normal, nullptr) \
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
-    v(Bool, dumpGeneratedWasmBytecodes, false, Normal, nullptr) \
     v(Bool, dumpBytecodeLivenessResults, false, Normal, nullptr) \
     v(Bool, validateBytecode, false, Normal, nullptr) \
     v(Bool, forceDebuggerBytecodeGeneration, false, Normal, nullptr) \
     v(Bool, debuggerTriggersBreakpointException, false, Normal, "Using the debugger statement will trigger an breakpoint exception (Useful when lldbing)"_s) \
+    v(Bool, verboseWasmDebugger, false, Normal, nullptr) \
+    v(Bool, enableWasmDebugger, false, Normal, nullptr) \
     v(Bool, dumpBytecodesBeforeGeneratorification, false, Normal, nullptr) \
     v(Unsigned, switchJumpTableAmountThreshold, 15, Normal, nullptr) \
     \
@@ -132,7 +133,6 @@ bool hasCapacityToUseLargeGigacage();
     /* dumpDisassembly implies dumpDFGDisassembly. */ \
     v(Bool, needDisassemblySupport, false, Normal, nullptr) \
     v(Bool, dumpDisassembly, false, Normal, "dumps disassembly of all JIT compiled code upon compilation"_s) \
-    v(Bool, asyncDisassembly, false, Normal, nullptr) \
     v(Bool, logJIT, false, Normal, nullptr) \
     v(Bool, dumpBaselineDisassembly, false, Normal, "dumps disassembly of Baseline function upon compilation"_s) \
     v(Bool, dumpDFGDisassembly, false, Normal, "dumps disassembly of DFG function upon compilation"_s) \
@@ -329,10 +329,14 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maximumBinaryStringSwitchTotalLength, 2000, Normal, nullptr) \
     v(Unsigned, maximumRegExpTestInlineCodesize, 500, Normal, "Maximum code size in bytes for inlined RegExp.test JIT code."_s) \
     \
-    v(Unsigned, maximumWasmDepthForInlining, isIOS() ? 2 : 8, Normal, "Maximum inlining depth to consider inlining a wasm function."_s) \
-    v(Unsigned, maximumWasmCalleeSizeForInlining, 200, Normal, "Maximum wasm size in bytes to consider inlining a wasm function."_s) \
-    v(Unsigned, maximumWasmCallerSizeForInlining, 10000, Normal, "Maximum wasm size in bytes for the caller of an inlined function."_s) \
-    v(Unsigned, maximumWasmSelfRecursionDepthForInlining, 5, Normal, "Maximum self cursion inlining depth to consider inlining a wasm function."_s) \
+    v(Unsigned, wasmInliningMaximumDepth, 7, Normal, "Maximum inlining depth to consider inlining a wasm function."_s) \
+    v(Unsigned, wasmInliningMaximumWasmCalleeSize, 500, Normal, "Maximum wasm size in bytes to consider inlining a wasm function."_s) \
+    v(Unsigned, wasmInliningMaximumCount, 60, Normal, "Maximum inlining count to consider inlining a wasm function."_s) \
+    v(Unsigned, wasmInliningMinimumBudget, 50, Normal, "Minimum budget for which the wasmInliningFactor does not apply"_s) \
+    v(Unsigned, wasmInliningFactor, 5, Normal, "Maximum multiple budget in comparison to initial wasm size"_s) \
+    v(Unsigned, wasmInliningBudget, 6000, Normal, "Maximum budget that allows inlining more"_s) \
+    v(Unsigned, wasmInliningTinyFunctionThreshold, 12, Normal, "Wasm size threshold for tiny wasm functions"_s) \
+    v(Unsigned, wasmInliningSmallFunctionThreshold, 50, Normal, "Wasm size threshold for small wasm functions"_s) \
     \
     v(Double, jitPolicyScale, 1.0, Normal, "scale JIT thresholds to this specified ratio between 0.0 (compile ASAP) and 1.0 (compile like normal)."_s) \
     v(Bool, forceEagerCompilation, false, Normal, nullptr) \
@@ -623,7 +627,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useWasmIPIntPrologueOSR, true, Normal, "Allow IPInt to tier up during function prologues"_s) \
     v(Bool, useWasmIPIntLoopOSR, true, Normal, "Allow IPInt to tier up during loop iterations"_s) \
     v(Bool, useWasmIPIntEpilogueOSR, true, Normal, "Allow IPInt to tier up during function epilogues"_s) \
-    v(Bool, useWasmIPIntSIMD, false, Normal, "Allow IPInt to interpret SIMD code"_s) \
+    v(Bool, useWasmIPIntSIMD, true, Normal, "Allow IPInt to interpret SIMD code"_s) \
     v(Bool, forceAllFunctionsToUseSIMD, false, Normal, "Force all functions to act conservatively w.r.t fp/vector registers for testing."_s) \
     v(Bool, useOMGInlining, true, Normal, "Use OMG inlining"_s) \
     v(Bool, freeRetiredWasmCode, true, Normal, "free BBQ/OMG-OSR wasm code once it's no longer reachable."_s) \
@@ -650,9 +654,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useTemporal, false, Normal, "Expose the Temporal object."_s) \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
     v(Bool, useWasmJSStringBuiltins, true, Normal, "Enable the implementation of the JS String Builtins proposal."_s) \
+    v(Bool, useWasmMemory64, false, Normal, "Allow the Memory64 proposal for WebAssembly. This feature is currently only supported in the IPInt tier."_s) \
     v(Bool, useWasmMemoryToBufferAPIs, true, Normal, "Enable the toFixedLengthBuffer() and toResizableBuffer() Wasm Memory.prototype functions."_s) \
-    v(Bool, useWasmSIMD, true, Normal, "Allow the new simd instructions and types from the wasm simd spec."_s) \
     v(Bool, useWasmRelaxedSIMD, false, Normal, "Allow the relaxed simd instructions and types from the wasm relaxed simd spec."_s) \
+    v(Bool, useWasmSIMD, true, Normal, "Allow the new simd instructions and types from the wasm simd spec."_s) \
     v(Bool, useWasmTailCalls, true, Normal, "Allow the new instructions from the wasm tail calls spec."_s) \
 
 

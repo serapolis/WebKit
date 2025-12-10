@@ -81,6 +81,7 @@ public:
     AutoplayPolicy autoplayPolicy() const final;
 
     void updateScrollingMode() final;
+    void reportMixedContentViolation(bool blocked, const URL& target) const final;
     const SecurityOrigin& frameDocumentSecurityOriginOrOpaque() const;
 
 private:
@@ -93,7 +94,8 @@ private:
     void didFinishLoadInAnotherProcess() final;
     bool isRootFrame() const final { return false; }
     void documentURLForConsoleLog(CompletionHandler<void(const URL&)>&&) final;
-    RefPtr<SecurityOrigin> frameDocumentSecurityOrigin() const final;
+    SecurityOrigin* frameDocumentSecurityOrigin() const final;
+    String frameURLProtocol() const final;
 
     FrameView* virtualView() const final;
     void disconnectView() final;

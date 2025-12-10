@@ -35,8 +35,8 @@
 #include <WebCore/Chrome.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/FloatRect.h>
-#include <WebCore/InspectorController.h>
 #include <WebCore/Page.h>
+#include <WebCore/PageInspectorController.h>
 #include <WebCore/Settings.h>
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
@@ -240,6 +240,17 @@ void RemoteWebInspectorUI::showCertificate(const CertificateInfo& certificateInf
 void RemoteWebInspectorUI::setInspectorPageDeveloperExtrasEnabled(bool enabled)
 {
     WebProcess::singleton().protectedParentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::SetInspectorPageDeveloperExtrasEnabled(enabled), m_page->identifier());
+}
+
+void RemoteWebInspectorUI::setPageAndTextZoomFactors(double pageZoomFactor, double textZoomFactor)
+{
+    m_pageZoomFactor = pageZoomFactor;
+    WebProcess::singleton().protectedParentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::SetPageAndTextZoomFactors(pageZoomFactor, textZoomFactor), m_page->identifier());
+}
+
+double RemoteWebInspectorUI::pageZoomFactor() const
+{
+    return m_pageZoomFactor;
 }
 
 Inspector::DebuggableType RemoteWebInspectorUI::debuggableType() const

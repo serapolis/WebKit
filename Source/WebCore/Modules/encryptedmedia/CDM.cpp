@@ -31,8 +31,7 @@
 #include "CDMFactory.h"
 #include "CDMPrivate.h"
 #include "ContextDestructionObserverInlines.h"
-#include "DocumentInlines.h"
-#include "FrameInlines.h"
+#include "DocumentPage.h"
 #include "InitDataRegistry.h"
 #include "MediaKeysRequirement.h"
 #include "MediaPlayer.h"
@@ -53,8 +52,8 @@ namespace WebCore {
 
 bool CDM::supportsKeySystem(const String& keySystem)
 {
-    for (auto* factory : CDMFactory::registeredFactories()) {
-        if (factory->supportsKeySystem(keySystem))
+    for (auto& weakFactory : CDMFactory::registeredFactories()) {
+        if (Ref { weakFactory.get() }->supportsKeySystem(keySystem))
             return true;
     }
     return false;
@@ -75,9 +74,10 @@ CDM::CDM(Document& document, const String& keySystem, const String& mediaKeysHas
     , m_mediaKeysHashSalt { mediaKeysHashSalt }
 {
     ASSERT(supportsKeySystem(keySystem));
-    for (auto* factory : CDMFactory::registeredFactories()) {
+    for (auto& weakFactory : CDMFactory::registeredFactories()) {
+        Ref factory = weakFactory.get();
         if (factory->supportsKeySystem(keySystem)) {
-            m_private = factory->createCDM(keySystem, m_mediaKeysHashSalt, *this);
+            lazyInitialize(m_private, factory->createCDM(keySystem, m_mediaKeysHashSalt, *this));
 #if !RELEASE_LOG_DISABLED
             m_private->setLogIdentifier(m_logIdentifier);
 #endif

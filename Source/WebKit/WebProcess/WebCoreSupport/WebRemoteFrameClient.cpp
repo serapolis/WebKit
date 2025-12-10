@@ -27,15 +27,18 @@
 #include "WebRemoteFrameClient.h"
 
 #include "MessageSenderInlines.h"
+#include "RemoteDisplayListRecorderProxy.h"
 #include "WebFrameProxyMessages.h"
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
+#include <WebCore/FocusControllerTypes.h>
 #include <WebCore/FrameInlines.h>
 #include <WebCore/FrameLoadRequest.h>
 #include <WebCore/FrameTree.h>
+#include <WebCore/GraphicsContext.h>
 #include <WebCore/HTMLFrameOwnerElement.h>
 #include <WebCore/HitTestResult.h>
-#include <WebCore/NodeInlines.h>
+#include <WebCore/NodeDocument.h>
 #include <WebCore/PolicyChecker.h>
 #include <WebCore/RemoteFrame.h>
 
@@ -74,7 +77,15 @@ void WebRemoteFrameClient::sizeDidChange(IntSize size)
     m_frame->updateRemoteFrameSize(size);
 }
 
-void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const String& sourceOrigin, FrameIdentifier target, std::optional<SecurityOriginData> targetOrigin, const MessageWithMessagePorts& message)
+void WebRemoteFrameClient::paintContents(GraphicsContext& context, const IntRect& rect)
+{
+    RefPtr page = m_frame->page();
+    if (!page)
+        return;
+    page->paintRemoteFrameContents(m_frame->frameID(), rect, context);
+}
+
+void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const SecurityOriginData& sourceOrigin, FrameIdentifier target, std::optional<SecurityOriginData> targetOrigin, const MessageWithMessagePorts& message)
 {
     if (RefPtr page = m_frame->page())
         page->send(Messages::WebPageProxy::PostMessageToRemote(source, sourceOrigin, target, targetOrigin, message));
@@ -96,7 +107,7 @@ String WebRemoteFrameClient::renderTreeAsText(size_t baseIndent, OptionSet<Rende
     RefPtr page = m_frame->page();
     if (!page)
         return "Test Error - Missing page"_s;
-    auto sendResult = page->sendSync(Messages::WebPageProxy::RenderTreeAsTextForTesting(m_frame->frameID(), baseIndent, behavior));
+    auto sendResult = page->sendSync(Messages::WebPageProxy::RenderTreeAsTextForTesting(m_frame->frameID(), baseIndent, behavior), IPC::Timeout::infinity(), IPC::SendSyncOption::MaintainOrderingWithAsyncMessages);
     if (!sendResult.succeeded())
         return "Test Error - sending WebPageProxy::RenderTreeAsTextForTesting failed"_s;
     auto [result] = sendResult.takeReply();
@@ -193,9 +204,24 @@ void WebRemoteFrameClient::updateSandboxFlags(WebCore::SandboxFlags sandboxFlags
     WebFrameLoaderClient::updateSandboxFlags(sandboxFlags);
 }
 
-void WebRemoteFrameClient::updateOpener(const WebCore::Frame& newOpener)
+void WebRemoteFrameClient::updateOpener(std::optional<WebCore::FrameIdentifier> newOpener)
 {
     WebFrameLoaderClient::updateOpener(newOpener);
+}
+
+void WebRemoteFrameClient::setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize adjustViewSize)
+{
+    WebFrameLoaderClient::setPrinting(printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize);
+}
+
+void WebRemoteFrameClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
+{
+    WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(data);
+}
+
+void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(const FrameTreeSyncSerializationData& data)
+{
+    WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(data);
 }
 
 void WebRemoteFrameClient::applyWebsitePolicies(WebsitePoliciesData&& websitePolicies)
@@ -217,6 +243,12 @@ void WebRemoteFrameClient::updateScrollingMode(ScrollbarMode scrollingMode)
 {
     if (RefPtr page = m_frame->page())
         page->send(Messages::WebPageProxy::UpdateScrollingMode(m_frame->frameID(), scrollingMode));
+}
+
+void WebRemoteFrameClient::reportMixedContentViolation(bool blocked, const URL& target)
+{
+    if (RefPtr page = m_frame->page())
+        page->send(Messages::WebPageProxy::ReportMixedContentViolation(m_frame->frameID(), blocked, target));
 }
 
 void WebRemoteFrameClient::findFocusableElementDescendingIntoRemoteFrame(WebCore::FocusDirection direction, const WebCore::FocusEventData& focusEventData, CompletionHandler<void(WebCore::FoundElementInRemoteFrame)>&& completionHandler)

@@ -51,12 +51,12 @@ InspectorWorkerAgent::~InspectorWorkerAgent()
 
 void InspectorWorkerAgent::didCreateFrontendAndBackend()
 {
-    m_instrumentingAgents.setPersistentWorkerAgent(this);
+    Ref { m_instrumentingAgents.get() }->setPersistentWorkerAgent(this);
 }
 
 void InspectorWorkerAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    m_instrumentingAgents.setPersistentWorkerAgent(nullptr);
+    Ref { m_instrumentingAgents.get() }->setPersistentWorkerAgent(nullptr);
 
     disable();
 }
@@ -87,7 +87,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::disable()
 
 Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::initialized(const String& workerId)
 {
-    RefPtr proxy = m_connectedProxies.get(workerId).get();
+    RefPtr proxy = m_connectedProxies.get(workerId);
     if (!proxy)
         return makeUnexpected("Missing worker for given workerId"_s);
 
@@ -101,7 +101,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorWorkerAgent::sendMessageToWork
     if (!m_enabled)
         return makeUnexpected("Worker domain must be enabled"_s);
 
-    RefPtr proxy = m_connectedProxies.get(workerId).get();
+    RefPtr proxy = m_connectedProxies.get(workerId);
     if (!proxy)
         return makeUnexpected("Missing worker for given workerId"_s);
 

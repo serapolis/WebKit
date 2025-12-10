@@ -35,9 +35,9 @@
 #include "MultiChannelResampler.h"
 #include "PushPullFIFO.h"
 #include "SharedAudioDestination.h"
-#include "SpanCoreAudio.h"
 #include "SpatialAudioExperienceHelper.h"
 #include <algorithm>
+#include <pal/cf/CoreAudioExtras.h>
 
 namespace WebCore {
 

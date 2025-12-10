@@ -42,16 +42,21 @@ class WorkerGlobalScope;
 
 struct FontCustomPlatformData;
 
-class WorkerFontLoadRequest final : public FontLoadRequest, public ThreadableLoaderClient {
+class WorkerFontLoadRequest final : public FontLoadRequest, public ThreadableLoaderClient, public RefCounted<WorkerFontLoadRequest> {
     WTF_MAKE_TZONE_ALLOCATED(WorkerFontLoadRequest);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerFontLoadRequest);
 public:
-    WorkerFontLoadRequest(URL&&, LoadedFromOpaqueSource);
-    ~WorkerFontLoadRequest() = default;
+    static Ref<WorkerFontLoadRequest> create(URL&&, LoadedFromOpaqueSource);
 
     void load(WorkerGlobalScope&);
 
+    // FontLoadRequest.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
 private:
+    WorkerFontLoadRequest(URL&&, LoadedFromOpaqueSource);
+
     const URL& url() const final { return m_url; }
     bool isPending() const final { return !m_isLoading && !m_errorOccurred && !m_data; }
     bool isLoading() const final { return m_isLoading; }
@@ -69,13 +74,15 @@ private:
     void didFinishLoading(ScriptExecutionContextIdentifier, std::optional<ResourceLoaderIdentifier>, const NetworkLoadMetrics&) final;
     void didFail(std::optional<ScriptExecutionContextIdentifier>, const ResourceError&) final;
 
+    RefPtr<FontCustomPlatformData> loadCustomFont(SharedBuffer&, const String&);
+
     URL m_url;
     LoadedFromOpaqueSource m_loadedFromOpaqueSource;
 
     bool m_isLoading { false };
     bool m_notifyOnClientSet { false };
     bool m_errorOccurred { false };
-    FontLoadRequestClient* m_fontLoadRequestClient { nullptr };
+    WeakPtr<FontLoadRequestClient> m_fontLoadRequestClient;
 
     WeakPtr<ScriptExecutionContext> m_context;
     SharedBufferBuilder m_data;

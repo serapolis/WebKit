@@ -139,12 +139,12 @@ void MediaPlayerPrivateMediaStreamAVFObjC::setNativeImageCreator(NativeImageCrea
     m_nativeImageCreator = WTFMove(callback);
 }
 
-MediaPlayerPrivateMediaStreamAVFObjC::MediaPlayerPrivateMediaStreamAVFObjC(MediaPlayer* player)
+MediaPlayerPrivateMediaStreamAVFObjC::MediaPlayerPrivateMediaStreamAVFObjC(MediaPlayer& player)
     : m_player(player)
     , m_startTime(MediaTime::invalidTime())
     , m_videoRotation { VideoFrameRotation::None }
-    , m_logger(player->mediaPlayerLogger())
-    , m_logIdentifier(player->mediaPlayerLogIdentifier())
+    , m_logger(player.mediaPlayerLogger())
+    , m_logIdentifier(player.mediaPlayerLogIdentifier())
     , m_videoLayerManager(makeUniqueRef<VideoLayerManagerObjC>(m_logger, m_logIdentifier))
 {
     INFO_LOG(LOGIDENTIFIER);
@@ -191,10 +191,11 @@ MediaPlayerPrivateMediaStreamAVFObjC::~MediaPlayerPrivateMediaStreamAVFObjC()
 
 class MediaPlayerFactoryMediaStreamAVFObjC final : public MediaPlayerFactory {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(MediaPlayerFactoryMediaStreamAVFObjC);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlayerFactoryMediaStreamAVFObjC);
 private:
     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::AVFoundationMediaStream; };
 
-    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer* player) const final
+    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer& player) const final
     {
         return adoptRef(*new MediaPlayerPrivateMediaStreamAVFObjC(player));
     }

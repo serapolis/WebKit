@@ -37,6 +37,7 @@
 #include "CustomElementRegistry.h"
 #include "DataTransfer.h"
 #include "DocumentInlines.h"
+#include "DocumentQuirks.h"
 #include "DocumentType.h"
 #include "ElementIterator.h"
 #include "ElementRareData.h"
@@ -46,6 +47,7 @@
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
+#include "FrameInlines.h"
 #include "GCReachableRef.h"
 #include "HTMLAreaElement.h"
 #include "HTMLBodyElement.h"
@@ -55,7 +57,6 @@
 #include "HTMLSlotElement.h"
 #include "HTMLStyleElement.h"
 #include "InputEvent.h"
-#include "InspectorController.h"
 #include "InspectorInstrumentation.h"
 #include "KeyboardEvent.h"
 #include "LiveNodeListInlines.h"
@@ -67,6 +68,7 @@
 #include "NodeName.h"
 #include "NodeRareDataInlines.h"
 #include "NodeRenderStyle.h"
+#include "PageInspectorController.h"
 #include "PointerEvent.h"
 #include "ProcessingInstruction.h"
 #include "ProgressEvent.h"
@@ -84,6 +86,7 @@
 #include "StorageEvent.h"
 #include "StyleResolver.h"
 #include "StyleSheetContents.h"
+#include "SubmitEvent.h"
 #include "TemplateContentDocumentFragment.h"
 #include "TextEvent.h"
 #include "TextManipulationController.h"
@@ -245,7 +248,7 @@ void Node::dumpStatistics()
                     ++elementsWithNamedNodeMap;
             }
             auto* rareData = node.rareData();
-            auto useTypes = is<Element>(node) ? static_cast<ElementRareData*>(rareData)->useTypes() : rareData->useTypes();
+            auto useTypes = is<Element>(node) ? downcast<ElementRareData>(rareData)->useTypes() : rareData->useTypes();
             unsigned useTypeCount = 0;
             for (auto type : useTypes) {
                 UNUSED_PARAM(type);
@@ -365,8 +368,8 @@ inline void NodeRareData::operator delete(NodeRareData* nodeRareData, std::destr
         RareDataType::freeAfterDestruction(&value);
     };
 
-    if (nodeRareData->m_isElementRareData)
-        destroyAndFree(static_cast<ElementRareData&>(*nodeRareData));
+    if (auto* elementRareData = dynamicDowncast<ElementRareData>(*nodeRareData))
+        destroyAndFree(*elementRareData);
     else
         destroyAndFree(*nodeRareData);
 }
@@ -1080,23 +1083,49 @@ void Node::invalidateNodeListAndCollectionCachesInAncestors()
     }
 }
 
-void Node::invalidateNodeListAndCollectionCachesInAncestorsForAttribute(const QualifiedName& attrName)
+void Node::invalidateNodeListCollectionAndInnerHTMLPrefixCachesInAncestorsForAttribute(const QualifiedName& attrName, const IsMutationBySetInnerHTML isMutationBySetInnerHTML)
 {
     ASSERT(is<Element>(*this));
 
-    if (!document().shouldInvalidateNodeListAndCollectionCachesForAttribute(attrName))
+    bool shouldInvalidate = document().shouldInvalidateNodeListAndCollectionCachesForAttribute(attrName);
+
+    WeakPtr cachedContainer = document().cachedSetInnerHTML().cachedContainer;
+    bool shouldSetMutationBit = isMutationBySetInnerHTML == IsMutationBySetInnerHTML::No && cachedContainer;
+
+    if (!shouldInvalidate && !shouldSetMutationBit)
         return;
 
-    document().invalidateNodeListAndCollectionCaches([&attrName](auto& list) {
-        list.invalidateCacheForAttribute(attrName);
-    });
+    if (shouldInvalidate) {
+        document().invalidateNodeListAndCollectionCaches([&attrName](auto& list) {
+            list.invalidateCacheForAttribute(attrName);
+        });
+    }
 
     for (auto* node = this; node; node = node->parentNode()) {
-        if (!node->hasRareData())
+        if (shouldSetMutationBit && !node->hasDidMutateSubtreeAfterSetInnerHTML()) {
+            node->setDidMutateSubtreeAfterSetInnerHTML();
+            if (node == cachedContainer.get())
+                shouldSetMutationBit = false;
+        }
+
+        if (!shouldInvalidate || !node->hasRareData())
             continue;
 
         if (auto* lists = node->rareData()->nodeLists())
             lists->invalidateCachesForAttribute(attrName);
+    }
+}
+
+void Node::setDidMutateSubtreeAfterSetInnerHTMLOnAncestors()
+{
+    WeakPtr cachedContainer = document().cachedSetInnerHTML().cachedContainer;
+    if (!cachedContainer)
+        return;
+
+    for (auto* node = this; node; node = node->parentNode()) {
+        node->setDidMutateSubtreeAfterSetInnerHTML();
+        if (node == cachedContainer.get())
+            break;
     }
 }
 
@@ -1762,7 +1791,7 @@ String Node::textContent(bool convertBRsToNewlines) const
 }
 
 ExceptionOr<void> Node::setTextContent(String&& text)
-{           
+{
     switch (nodeType()) {
     case ATTRIBUTE_NODE:
     case TEXT_NODE:
@@ -2194,9 +2223,18 @@ static ALWAYS_INLINE bool isDocumentEligibleForFastAdoption(Document& oldDocumen
         && oldDocument.inQuirksMode() == newDocument.inQuirksMode();
 }
 
+static ALWAYS_INLINE void adoptCustomElementRegistryIfNotExplicitlySet(ShadowRoot& shadowRoot, Document& newDocument)
+{
+    if (shadowRoot.hasScopedCustomElementRegistry() || !shadowRoot.usesNullCustomElementRegistry() || newDocument.usesNullCustomElementRegistry()) [[likely]]
+        return;
+    shadowRoot.clearUsesNullCustomElementRegistry();
+    shadowRoot.setCustomElementRegistry(newDocument.customElementRegistry());
+}
+
 inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot, Document& oldDocument, Document& newDocument)
 {
     ASSERT(isDocumentEligibleForFastAdoption(oldDocument, newDocument));
+    adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
     return traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
         node.moveNodeToNewDocumentFastCase(oldDocument, newDocument);
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
@@ -2209,6 +2247,7 @@ inline unsigned Node::moveShadowTreeToNewDocumentFastCase(ShadowRoot& shadowRoot
 inline void Node::moveShadowTreeToNewDocumentSlowCase(ShadowRoot& shadowRoot, Document& oldDocument, Document& newDocument)
 {
     ASSERT(!isDocumentEligibleForFastAdoption(oldDocument, newDocument));
+    adoptCustomElementRegistryIfNotExplicitlySet(shadowRoot, newDocument);
     traverseSubtreeToUpdateTreeScope(shadowRoot, [&](Node& node) {
         node.moveNodeToNewDocumentSlowCase(oldDocument, newDocument);
     }, [&oldDocument, &newDocument](ShadowRoot& innerShadowRoot) {
@@ -2291,6 +2330,9 @@ void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDoc
     ASSERT(!transientMutationObserverRegistry());
     ASSERT(!oldDocument.numberOfIntersectionObservers());
 
+    if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
+        clearUsesNullCustomElementRegistry();
+
     if (!hasTypeFlag(TypeFlag::HasDidMoveToNewDocument) && !hasEventTargetFlag(EventTargetFlag::HasLangAttr) && !hasEventTargetFlag(EventTargetFlag::HasXMLLangAttr)
         && !isDefinedCustomElement())
         return;
@@ -2303,6 +2345,9 @@ void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDoc
 {
     newDocument.incrementReferencingNodeCount();
     oldDocument.decrementReferencingNodeCount();
+
+    if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
+        clearUsesNullCustomElementRegistry();
 
     if (hasRareData()) {
         if (auto* nodeLists = rareData()->nodeLists())
@@ -2520,7 +2565,7 @@ void Node::removeAllEventListeners()
     });
 }
 
-Vector<std::unique_ptr<MutationObserverRegistration>>* Node::mutationObserverRegistry()
+Vector<Ref<MutationObserverRegistration>>* Node::mutationObserverRegistry()
 {
     if (!hasRareData())
         return nullptr;
@@ -2557,7 +2602,7 @@ HashMap<Ref<MutationObserver>, MutationRecordDeliveryOptions> Node::registeredMu
     for (RefPtr node = this; node; node = node->parentNode()) {
         if (auto* registry = node->mutationObserverRegistry()) {
             for (auto& registration : *registry)
-                collectMatchingObserversForMutation(*registration);
+                collectMatchingObserversForMutation(registration);
         }
         if (auto* registry = node->transientMutationObserverRegistry()) {
             for (auto& registration : *registry)
@@ -2570,19 +2615,19 @@ HashMap<Ref<MutationObserver>, MutationRecordDeliveryOptions> Node::registeredMu
 
 void Node::registerMutationObserver(MutationObserver& observer, MutationObserverOptions options, const MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>& attributeFilter)
 {
-    MutationObserverRegistration* registration = nullptr;
+    RefPtr<MutationObserverRegistration> registration;
     auto& registry = ensureRareData().mutationObserverData().registry;
 
     for (auto& candidateRegistration : registry) {
         if (&candidateRegistration->observer() == &observer) {
-            registration = candidateRegistration.get();
+            registration = candidateRegistration.ptr();
             registration->resetObservation(options, attributeFilter);
         }
     }
 
     if (!registration) {
-        registry.append(makeUnique<MutationObserverRegistration>(observer, *this, options, attributeFilter));
-        registration = registry.last().get();
+        registry.append(MutationObserverRegistration::create(observer, *this, options, attributeFilter));
+        registration = registry.last().ptr();
     }
 
     document().addMutationObserverTypes(registration->mutationTypes());
@@ -2596,7 +2641,7 @@ void Node::unregisterMutationObserver(MutationObserverRegistration& registration
         return;
 
     registry->removeFirstMatching([&registration] (auto& current) {
-        return current.get() == &registration;
+        return current.ptr() == &registration;
     });
 }
 
@@ -2676,6 +2721,22 @@ void Node::dispatchInputEvent()
     dispatchScopedEvent(Event::create(eventNames().inputEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
 }
 
+void Node::dispatchWebKitSubmitEvent(Event& underlyingSubmitEvent)
+{
+    RefPtr submitEvent = dynamicDowncast<SubmitEvent>(underlyingSubmitEvent);
+    if (!submitEvent)
+        return;
+
+    SubmitEvent::Init init { };
+    init.bubbles = true;
+    init.cancelable = true;
+    init.composed = true;
+    init.submitter = submitEvent->submitter();
+    Ref webkitSubmitEvent = SubmitEvent::create(eventNames().webkitsubmitEvent, WTFMove(init));
+    webkitSubmitEvent->setIsAutofillEvent();
+    dispatchScopedEvent(webkitSubmitEvent);
+}
+
 void Node::defaultEventHandler(Event& event)
 {
     if (event.target() != this)
@@ -2703,6 +2764,9 @@ void Node::defaultEventHandler(Event& event)
         }
         break;
 #endif
+    case EventType::submit:
+        dispatchWebKitSubmitEvent(event);
+        break;
     case EventType::textInput:
         if (RefPtr textEvent = dynamicDowncast<TextEvent>(event)) {
             if (RefPtr frame = document().frame())

@@ -35,6 +35,7 @@
 #import "WebProcess.h"
 #import <WebCore/CVUtilities.h>
 #import <WebCore/GraphicsLayerContentsDisplayDelegate.h>
+#import <WebCore/GraphicsLayerEnums.h>
 #import <WebCore/IOSurface.h>
 #import <WebCore/PlatformCALayer.h>
 #import <WebCore/PlatformCALayerDelegatedContents.h>
@@ -100,9 +101,9 @@ public:
             layer.clearContents();
     }
 
-    WebCore::GraphicsLayer::CompositingCoordinatesOrientation orientation() const final
+    WebCore::GraphicsLayerCompositingCoordinatesOrientation orientation() const final
     {
-        return WebCore::GraphicsLayer::CompositingCoordinatesOrientation::BottomUp;
+        return WebCore::GraphicsLayerCompositingCoordinatesOrientation::BottomUp;
     }
 
     void setDisplayBuffer(MachSendRight&& displayBuffer, RefPtr<DisplayBufferFence> finishedFence)
@@ -139,8 +140,8 @@ public:
     void forceContextLost() final;
 
 private:
-    explicit RemoteGraphicsContextGLProxyCocoa(const WebCore::GraphicsContextGLAttributes& attributes)
-        : RemoteGraphicsContextGLProxy(attributes)
+    explicit RemoteGraphicsContextGLProxyCocoa(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)
+        : RemoteGraphicsContextGLProxy(attributes, renderingBackend)
         , m_layerContentsDisplayDelegate(DisplayBufferDisplayDelegate::create(!attributes.alpha))
     {
     }
@@ -167,6 +168,7 @@ void RemoteGraphicsContextGLProxyCocoa::prepareForDisplay()
     auto [displayBufferSendRight] = sendResult.takeReply();
     if (!displayBufferSendRight)
         return;
+    m_hasPreparedForDisplay = true;
     auto finishedFence = DisplayBufferFence::create(WTFMove(finishedSignaller));
     addNewFence(finishedFence);
     m_layerContentsDisplayDelegate->setDisplayBuffer(WTFMove(displayBufferSendRight), WTFMove(finishedFence));
@@ -192,9 +194,9 @@ void RemoteGraphicsContextGLProxyCocoa::addNewFence(Ref<DisplayBufferFence> newF
 
 }
 
-Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(const WebCore::GraphicsContextGLAttributes& attributes)
+Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend)
 {
-    return adoptRef(*new RemoteGraphicsContextGLProxyCocoa(attributes));
+    return adoptRef(*new RemoteGraphicsContextGLProxyCocoa(attributes, renderingBackend));
 }
 
 }

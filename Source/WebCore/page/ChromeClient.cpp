@@ -119,4 +119,19 @@ void ChromeClient::requestPointerLock(CompletionHandler<void(PointerLockRequestR
 }
 #endif
 
+#if ENABLE(IMAGE_ANALYSIS)
+void ChromeClient::requestTextRecognition(Element&, TextRecognitionOptions&&, CompletionHandler<void(RefPtr<Element>&&)>&& completion)
+{
+    if (completion)
+        completion({ });
+}
+#endif
+
+#if ENABLE(VIDEO)
+void ChromeClient::showCaptionDisplaySettings(HTMLMediaElement&, const ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(ExceptionOr<void>)>&& completionHandler)
+{
+    completionHandler(Exception { ExceptionCode::NotSupportedError, "Caption Display Settings are not supported."_s });
+}
+#endif
+
 } // namespace WebCore

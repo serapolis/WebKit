@@ -59,6 +59,7 @@ static constexpr auto iconsManifestKey = "icons"_s;
 #if ENABLE(WK_WEB_EXTENSIONS_ICON_VARIANTS)
 static constexpr auto iconVariantsManifestKey = "icon_variants"_s;
 static constexpr auto colorSchemesManifestKey = "color_schemes"_s;
+static constexpr auto colorSchemesAPIKey = "colorSchemes"_s;
 static constexpr auto lightManifestKey = "light"_s;
 static constexpr auto darkManifestKey = "dark"_s;
 static constexpr auto anyManifestKey = "any"_s;
@@ -301,7 +302,7 @@ bool WebExtension::parseManifest(StringView manifestString)
 RefPtr<const JSON::Object> WebExtension::manifestObject()
 {
     if (m_parsedManifest)
-        return m_manifestJSON->asObject();
+        return Ref { m_manifestJSON }->asObject();
 
     m_parsedManifest = true;
 
@@ -314,7 +315,7 @@ RefPtr<const JSON::Object> WebExtension::manifestObject()
     if (!parseManifest(manifestStringResult.value()))
         return nullptr;
 
-    return m_manifestJSON->asObject();
+    return Ref { m_manifestJSON }->asObject();
 }
 
 bool WebExtension::manifestParsedSuccessfully()
@@ -1840,7 +1841,6 @@ void WebExtension::populateActionPropertiesIfNeeded()
     // Look for the "default_icon" as a string, which is useful for SVG icons. Only supported by Firefox currently.
     if (auto defaultIconPath = actionObject->getString(defaultIconManifestKey); !defaultIconPath.isEmpty()) {
         auto defaultIconResult = iconForPath(defaultIconPath);
-
         if (!defaultIconResult) {
             recordErrorIfNeeded(defaultIconResult.error());
 
@@ -1851,9 +1851,8 @@ void WebExtension::populateActionPropertiesIfNeeded()
                 localizedErrorDescription = WEB_UI_STRING("Failed to load image for `default_icon` in the `browser_action` or `page_action` manifest entry.", "WKWebExtensionErrorInvalidActionIcon description for failing to load single image for browser_action or page_action");
 
             recordError(createError(Error::InvalidActionIcon, localizedErrorDescription));
-        }
-
-        m_defaultActionIcon = defaultIconResult.value().get();
+        } else
+            m_defaultActionIcon = defaultIconResult.value().get();
     }
 
     m_displayActionLabel = actionObject->getString(defaultTitleManifestKey);
@@ -2095,7 +2094,7 @@ RefPtr<JSON::Object> WebExtension::bestIconVariantJSONObject(RefPtr<JSON::Array>
             continue;
 
         RefPtr variantObject = variant->asObject();
-        auto colorSchemes = toColorSchemes(variantObject ? variantObject->getValue(colorSchemesManifestKey) : nullptr);
+        auto colorSchemes = toColorSchemes(variantObject ? variantObject->getValue(colorSchemesManifestKey) ?: variantObject->getValue(colorSchemesAPIKey) : nullptr);
         auto currentBestSize = bestIconSize(*variantObject, idealPixelSize);
 
         if (colorSchemes.contains(idealColorScheme)) {

@@ -30,7 +30,8 @@
 
 #pragma once
 
-#include <WebCore/StyleTransformOperationWrapper.h>
+#include <WebCore/StyleTransformFunctionBase.h>
+#include <WebCore/StyleTransformFunctionWrapper.h>
 #include <WebCore/StyleValueTypes.h>
 #include <WebCore/TransformOperation.h>
 
@@ -39,18 +40,20 @@ namespace Style {
 
 // Any <transform-function>.
 // https://www.w3.org/TR/css-transforms-1/#typedef-transform-function
-struct TransformFunction : TransformOperationWrapper<TransformOperation> {
-    using TransformOperationWrapper<TransformOperation>::TransformOperationWrapper;
+struct TransformFunction : TransformFunctionWrapper<TransformFunctionBase> {
+    using TransformFunctionWrapper<TransformFunctionBase>::TransformFunctionWrapper;
 };
 
 // MARK: - Conversion
 
 template<> struct CSSValueConversion<TransformFunction> { auto operator()(BuilderState&, const CSSValue&) -> TransformFunction; };
 template<> struct CSSValueCreation<TransformFunction> { auto operator()(CSSValuePool&, const RenderStyle&, const TransformFunction&) -> Ref<CSSValue>; };
+template<> struct CSSValueCreation<TransformationMatrix> { auto operator()(CSSValuePool&, const RenderStyle&, const TransformationMatrix&) -> Ref<CSSValue>; };
 
 // MARK: - Serialization
 
 template<> struct Serialize<TransformFunction> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const TransformFunction&); };
+template<> struct Serialize<TransformationMatrix> { void operator()(StringBuilder&, const CSS::SerializationContext&, const RenderStyle&, const TransformationMatrix&); };
 
 // MARK: - Blending
 
@@ -60,7 +63,7 @@ template<> struct Blending<TransformFunction> {
 
 // MARK: - Platform
 
-template<> struct ToPlatform<TransformFunction> { auto operator()(const TransformFunction&) -> Ref<TransformOperation>; };
+template<> struct ToPlatform<TransformFunction> { auto operator()(const TransformFunction&, const FloatSize&) -> Ref<TransformOperation>; };
 
 // MARK: - Logging
 

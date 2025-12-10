@@ -234,14 +234,20 @@ void SOAuthorizationSession::continueStartAfterDecidePolicy(const SOAuthorizatio
     }
 
     auto initiatorOrigin = emptyString();
-    if (m_navigationAction->sourceFrame())
-        initiatorOrigin = m_navigationAction->sourceFrame()->securityOrigin().securityOrigin()->toString();
-    if (m_action == InitiatingAction::SubFrame && m_page->mainFrame())
-        initiatorOrigin = WebCore::SecurityOrigin::create(m_page->mainFrame()->url())->toString();
+    if (RefPtr sourceOrigin = m_navigationAction->sourceFrame() ? m_navigationAction->sourceFrame()->securityOrigin().securityOrigin().ptr() : nullptr; sourceOrigin && !sourceOrigin->isOpaque())
+        initiatorOrigin = sourceOrigin->toString();
+    String initiatingPath = emptyString();
+    if (m_page->mainFrame()) {
+        if (m_action == InitiatingAction::SubFrame)
+            initiatorOrigin = WebCore::SecurityOrigin::create(m_page->mainFrame()->url())->toString();
+        initiatingPath = m_page->mainFrame()->url().path().toString();
+    }
+
     RetainPtr<NSDictionary> authorizationOptions = @{
         SOAuthorizationOptionUserActionInitiated: @(m_navigationAction->isProcessingUserGesture()),
         SOAuthorizationOptionInitiatorOrigin: initiatorOrigin.createNSString().get(),
-        SOAuthorizationOptionInitiatingAction: @(static_cast<NSInteger>(m_action))
+        SOAuthorizationOptionInitiatingAction: @(static_cast<NSInteger>(m_action)),
+        kSOAuthorizationOptionInitiatingPath: initiatingPath.createNSString().get()
     };
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<WKWebView> webView = m_page->cocoaView();
@@ -265,7 +271,7 @@ void SOAuthorizationSession::continueStartAfterDecidePolicy(const SOAuthorizatio
 
     RetainPtr nsRequest = m_navigationAction->request().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
     AUTHORIZATIONSESSION_RELEASE_LOG("continueStartAfterGetAuthorizationHints: Beginning authorization with AppSSO.");
-    [m_soAuthorization beginAuthorizationWithURL:nsRequest.get().URL httpHeaders:nsRequest.get().allHTTPHeaderFields httpBody:nsRequest.get().HTTPBody];
+    [m_soAuthorization beginAuthorizationWithURL:retainPtr(nsRequest.get().URL).get() httpHeaders:retainPtr(nsRequest.get().allHTTPHeaderFields).get() httpBody:retainPtr(nsRequest.get().HTTPBody).get()];
 }
 
 void SOAuthorizationSession::fallBackToWebPath()
@@ -330,7 +336,7 @@ void SOAuthorizationSession::complete(NSHTTPURLResponse *httpResponse, NSData *d
     }
 
     // Set cookies.
-    auto cookies = toCookieVector([NSHTTPCookie cookiesWithResponseHeaderFields:httpResponse.allHeaderFields forURL:response.url().createNSURL().get()]);
+    auto cookies = toCookieVector([NSHTTPCookie cookiesWithResponseHeaderFields:retainPtr(httpResponse.allHeaderFields).get() forURL:response.url().createNSURL().get()]);
 
     AUTHORIZATIONSESSION_RELEASE_LOG("complete: (httpStatusCode=%d, hasCookies=%d, hasData=%d)", response.httpStatusCode(), !cookies.isEmpty(), !!data.length);
 
@@ -485,12 +491,14 @@ void SOAuthorizationSession::dismissViewController()
         }
     }
 
-    if (!m_isInDestructor && NSApp.hidden) {
+    // FIXME: This is a safer cpp false positive (rdar://problem/161068288).
+    SUPPRESS_UNRETAINED_ARG if (!m_isInDestructor && NSApp.hidden) {
         AUTHORIZATIONSESSION_RELEASE_LOG("dismissViewController: Application is hidden. Waiting to dismiss until active.");
         if (m_applicationDidUnhideObserver) {
             AUTHORIZATIONSESSION_RELEASE_LOG("dismissViewController: [Hidden] Already has an Unhide observer (%p). Deminiaturized observer is %p", m_presentingWindowDidDeminiaturizeObserver.get(), m_applicationDidUnhideObserver.get());
             return;
         }
+        // FIXME: We should not need to protect NSApp here (rdar://problem/161068288).
         m_applicationDidUnhideObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidUnhideNotification object:NSApp queue:nil usingBlock:[protectedThis = Ref { *this }, this] (NSNotification *) {
             AUTHORIZATIONSESSION_RELEASE_LOG("dismissViewController: Application is no longer hidden. Completing the dismissal.");
             dismissViewController();

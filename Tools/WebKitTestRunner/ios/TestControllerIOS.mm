@@ -179,7 +179,6 @@ void TestController::platformInitialize(const Options& options)
     cocoaPlatformInitialize(options);
 
     [UIApplication sharedApplication].idleTimerDisabled = YES;
-    [[UIScreen mainScreen] _setScale:2.0];
 
     auto center = CFNotificationCenterGetLocalCenter();
     CFNotificationCenterAddObserver(center, this, handleKeyboardWillHideNotification, (CFStringRef)UIKeyboardWillHideNotification, nullptr, CFNotificationSuspensionBehaviorDeliverImmediately);
@@ -213,6 +212,11 @@ void TestController::platformDestroy()
     CFNotificationCenterRemoveObserver(center, this, (CFStringRef)UIMenuControllerWillHideMenuNotification, nullptr);
     CFNotificationCenterRemoveObserver(center, this, (CFStringRef)UIMenuControllerDidHideMenuNotification, nullptr);
     ALLOW_DEPRECATED_DECLARATIONS_END
+
+#if !ENABLE(DNS_SERVER_FOR_TESTING_IN_NETWORKING_PROCESS)
+    if (auto resolverConfig = m_resolverConfig)
+        nw_resolver_config_unpublish(resolverConfig.get());
+#endif
 }
 
 void TestController::initializeInjectedBundlePath()
@@ -316,7 +320,6 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
     [UIKeyboardImpl.activeInstance setCorrectionLearningAllowed:NO];
     [pasteboardConsistencyEnforcer() clearPasteboard];
     [[UIApplication sharedApplication] _cancelAllTouches];
-    [[UIScreen mainScreen] _setScale:2.0];
     [[HIDEventGenerator sharedHIDEventGenerator] resetActiveModifiers];
 
     restorePortraitOrientationIfNeeded();
@@ -393,6 +396,10 @@ bool TestController::platformResetStateToConsistentValues(const TestOptions& opt
 
 #if HAVE(UIFINDINTERACTION)
         webView.findInteractionEnabled = options.findInteractionEnabled();
+#endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+        webView.shouldAcceptImmersiveEnvironmentRequests = options.shouldAcceptImmersiveEnvironmentRequests();
 #endif
 
         UIScrollView *scrollView = webView.scrollView;

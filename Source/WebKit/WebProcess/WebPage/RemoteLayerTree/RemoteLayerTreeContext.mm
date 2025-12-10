@@ -56,6 +56,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerTreeContext);
 RemoteLayerTreeContext::RemoteLayerTreeContext(WebPage& webPage)
     : m_webPage(webPage)
     , m_backingStoreCollection(makeUniqueRefWithoutRefCountedCheck<RemoteLayerBackingStoreCollection>(*this))
+    , m_layerPool(makeUniqueRef<LayerPool>())
 {
 }
 
@@ -80,7 +81,7 @@ void RemoteLayerTreeContext::adoptLayersFromContext(RemoteLayerTreeContext& oldC
 
 float RemoteLayerTreeContext::deviceScaleFactor() const
 {
-    return m_webPage->deviceScaleFactor();
+    return protectedWebPage()->deviceScaleFactor();
 }
 
 std::optional<DrawingAreaIdentifier> RemoteLayerTreeContext::drawingAreaIdentifier() const
@@ -100,7 +101,7 @@ std::optional<WebCore::DestinationColorSpace> RemoteLayerTreeContext::displayCol
 
 UseLosslessCompression RemoteLayerTreeContext::useIOSurfaceLosslessCompression() const
 {
-    return m_webPage->isIOSurfaceLosslessCompressionEnabled() ? UseLosslessCompression::Yes : UseLosslessCompression::No;
+    return protectedWebPage()->isIOSurfaceLosslessCompressionEnabled() ? UseLosslessCompression::Yes : UseLosslessCompression::No;
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -153,6 +154,11 @@ WebPage& RemoteLayerTreeContext::webPage()
 }
 
 Ref<WebPage> RemoteLayerTreeContext::protectedWebPage()
+{
+    return m_webPage.get();
+}
+
+Ref<const WebPage> RemoteLayerTreeContext::protectedWebPage() const
 {
     return m_webPage.get();
 }
@@ -218,8 +224,8 @@ void RemoteLayerTreeContext::buildTransaction(RemoteLayerTreeTransaction& transa
 
 void RemoteLayerTreeContext::layerPropertyChangedWhileBuildingTransaction(PlatformCALayerRemote& layer)
 {
-    if (m_currentTransaction)
-        m_currentTransaction->layerPropertiesChanged(layer);
+    if (CheckedPtr currentTransaction = m_currentTransaction.get())
+        currentTransaction->layerPropertiesChanged(layer);
 }
 
 void RemoteLayerTreeContext::willStartAnimationOnLayer(PlatformCALayerRemote& layer)

@@ -213,6 +213,12 @@
 #define ALWAYS_INLINE_LAMBDA
 #endif
 
+/* COLD */
+
+#if !defined(COLD)
+#define COLD __attribute((__cold__))
+#endif
+
 /* WTF_EXTERN_C_{BEGIN, END} */
 
 #ifdef __cplusplus
@@ -337,7 +343,11 @@
 /* WK_UNUSED_INSTANCE_VARIABLE */
 
 #if !defined(WK_UNUSED_INSTANCE_VARIABLE)
+#if COMPILER_HAS_ATTRIBUTE(suppress)
+#define WK_UNUSED_INSTANCE_VARIABLE [[clang::suppress]] __attribute__((unused))
+#else
 #define WK_UNUSED_INSTANCE_VARIABLE __attribute__((unused))
+#endif
 #endif
 
 /* UNUSED_FUNCTION */
@@ -685,6 +695,18 @@
     ALLOW_COMMA_END \
     ALLOW_DEPRECATED_DECLARATIONS_END \
     ALLOW_UNUSED_PARAMETERS_END
+
+/* NULLABLE etc. */
+
+#if COMPILER(CLANG)
+#define WTF_NULL_UNSPECIFIED _Null_unspecified
+#define WTF_NULLABLE _Nullable
+#define WTF_NONNULL _Nonnull
+#else
+#define WTF_NULL_UNSPECIFIED
+#define WTF_NULLABLE
+#define WTF_NONNULL
+#endif
 
 // Used to indicate that a class member has a specialized implementation in Swift. See
 // "SwiftCXXThunk.h".

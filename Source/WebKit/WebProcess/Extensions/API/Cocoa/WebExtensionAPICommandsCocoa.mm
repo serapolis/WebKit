@@ -47,7 +47,6 @@
 
 namespace WebKit {
 
-static NSString * const nameKey = @"name";
 static NSString * const descriptionKey = @"description";
 static NSString * const shortcutKey = @"shortcut";
 static NSString * const newShortcutKey = @"newShortcut";
@@ -56,7 +55,7 @@ static NSString * const oldShortcutKey = @"oldShortcut";
 static inline NSDictionary *toAPI(const WebExtensionCommandParameters& command)
 {
     return @{
-        nameKey: command.identifier.createNSString().get(),
+        @"name": command.identifier.createNSString().get(),
         descriptionKey: command.description.createNSString().get(),
         shortcutKey: command.shortcut.createNSString().get()
     };
@@ -77,7 +76,7 @@ void WebExtensionAPICommands::getAll(Ref<WebExtensionCallbackHandler>&& callback
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/commands/getAll
 
     WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::CommandsGetAll(), [protectedThis = Ref { *this }, callback = WTFMove(callback)](Vector<WebExtensionCommandParameters> commands) {
-        callback->call(toAPI(commands));
+        callback->call(toJSValueRef(callback->globalContext(), toAPI(commands)));
     }, extensionContext().identifier());
 }
 
@@ -118,7 +117,7 @@ void WebExtensionContextProxy::dispatchCommandsCommandEvent(const String& identi
 void WebExtensionContextProxy::dispatchCommandsChangedEvent(const String& identifier, const String& oldShortcut, const String& newShortcut)
 {
     auto *changeInfo = @{
-        nameKey: identifier.createNSString().get(),
+        @"name": identifier.createNSString().get(),
         oldShortcutKey: oldShortcut.createNSString().get(),
         newShortcutKey: newShortcut.createNSString().get()
     };

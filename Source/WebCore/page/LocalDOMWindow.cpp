@@ -40,6 +40,7 @@
 #include "ContentExtensionActions.h"
 #include "ContentExtensionRule.h"
 #include "ContentRuleListResults.h"
+#include "ContentSecurityPolicy.h"
 #include "ContextDestructionObserverInlines.h"
 #include "CookieStore.h"
 #include "CrossOriginMode.h"
@@ -56,8 +57,13 @@
 #include "DeviceOrientationAndMotionAccessController.h"
 #include "DeviceOrientationController.h"
 #include "Document.h"
+#include "DocumentEventLoop.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentQuirks.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
+#include "DocumentWindow.h"
 #include "Editor.h"
 #include "Element.h"
 #include "EventCounts.h"
@@ -70,6 +76,7 @@
 #include "FloatRect.h"
 #include "FocusController.h"
 #include "FrameConsoleClient.h"
+#include "FrameInlines.h"
 #include "FrameLoadRequest.h"
 #include "FrameLoader.h"
 #include "FrameTree.h"
@@ -108,7 +115,6 @@
 #include "PlatformStrategies.h"
 #include "PushManager.h"
 #include "PushStrategy.h"
-#include "Quirks.h"
 #include "RemoteFrame.h"
 #include "RequestAnimationFrameCallback.h"
 #include "ResourceLoadInfo.h"
@@ -532,7 +538,7 @@ void LocalDOMWindow::willDestroyCachedFrame()
     // It is necessary to copy m_observers to a separate vector because the LocalDOMWindowObserver may
     // unregister themselves from the LocalDOMWindow as a result of the call to willDestroyGlobalObjectInCachedFrame.
     m_observers.forEach([](auto& observer) {
-        observer.willDestroyGlobalObjectInCachedFrame();
+        Ref { observer }->willDestroyGlobalObjectInCachedFrame();
     });
 }
 
@@ -541,7 +547,7 @@ void LocalDOMWindow::willDestroyDocumentInFrame()
     // It is necessary to copy m_observers to a separate vector because the LocalDOMWindowObserver may
     // unregister themselves from the LocalDOMWindow as a result of the call to willDestroyGlobalObjectInFrame.
     m_observers.forEach([](auto& observer) {
-        observer.willDestroyGlobalObjectInFrame();
+        Ref { observer }->willDestroyGlobalObjectInFrame();
     });
 }
 
@@ -555,7 +561,7 @@ void LocalDOMWindow::willDetachDocumentFromFrame()
     // It is necessary to copy m_observers to a separate vector because the LocalDOMWindowObserver may
     // unregister themselves from the LocalDOMWindow as a result of the call to willDetachGlobalObjectFromFrame.
     m_observers.forEach([](auto& observer) {
-        observer.willDetachGlobalObjectFromFrame();
+        Ref { observer }->willDetachGlobalObjectFromFrame();
     });
 
     if (RefPtr performance = m_performance)
@@ -608,7 +614,7 @@ void LocalDOMWindow::suspendForBackForwardCache()
     RELEASE_ASSERT(frame());
 
     m_observers.forEach([](auto& observer) {
-        observer.suspendForBackForwardCache();
+        Ref { observer }->suspendForBackForwardCache();
     });
     RELEASE_ASSERT(frame());
 
@@ -618,7 +624,7 @@ void LocalDOMWindow::suspendForBackForwardCache()
 void LocalDOMWindow::resumeFromBackForwardCache()
 {
     m_observers.forEach([](auto& observer) {
-        observer.resumeFromBackForwardCache();
+        Ref { observer }->resumeFromBackForwardCache();
     });
 
     m_suspendedForDocumentSuspension = false;
@@ -862,7 +868,10 @@ bool LocalDOMWindow::shouldHaveWebKitNamespaceForWorld(DOMWrapperWorld& world, J
         }
     });
 
-    return hasUserMessageHandler;
+    if (hasUserMessageHandler)
+        return true;
+
+    return userContentProvider->hasBuffersForWorld(world);
 }
 
 WebKitNamespace* LocalDOMWindow::webkitNamespace()
@@ -947,7 +956,7 @@ ExceptionOr<Storage*> LocalDOMWindow::localStorage()
     return m_localStorage.get();
 }
 
-void LocalDOMWindow::processPostMessage(JSC::JSGlobalObject& lexicalGlobalObject, const String& sourceOrigin, const MessageWithMessagePorts& message, RefPtr<WindowProxy>&& incumbentWindowProxy, RefPtr<SecurityOrigin>&& targetOrigin)
+void LocalDOMWindow::processPostMessage(JSC::JSGlobalObject& lexicalGlobalObject, Ref<SecurityOrigin>&& sourceOrigin, const MessageWithMessagePorts& message, RefPtr<WindowProxy>&& incumbentWindowProxy, RefPtr<SecurityOrigin>&& targetOrigin)
 {
     // Capture stack trace only when inspector front-end is loaded as it may be time consuming.
     RefPtr document = this->document();
@@ -959,7 +968,7 @@ void LocalDOMWindow::processPostMessage(JSC::JSGlobalObject& lexicalGlobalObject
 
     auto userGestureToForward = UserGestureIndicator::currentUserGesture();
 
-    document->checkedEventLoop()->queueTask(TaskSource::PostedMessageQueue, [this, protectedThis = Ref { *this }, message = message, incumbentWindowProxy = WTFMove(incumbentWindowProxy), sourceOrigin, userGestureToForward = WTFMove(userGestureToForward), postMessageIdentifier, stackTrace = WTFMove(stackTrace), targetOrigin = WTFMove(targetOrigin)]() mutable {
+    document->checkedEventLoop()->queueTask(TaskSource::PostedMessageQueue, [this, protectedThis = Ref { *this }, message = message, incumbentWindowProxy = WTFMove(incumbentWindowProxy), sourceOrigin = WTFMove(sourceOrigin), userGestureToForward = WTFMove(userGestureToForward), postMessageIdentifier, stackTrace = WTFMove(stackTrace), targetOrigin = WTFMove(targetOrigin)]() mutable {
         if (!isCurrentlyDisplayedInFrame())
             return;
 
@@ -992,7 +1001,7 @@ void LocalDOMWindow::processPostMessage(JSC::JSGlobalObject& lexicalGlobalObject
         InspectorInstrumentation::willDispatchPostMessage(frame, postMessageIdentifier);
 
         auto ports = MessagePort::entanglePorts(*document, WTFMove(message.transferredPorts));
-        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), sourceOrigin, { }, incumbentWindowProxy ? std::make_optional(MessageEventSource(WTFMove(incumbentWindowProxy))) : std::nullopt, WTFMove(ports));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), WTFMove(sourceOrigin), { }, incumbentWindowProxy ? std::make_optional(MessageEventSource(WTFMove(incumbentWindowProxy))) : std::nullopt, WTFMove(ports));
         if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());
@@ -1031,16 +1040,16 @@ ExceptionOr<void> LocalDOMWindow::postMessage(JSC::JSGlobalObject& lexicalGlobal
 
     // Capture the source of the message. We need to do this synchronously
     // in order to capture the source of the message correctly.
-    auto sourceOrigin = sourceDocument->securityOrigin().toString();
+    Ref sourceOrigin = sourceDocument->securityOrigin();
 
     // Schedule the message.
     RefPtr incumbentWindowProxy = incumbentWindow.frame() ? &incumbentWindow.frame()->windowProxy() : nullptr;
     MessageWithMessagePorts message { messageData.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
-    processPostMessage(lexicalGlobalObject, sourceOrigin, message, WTFMove(incumbentWindowProxy), targetSecurityOrigin.releaseReturnValue());
+    processPostMessage(lexicalGlobalObject, WTFMove(sourceOrigin), message, WTFMove(incumbentWindowProxy), targetSecurityOrigin.releaseReturnValue());
     return { };
 }
 
-void LocalDOMWindow::postMessageFromRemoteFrame(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<WindowProxy>&& source, const String& sourceOrigin, std::optional<WebCore::SecurityOriginData>&& targetOriginData, const WebCore::MessageWithMessagePorts& message)
+void LocalDOMWindow::postMessageFromRemoteFrame(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<WindowProxy>&& source, const WebCore::SecurityOriginData& sourceOrigin, std::optional<WebCore::SecurityOriginData>&& targetOriginData, const WebCore::MessageWithMessagePorts& message)
 {
     if (!frame())
         return;
@@ -1049,7 +1058,7 @@ void LocalDOMWindow::postMessageFromRemoteFrame(JSC::JSGlobalObject& lexicalGlob
     if (targetOriginData)
         targetOrigin = targetOriginData->securityOrigin();
 
-    processPostMessage(lexicalGlobalObject, sourceOrigin, message, WTFMove(source), WTFMove(targetOrigin));
+    processPostMessage(lexicalGlobalObject, sourceOrigin.securityOrigin(), message, WTFMove(source), WTFMove(targetOrigin));
 }
 
 DOMSelection* LocalDOMWindow::getSelection()
@@ -1509,7 +1518,7 @@ void LocalDOMWindow::setStatus(const String& string)
 void LocalDOMWindow::disownOpener()
 {
     if (RefPtr frame = localFrame())
-        frame->disownOpener();
+        frame->disownOpener(Frame::NotifyUIProcess::Yes);
 }
 
 String LocalDOMWindow::origin() const
@@ -1671,7 +1680,6 @@ Ref<CSSStyleDeclaration> LocalDOMWindow::getComputedStyle(Element& element, cons
     auto [pseudoElementIsParsable, pseudoElementIdentifier] = CSSSelectorParser::parsePseudoElement(pseudoElt, CSSSelectorParserContext { element.protectedDocument() });
     if (!pseudoElementIsParsable)
         return CSSComputedStyleDeclaration::createEmpty(element);
-    // FIXME: CSSSelectorParser::parsePseudoElement should never return PseudoId::None.
     return CSSComputedStyleDeclaration::create(element, pseudoElementIdentifier);
 }
 
@@ -1754,7 +1762,20 @@ double LocalDOMWindow::devicePixelRatio() const
     if (!page)
         return 0.0;
 
-    return page->deviceScaleFactor();
+    auto frameScaleRatio = [&] {
+        float frameScale = 1.0f;
+        if (auto* localFrame = dynamicDowncast<LocalFrame>(frame.get())) {
+            frameScale = localFrame->frameScaleFactor();
+            // Page zoom applies to all frames synchronously, so include it in devicePixelRatio
+            // for both main frame and iframes. frameScaleFactor() doesn't include page zoom
+            // since page zoom is applied globally for rendering.
+            float pageZoom = localFrame->pageZoomFactor();
+            frameScale *= pageZoom;
+        }
+        return frameScale;
+    };
+
+    return page->deviceScaleFactor() * frameScaleRatio();
 }
 
 void LocalDOMWindow::scrollBy(double x, double y) const
@@ -2499,8 +2520,11 @@ EventTimingInteractionID LocalDOMWindow::computeInteractionID(Event& event, Even
 
     switch (type) {
     case EventType::keyup: {
-        ASSERT(event.isKeyboardEvent());
-        auto keyboardEvent = downcast<KeyboardEvent>(&event);
+        RefPtr keyboardEvent = dynamicDowncast<KeyboardEvent>(&event);
+        // Simulated keyboard inputs such as dictation are not KeyboardEvent:
+        if (!keyboardEvent) [[unlikely]]
+            return { };
+
         if (keyboardEvent->isComposing())
             return { };
 
@@ -2529,11 +2553,11 @@ EventTimingInteractionID LocalDOMWindow::computeInteractionID(Event& event, Even
         return { };
     }
     case EventType::input: {
-        // Return early for events not related to text, such as checkbox toggling:
-        if (!event.isInputEvent())
+        // Fails for events not related to text, such as checkbox toggling:
+        RefPtr inputEvent = dynamicDowncast<InputEvent>(&event);
+        if (!inputEvent)
             return { };
 
-        auto inputEvent = downcast<InputEvent>(&event);
         if (!inputEvent->isInputMethodComposing())
             return { };
 
@@ -2622,6 +2646,14 @@ PerformanceEventTimingCandidate LocalDOMWindow::initializeEventTimingEntry(Event
     if (startTime > processingStart)
         startTime = processingStart;
 
+    // Workaround for https://webkit.org/b/301443 firing keyup events with very old timestamps:
+    if (type == EventType::input) {
+        m_lastInputEventStartTime = std::max(startTime, m_lastInputEventStartTime);
+    } else if (type == EventType::keyup && startTime < m_lastInputEventStartTime) {
+        LOG_WITH_STREAM(PerformanceTimeline, stream << "Late keyup event received; refreshing timestamp: " << startTime << " -> " << m_lastInputEventStartTime);
+        startTime = m_lastInputEventStartTime;
+    }
+
     return PerformanceEventTimingCandidate {
         .type = type,
         .cancelable = event.cancelable(),
@@ -2653,7 +2685,12 @@ void LocalDOMWindow::finalizeEventTimingEntry(PerformanceEventTimingCandidate& e
         return;
     }
     case EventType::keydown: {
-        auto keyboardEvent = downcast<KeyboardEvent>(&event);
+        RefPtr keyboardEvent = dynamicDowncast<KeyboardEvent>(&event);
+        // Simulated keyboard inputs such as dictation are not KeyboardEvent:
+        if (!keyboardEvent) [[unlikely]] {
+            m_performanceEventTimingCandidates.append(entry);
+            return;
+        }
         entry.interactionID = keyboardEvent->interactionID();
         auto keyCode = keyboardEvent->keyCode();
         // FIXME: checking for keyCode 229 (IME) is against the spec, but it's
@@ -2679,7 +2716,11 @@ void LocalDOMWindow::finalizeEventTimingEntry(PerformanceEventTimingCandidate& e
         return;
     }
     case EventType::keypress: {
-        auto keyboardEvent = downcast<KeyboardEvent>(&event);
+        RefPtr keyboardEvent = dynamicDowncast<KeyboardEvent>(&event);
+        if (!keyboardEvent) [[unlikely]] {
+            m_performanceEventTimingCandidates.append(entry);
+            return;
+        }
         auto keyCode = keyboardEvent->keyCodeForKeyDown();
         auto it = m_pendingKeyDowns.find(keyCode);
         if (it == m_pendingKeyDowns.end()) {
@@ -2698,7 +2739,15 @@ void LocalDOMWindow::dispatchPendingEventTimingEntries()
 {
     auto renderingTime = performance().nowInReducedResolutionSeconds();
     if (m_pendingPointerDown && !m_pendingPointerDown->duration)
-        m_pendingPointerDown->duration = renderingTime - m_pendingPointerDown->startTime;
+        m_pendingPointerDown->duration = std::max(renderingTime - m_pendingPointerDown->startTime, Seconds::fromMilliseconds(1));
+
+    for (auto& keydownEntry : m_pendingKeyDowns) {
+        if (!keydownEntry.value.keyDown.duration)
+            keydownEntry.value.keyDown.duration = std::max(renderingTime - keydownEntry.value.keyDown.startTime, Seconds::fromMilliseconds(1));
+
+        if (keydownEntry.value.keyPress && !keydownEntry.value.keyPress->duration)
+            keydownEntry.value.keyPress->duration = std::max(renderingTime - keydownEntry.value.keyPress->startTime, Seconds::fromMilliseconds(1));
+    }
 
     if (m_performanceEventTimingCandidates.isEmpty())
         return;
@@ -2706,7 +2755,8 @@ void LocalDOMWindow::dispatchPendingEventTimingEntries()
     LOG_WITH_STREAM(PerformanceTimeline, stream << "Dispatching " << m_performanceEventTimingCandidates.size() << " event timing entries at t=" << renderingTime);
     for (auto& candidateEntry : m_performanceEventTimingCandidates) {
         performance().countEvent(candidateEntry.type);
-        candidateEntry.duration = renderingTime - candidateEntry.startTime;
+        if (!candidateEntry.duration)
+            candidateEntry.duration = renderingTime - candidateEntry.startTime;
         performance().processEventEntry(candidateEntry);
     }
     m_performanceEventTimingCandidates.clear();
@@ -2825,6 +2875,17 @@ ExceptionOr<RefPtr<Frame>> LocalDOMWindow::createWindow(const String& urlString,
     return noopener ? RefPtr<Frame> { nullptr } : newFrame;
 }
 
+#if PLATFORM(IOS_FAMILY)
+static bool shouldBypassPopupBlockerForQuirk(const Document* document, const String& urlString)
+{
+    if (RefPtr firstFrameDocument = document) {
+        if (firstFrameDocument->quirks().shouldAllowPopupFromMicrosoftOfficeToOneDrive())
+            return firstFrameDocument->quirks().needsPopupFromMicrosoftOfficeToOneDrive(firstFrameDocument->completeURL(urlString));
+    }
+    return false;
+}
+#endif
+
 ExceptionOr<RefPtr<WindowProxy>> LocalDOMWindow::open(LocalDOMWindow& activeWindow, LocalDOMWindow& firstWindow, const String& urlStringToOpen, const AtomString& frameName, const String& windowFeaturesString)
 {
     if (!isCurrentlyDisplayedInFrame())
@@ -2858,7 +2919,12 @@ ExceptionOr<RefPtr<WindowProxy>> LocalDOMWindow::open(LocalDOMWindow& activeWind
     if (!frame)
         return RefPtr<WindowProxy> { nullptr };
 
-    if (!firstWindow.allowPopUp()) {
+    auto popupAllowed = firstWindow.allowPopUp();
+#if PLATFORM(IOS_FAMILY)
+    popupAllowed |= shouldBypassPopupBlockerForQuirk(firstFrame->document(), urlString);
+#endif
+
+    if (!popupAllowed) {
         // Because FrameTree::findFrameForNavigation() returns true for empty strings, we must check for empty frame names.
         // Otherwise, illegitimate window.open() calls with no name will pass right through the popup blocker.
         if (frameName.isEmpty() || !frame->loader().findFrameForNavigation(frameName, activeDocument.get()))

@@ -35,13 +35,16 @@ namespace WebCore {
 
 class StyleFilterImage final : public StyleGeneratedImage, private CachedImageClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StyleFilterImage);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StyleFilterImage);
 public:
     static Ref<StyleFilterImage> create(RefPtr<StyleImage> image, Style::Filter filter)
     {
         return adoptRef(*new StyleFilterImage(WTFMove(image), WTFMove(filter)));
     }
     virtual ~StyleFilterImage();
+
+    // CachedResourceClient.
+    void ref() const final { StyleGeneratedImage::ref(); }
+    void deref() const final { StyleGeneratedImage::deref(); }
 
     bool operator==(const StyleImage& other) const final;
     bool equals(const StyleFilterImage&) const;
@@ -58,7 +61,7 @@ private:
     Ref<CSSValue> computedStyleValue(const RenderStyle&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<Image> image(const RenderElement*, const FloatSize&, bool isForFirstLine) const final;
+    RefPtr<Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
     FloatSize fixedSize(const RenderElement&) const final;
     void didAddClient(RenderElement&) final { }

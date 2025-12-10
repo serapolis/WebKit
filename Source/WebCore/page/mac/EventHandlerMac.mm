@@ -33,10 +33,12 @@
 #import "ChromeClient.h"
 #import "DataTransfer.h"
 #import "DictionaryLookup.h"
+#import "DocumentPage.h"
+#import "DocumentQuirks.h"
+#import "DocumentView.h"
 #import "DragController.h"
 #import "Editor.h"
 #import "FocusController.h"
-#import "FrameInlines.h"
 #import "FrameLoader.h"
 #import "HTMLBodyElement.h"
 #import "HTMLDocument.h"
@@ -810,20 +812,13 @@ static ContainerNode* findEnclosingScrollableContainer(ContainerNode* node, cons
 
 static WeakPtr<ScrollableArea> scrollableAreaForEventTarget(Element* eventTarget)
 {
-    auto* widget = EventHandler::widgetForEventTarget(eventTarget);
-    if (!widget || !widget->isScrollView())
-        return { };
-
-    return static_cast<ScrollableArea&>(static_cast<ScrollView&>(*widget));
+    return dynamicDowncast<ScrollView>(EventHandler::widgetForEventTarget(eventTarget));
 }
     
 static bool eventTargetIsPlatformWidget(Element* eventTarget)
 {
-    Widget* widget = EventHandler::widgetForEventTarget(eventTarget);
-    if (!widget)
-        return false;
-    
-    return widget->platformWidget();
+    auto* widget = EventHandler::widgetForEventTarget(eventTarget);
+    return widget && widget->platformWidget();
 }
 
 static WeakPtr<ScrollableArea> scrollableAreaForContainerNode(ContainerNode& container)
@@ -856,7 +851,7 @@ void EventHandler::determineWheelEventTarget(const PlatformWheelEvent& wheelEven
         if (scrollableContainer)
             scrollableArea = scrollableAreaForContainerNode(*scrollableContainer);
         else
-            scrollableArea = static_cast<ScrollableArea&>(*view);
+            scrollableArea = *view;
     }
 
     LOG_WITH_STREAM(ScrollLatching, stream << "EventHandler::determineWheelEventTarget() - event " << wheelEvent << " found scrollableArea " << ValueOrNull(scrollableArea.get()) << ", latching state is " << page->scrollLatchingController());
@@ -921,7 +916,6 @@ bool EventHandler::processWheelEventForScrolling(const PlatformWheelEvent& wheel
 
 void EventHandler::wheelEventWasProcessedByMainThread(const PlatformWheelEvent& wheelEvent, OptionSet<EventHandling> eventHandling)
 {
-#if ENABLE(ASYNC_SCROLLING)
     if (!m_frame->page())
         return;
 
@@ -935,10 +929,6 @@ void EventHandler::wheelEventWasProcessedByMainThread(const PlatformWheelEvent& 
         if (scrollingCoordinator->coordinatesScrollingForFrameView(*view))
             scrollingCoordinator->wheelEventWasProcessedByMainThread(wheelEvent, m_wheelScrollGestureState);
     }
-#else
-    UNUSED_PARAM(wheelEvent);
-    UNUSED_PARAM(eventHandling);
-#endif
 }
 
 bool EventHandler::platformCompletePlatformWidgetWheelEvent(const PlatformWheelEvent& wheelEvent, const Widget& widget, const WeakPtr<ScrollableArea>& scrollableArea)

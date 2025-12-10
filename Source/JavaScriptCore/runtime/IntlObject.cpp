@@ -1142,6 +1142,7 @@ static VariantCode parseVariantCode(StringView string)
     struct Code {
         Latin1Character characters[8] { };
     };
+    static_assert(std::is_unsigned_v<Latin1Character>);
     static_assert(sizeof(VariantCode) == sizeof(Code));
     Code code { };
     for (unsigned index = 0; index < string.length(); ++index)
@@ -1624,15 +1625,21 @@ const Vector<String>& intlAvailableCalendars()
             return StringImpl::createStaticStringImpl(string.span16());
         };
 
-        availableCalendars.construct(count, [&](size_t) {
+        availableCalendars.construct();
+        for (int32_t i = 0; i < count; ++i) {
             int32_t length = 0;
             const char* pointer = uenum_next(enumeration.get(), &length, &status);
             ASSERT(U_SUCCESS(status));
             String calendar(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
             if (auto mapped = mapICUCalendarKeywordToBCP47(calendar))
-                return createImmortalThreadSafeString(WTFMove(mapped.value()));
-            return createImmortalThreadSafeString(WTFMove(calendar));
-        });
+                calendar = WTFMove(mapped.value());
+
+            // Skip if the obtained calendar code is not meeting Unicode Locale Identifier's `type` definition
+            // as whole ECMAScript's i18n is relying on Unicode Local Identifiers.
+            if (!isUnicodeLocaleIdentifierType(calendar))
+                continue;
+            availableCalendars->append(createImmortalThreadSafeString(WTFMove(calendar)));
+        }
 
         // The AvailableCalendars abstract operation returns a List, ordered as if an Array of the same
         // values had been sorted using %Array.prototype.sort% using undefined as comparator
@@ -1710,10 +1717,7 @@ static JSArray* availableCollations(JSGlobalObject* globalObject)
 
     // The AvailableCollations abstract operation returns a List, ordered as if an Array of the same
     // values had been sorted using %Array.prototype.sort% using undefined as comparator
-    std::sort(elements.begin(), elements.end(),
-        [](const String& a, const String& b) {
-            return WTF::codePointCompare(a, b) < 0;
-        });
+    std::ranges::sort(elements, WTF::codePointCompareLessThan);
     auto end = std::unique(elements.begin(), elements.end());
     elements.shrink(elements.size() - (elements.end() - end));
 
@@ -1766,10 +1770,7 @@ static JSArray* availableCurrencies(JSGlobalObject* globalObject)
 
     // The AvailableCurrencies abstract operation returns a List, ordered as if an Array of the same
     // values had been sorted using %Array.prototype.sort% using undefined as comparator
-    std::sort(elements.begin(), elements.end(),
-        [](const String& a, const String& b) {
-            return WTF::codePointCompare(a, b) < 0;
-        });
+    std::ranges::sort(elements, WTF::codePointCompareLessThan);
     auto end = std::unique(elements.begin(), elements.end());
     elements.shrink(elements.size() - (elements.end() - end));
 
@@ -1816,10 +1817,7 @@ static JSArray* availableNumberingSystems(JSGlobalObject* globalObject)
 
     // The AvailableNumberingSystems abstract operation returns a List, ordered as if an Array of the same
     // values had been sorted using %Array.prototype.sort% using undefined as comprator
-    std::sort(elements.begin(), elements.end(),
-        [](const String& a, const String& b) {
-            return WTF::codePointCompare(a, b) < 0;
-        });
+    std::ranges::sort(elements, WTF::codePointCompareLessThan);
 
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTFMove(elements)));
 }
@@ -1874,10 +1872,7 @@ const Vector<String>& intlAvailableTimeZones()
 
         // The AvailableTimeZones abstract operation returns a List, ordered as if an Array of the same
         // values had been sorted using %Array.prototype.sort% using undefined as comparator
-        std::sort(temporary.begin(), temporary.end(),
-            [](const String& a, const String& b) {
-                return WTF::codePointCompare(a, b) < 0;
-            });
+        std::ranges::sort(temporary, WTF::codePointCompareLessThan);
         auto end = std::unique(temporary.begin(), temporary.end());
         availableTimeZones.construct();
 

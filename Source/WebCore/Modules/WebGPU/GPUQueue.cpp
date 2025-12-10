@@ -46,6 +46,7 @@
 #include "VideoFrame.h"
 #include "WebCodecsVideoFrame.h"
 #include "WebGPUDevice.h"
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/MallocSpan.h>
 
 #if PLATFORM(COCOA)
@@ -408,12 +409,12 @@ static void clampDimension(WebGPU::Extent3D& extent3D, size_t dimension, WebGPU:
     });
 }
 
-static void getImageBytesFromVideoFrame(WebGPU::Queue& backing, const RefPtr<VideoFrame>& videoFrame, WebGPU::Extent3D& backingCopySize, NOESCAPE const ImageDataCallback& callback)
+static void getImageBytesFromVideoFrame(const RefPtr<VideoFrame>& videoFrame, WebGPU::Extent3D& backingCopySize, NOESCAPE const ImageDataCallback& callback)
 {
     if (!videoFrame.get())
         return callback({ }, 0, 0);
 
-    RefPtr<NativeImage> nativeImage = backing.getNativeImage(*videoFrame.get());
+    RefPtr nativeImage = videoFrame->copyNativeImage();
     if (!nativeImage)
         return callback({ }, 0, 0);
 
@@ -513,12 +514,15 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
         if (!pixelDataCfData)
             return callback({ }, 0, 0);
 
-        auto width = CGImageGetWidth(platformImage.get());
-        auto height = CGImageGetHeight(platformImage.get());
-        if (!width || !height)
+        auto rawWidth = CGImageGetWidth(platformImage.get());
+        auto rawHeight = CGImageGetHeight(platformImage.get());
+        auto orientedWidth = isSVG ? rawWidth : imageElement->width();
+        auto orientedHeight = isSVG ? rawHeight : imageElement->height();
+
+        if (!orientedWidth || !orientedHeight || !rawWidth || !rawHeight)
             return callback({ }, 0, 0);
 
-        auto sizeInBytes = height * CGImageGetBytesPerRow(platformImage.get());
+        auto sizeInBytes = rawHeight * CGImageGetBytesPerRow(platformImage.get());
         auto bitsPerComponent = CGImageGetBitsPerComponent(platformImage.get());
         auto byteSpan = span(pixelDataCfData.get());
         Vector<uint8_t> byteSpanBacking;
@@ -528,7 +532,7 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
             sizeInBytes = byteSpan.size();
         }
 
-        auto requiredSize = width * height * 4;
+        auto requiredSize = orientedWidth * orientedHeight * 4;
         auto alphaInfo = CGImageGetAlphaInfo(platformImage.get());
         bool channelLayoutIsRGB = false;
         bool isBGRA = toPixelFormat(destination.texture->format()) == PixelFormat::BGRA8;
@@ -564,12 +568,13 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
             }
         }();
 
-        if (sizeInBytes == requiredSize && channelLayoutIsRGB)
-            return callback(byteSpan.first(sizeInBytes), width, height);
+        auto orientation = RefPtr { imageElement->image() }->orientation().orientation();
+        if (sizeInBytes == requiredSize && channelLayoutIsRGB && orientation == ImageOrientation::Orientation::OriginTopLeft)
+            return callback(byteSpan.first(sizeInBytes), rawWidth, rawHeight);
 
         auto bytesPerRow = CGImageGetBytesPerRow(platformImage.get()) / (bitsPerComponent / 8);
         Vector<uint8_t> tempBuffer(requiredSize, 255);
-        auto bytesPerPixel = sizeInBytes / (width * height);
+        auto bytesPerPixel = sizeInBytes / (rawWidth * rawHeight);
         bool flipY = sourceDescriptor.flipY;
         needsYFlip = false;
         int direction = flipY ? -1 : 1;
@@ -580,17 +585,40 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
             alphaIndex = 1;
         }
 
-        for (size_t y = 0, y0 = flipY ? (height - 1) : 0; y < height; ++y, y0 += direction) {
-            for (size_t x = 0; x < width; ++x) {
+        auto mapDestinationToSource = [&orientation, &rawWidth, &rawHeight](size_t x, size_t y) -> std::pair<size_t, size_t> {
+            switch (orientation) {
+            case ImageOrientation::Orientation::OriginTopRight:
+                return { rawWidth - 1 - x, y };
+            case ImageOrientation::Orientation::OriginBottomRight:
+                return { rawWidth - 1 - x, rawHeight - 1 - y };
+            case ImageOrientation::Orientation::OriginBottomLeft:
+                return { x, rawHeight - 1 - y };
+            case ImageOrientation::Orientation::OriginLeftTop:
+                return { y, x };
+            case ImageOrientation::Orientation::OriginRightTop:
+                return { y, rawHeight - 1 - x };
+            case ImageOrientation::Orientation::OriginRightBottom:
+                return { rawWidth - 1 - y, rawHeight - 1 - x };
+            case ImageOrientation::Orientation::OriginLeftBottom:
+                return { rawWidth - 1 - y, x };
+            default:
+                return { x, y };
+            }
+        };
+
+        for (size_t y = 0, y0 = flipY ? (orientedHeight - 1) : 0; y < orientedHeight; ++y, y0 += direction) {
+            for (size_t x = 0; x < orientedWidth; ++x) {
+                auto [sourceX, sourceY] = mapDestinationToSource(x, y);
+
                 for (size_t c = 0; c < 4; ++c) {
                     if (channels[c] == 3 && bytesPerPixel < 4)
-                        tempBuffer[y0 * (width * 4) + x * 4 + channels[c]] = hasAlpha ? byteSpan[y * bytesPerRow + x * bytesPerPixel + alphaIndex] : 255;
+                        tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = hasAlpha ? byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + alphaIndex] : 255;
                     else
-                        tempBuffer[y0 * (width * 4) + x * 4 + channels[c]] = byteSpan[y * bytesPerRow + x * bytesPerPixel + std::min<size_t>(maxChannelIndex, c)];
+                        tempBuffer[y0 * (orientedWidth * 4) + x * 4 + channels[c]] = byteSpan[sourceY * bytesPerRow + sourceX * bytesPerPixel + std::min<size_t>(maxChannelIndex, c)];
                 }
             }
         }
-        callback(tempBuffer.span(), width, height);
+        callback(tempBuffer.span(), orientedWidth, orientedHeight);
 #else
         UNUSED_PARAM(needsYFlip);
         UNUSED_PARAM(imageElement);
@@ -599,14 +627,14 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
     }, [&](const RefPtr<HTMLVideoElement> videoElement) -> ResultType {
 #if PLATFORM(COCOA)
         if (RefPtr player = videoElement ? videoElement->player() : nullptr; player && player->isVideoPlayer())
-            return getImageBytesFromVideoFrame(backing, player->videoFrameForCurrentTime(), backingCopySize, callback);
+            return getImageBytesFromVideoFrame(player->videoFrameForCurrentTime(), backingCopySize, callback);
 #else
         UNUSED_PARAM(videoElement);
 #endif
         return callback({ }, 0, 0);
     }, [&](const RefPtr<WebCodecsVideoFrame> webCodecsFrame) -> ResultType {
 #if PLATFORM(COCOA)
-        return getImageBytesFromVideoFrame(backing, webCodecsFrame->internalFrame(), backingCopySize, callback);
+        return getImageBytesFromVideoFrame(webCodecsFrame->internalFrame(), backingCopySize, callback);
 #else
         UNUSED_PARAM(webCodecsFrame);
         return callback({ }, 0, 0);
@@ -694,13 +722,16 @@ static GPUIntegerCoordinate dimension(const GPUOrigin2D& origin, size_t dimensio
 static bool isStateValid(const auto& source, const std::optional<GPUOrigin2D>& origin, const GPUExtent3D& copySize, ExceptionCode& errorCode)
 {
     using ResultType = bool;
-    auto horizontalDimension = (origin ? dimension(*origin, 0) : 0) + dimension(copySize, 0);
-    auto verticalDimension = (origin ? dimension(*origin, 1) : 0) + dimension(copySize, 1);
+    auto checkedHorizontalDimension = checkedSum<uint32_t>((origin ? dimension(*origin, 0) : 0), dimension(copySize, 0));
+    auto checkedVerticalDimension = checkedSum<uint32_t>((origin ? dimension(*origin, 1) : 0), dimension(copySize, 1));
     auto depthDimension = dimension(copySize, 2);
-    if (depthDimension > 1) {
+    if (depthDimension > 1 || checkedHorizontalDimension.hasOverflowed() || checkedVerticalDimension.hasOverflowed()) {
         errorCode = ExceptionCode::OperationError;
         return false;
     }
+
+    uint32_t horizontalDimension = checkedHorizontalDimension.value();
+    uint32_t verticalDimension = checkedVerticalDimension.value();
 
     return WTF::switchOn(source, [&](const RefPtr<ImageBitmap>& imageBitmap) -> ResultType {
         if (!imageBitmap->buffer()) {

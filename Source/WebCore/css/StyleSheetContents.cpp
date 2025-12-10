@@ -27,15 +27,14 @@
 #include "CachePolicy.h"
 #include "CachedCSSStyleSheet.h"
 #include "CommonAtomStrings.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "FrameConsoleClient.h"
-#include "FrameInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "LocalFrame.h"
 #include "MediaList.h"
-#include "Node.h"
+#include "NodeDocument.h"
 #include "OriginAccessPatterns.h"
-#include "Page.h"
 #include "ResourceLoadInfo.h"
 #include "RuleSet.h"
 #include "SecurityOrigin.h"
@@ -590,6 +589,7 @@ bool StyleSheetContents::traverseSubresources(NOESCAPE const Function<bool(const
         case StyleRuleType::PositionTry:
         case StyleRuleType::Function:
         case StyleRuleType::FunctionDeclarations:
+        case StyleRuleType::InternalBaseAppearance:
             return false;
         };
         ASSERT_NOT_REACHED();
@@ -669,6 +669,7 @@ bool StyleSheetContents::mayDependOnBaseURL() const
         case StyleRuleType::PositionTry:
         case StyleRuleType::Function:
         case StyleRuleType::FunctionDeclarations:
+        case StyleRuleType::InternalBaseAppearance:
             return false;
         };
         ASSERT_NOT_REACHED();

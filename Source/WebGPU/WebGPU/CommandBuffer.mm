@@ -78,6 +78,8 @@ void CommandBuffer::makeInvalid(NSString* lastError)
     retainTimestampsForOneUpdateLoop();
     m_commandBuffer = nil;
     m_cachedCommandBuffer = nil;
+    if (RefPtr commandEncoder = m_commandEncoder)
+        commandEncoder->clearTracking();
     m_commandEncoder = nullptr;
     m_preCommitHandlers.clear();
     m_postCommitHandlers.clear();
@@ -117,8 +119,11 @@ void CommandBuffer::makeInvalidDueToCommit(NSString* lastError)
     m_cachedCommandBuffer = m_commandBuffer;
     [m_commandBuffer addCompletedHandler:[protectedThis = Ref { *this }](id<MTLCommandBuffer>) {
         protectedThis->m_commandBufferComplete.signal();
-        protectedThis->m_device->protectedQueue()->scheduleWork([protectedThis = WTFMove(protectedThis)]() mutable {
+        protectedThis->m_device->protectedQueue()->scheduleWork([protectedThis]() mutable {
             protectedThis->m_cachedCommandBuffer = nil;
+            if (RefPtr commandEncoder = protectedThis->m_commandEncoder)
+                commandEncoder->clearTracking();
+
             protectedThis->m_commandEncoder = nullptr;
         });
     }];

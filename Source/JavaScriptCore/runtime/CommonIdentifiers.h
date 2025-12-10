@@ -87,6 +87,7 @@
     macro(bytecodes) \
     macro(bytecodesID) \
     macro(calendar) \
+    macro(calendarName) \
     macro(callee) \
     macro(caller) \
     macro(captureStackTrace) \
@@ -252,6 +253,8 @@
     macro(resizable) \
     macro(resize) \
     macro(resolve) \
+    macro(reject) \
+    macro(reason) \
     macro(roundingIncrement) \
     macro(roundingMode) \
     macro(roundingPriority) \
@@ -272,6 +275,7 @@
     macro(sourceURL) \
     macro(stack) \
     macro(stackTraceLimit) \
+    macro(status) \
     macro(sticky) \
     macro(style) \
     macro(subarray) \
@@ -329,7 +333,6 @@
     macro(AsyncDisposableStack) \
     macro(disposeAsync) \
     macro(keys) \
-    macro(flat) \
     macro(promise) \
 
 #define JSC_COMMON_IDENTIFIERS_EACH_PRIVATE_FIELD(macro) \

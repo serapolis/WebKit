@@ -26,7 +26,9 @@
 #pragma once
 
 #import <WebCore/Color.h>
+#import <WebCore/FontPlatformData.h>
 #import <WebCore/TextAttachmentForSerialization.h>
+#import <pal/spi/cf/CoreTextSPI.h>
 #import <wtf/ObjectIdentifier.h>
 #import <wtf/Platform.h>
 #import <wtf/RetainPtr.h>
@@ -208,11 +210,12 @@ struct WEBCORE_EXPORT AttributedString {
     };
 
     struct AttributeValue {
-        Variant<
+
+        using AttributeType = Variant<
             double,
             String,
             URL,
-            Ref<Font>,
+            InstalledFont,
             Vector<String>,
             Vector<double>,
             ParagraphStyle,
@@ -226,7 +229,9 @@ struct WEBCORE_EXPORT AttributedString {
 #endif
             TextAttachmentFileWrapper,
             TextAttachmentMissingImage
-        > value;
+            >;
+
+        AttributeType value;
     };
 
     String string;

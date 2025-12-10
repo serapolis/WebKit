@@ -40,8 +40,10 @@
 #include "APIURLRequest.h"
 #include "AuxiliaryProcessMessages.h"
 #include "AuxiliaryProcessProxy.h"
+#include "BrowsingContextGroup.h"
 #include "DownloadProxy.h"
 #include "DownloadProxyMessages.h"
+#include "EnhancedSecurity.h"
 #include "FrameProcess.h"
 #include "GPUProcessConnectionParameters.h"
 #include "GamepadData.h"
@@ -705,7 +707,7 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
 
     RefPtr requestingProcess = requestingProcessIdentifier ? WebProcessProxy::processForIdentifier(*requestingProcessIdentifier) : nullptr;
     auto lockdownMode = requestingProcess ? requestingProcess->lockdownMode() : (lockdownModeEnabledBySystem() ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled);
-    auto enhancedSecurity = requestingProcess ? requestingProcess->enhancedSecurity() : WebProcessProxy::EnhancedSecurity::Disabled;
+    auto enhancedSecurity = requestingProcess ? requestingProcess->enhancedSecurity() : EnhancedSecurity::Disabled;
     Ref processPool = requestingProcess ? requestingProcess->processPool() : processPools()[0].get();
 
     RefPtr<WebProcessProxy> remoteWorkerProcessProxy;
@@ -734,7 +736,7 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
 
     if (!remoteWorkerProcessProxy && !s_useSeparateServiceWorkerProcess) {
         for (Ref process : processPool->m_processes) {
-            if (process.ptr() == processPool->m_prewarmedProcess.get() || process->isDummyProcessProxy())
+            if (process->isPrewarmed() || process->isDummyProcessProxy())
                 continue;
             if (process->websiteDataStore() != websiteDataStore)
                 continue;
@@ -838,7 +840,7 @@ void WebProcessPool::resolvePathsForSandboxExtensions()
     platformResolvePathsForSandboxExtensions();
 }
 
-Ref<WebProcessProxy> WebProcessPool::createNewWebProcess(WebsiteDataStore* websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, WebProcessProxy::IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode)
+Ref<WebProcessProxy> WebProcessPool::createNewWebProcess(WebsiteDataStore* websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, WebProcessProxy::IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode)
 {
     auto processProxy = WebProcessProxy::create(*this, websiteDataStore, lockdownMode, enhancedSecurity, isPrewarmed, crossOriginMode);
     initializeNewWebProcess(processProxy, websiteDataStore, isPrewarmed);
@@ -847,25 +849,35 @@ Ref<WebProcessProxy> WebProcessPool::createNewWebProcess(WebsiteDataStore* websi
     return processProxy;
 }
 
-RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, const API::PageConfiguration& pageConfiguration)
+RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, const API::PageConfiguration& pageConfiguration)
 {
-    RefPtr prewarmedProcess = m_prewarmedProcess.get();
-    if (!prewarmedProcess)
-        return nullptr;
-    
-    // There is sometimes a delay until we get notified that a prewarmed process has been terminated (e.g. after resuming
-    // from suspension) so make sure the process is still running here before deciding to use it.
-    if (prewarmedProcess->wasTerminated()) {
-        WEBPROCESSPOOL_RELEASE_LOG_ERROR(Process, "tryTakePrewarmedProcess: Not using prewarmed process because it has been terminated (process=%p, PID=%d)", m_prewarmedProcess.get(), m_prewarmedProcess->processID());
-        m_prewarmedProcess = nullptr;
+    RefPtr<WebProcessProxy> prewarmedProcess;
+
+    for (Ref process : m_prewarmedProcesses) {
+        if (process->lockdownMode() != lockdownMode || process->enhancedSecurity() != enhancedSecurity)
+            continue;
+
+        if (process->wasTerminated()) {
+            // There is sometimes a delay until we get notified that a prewarmed process has been terminated (e.g. after resuming
+            // from suspension) so make sure the process is still running here before deciding to use it.
+            WEBPROCESSPOOL_RELEASE_LOG_ERROR(Process, "tryTakePrewarmedProcess: Not using prewarmed process because it has been terminated (process=%p, PID=%d)", process.ptr(), process->processID());
+            continue;
+        }
+
+        prewarmedProcess = process.ptr();
+        break;
+    }
+
+    if (!prewarmedProcess) {
+        if (configuration().isAutomaticProcessWarmingEnabled())
+            WTFEmitSignpost(this, ProcessPrewarming, "Not using prewarmed process");
         return nullptr;
     }
 
-    if (prewarmedProcess->lockdownMode() != lockdownMode)
-        return nullptr;
+    WTFEmitSignpost(this, ProcessPrewarming, "Using prewarmed process with pid %d", prewarmedProcess->processID());
 
-    if (prewarmedProcess->enhancedSecurity() != enhancedSecurity)
-        return nullptr;
+    bool didRemove = m_prewarmedProcesses.remove(*prewarmedProcess);
+    ASSERT_UNUSED(didRemove, didRemove);
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     // In platforms using Bubblewrap for sandboxing, prewarmed process is launched using the WebProcessPool primary WebsiteDataStore,
@@ -878,7 +890,6 @@ RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore
     prewarmedProcess->setWebsiteDataStore(websiteDataStore);
     prewarmedProcess->markIsNoLongerInPrewarmedPool();
 
-    m_prewarmedProcess = nullptr;
     return prewarmedProcess;
 }
 
@@ -1081,10 +1092,8 @@ void WebProcessPool::initializeNewWebProcess(WebProcessProxy& process, WebsiteDa
 
     ASSERT(m_messagesToInjectedBundlePostedToEmptyContext.isEmpty());
 
-    if (isPrewarmed == WebProcessProxy::IsPrewarmed::Yes) {
-        ASSERT(!m_prewarmedProcess);
-        m_prewarmedProcess = process;
-    }
+    if (isPrewarmed == WebProcessProxy::IsPrewarmed::Yes)
+        m_prewarmedProcesses.add(process);
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
     process.send(Messages::WebProcess::BacklightLevelDidChange(displayBrightness()), 0);
@@ -1105,16 +1114,18 @@ void WebProcessPool::initializeNewWebProcess(WebProcessProxy& process, WebsiteDa
 
 void WebProcessPool::prewarmProcess()
 {
-    if (m_prewarmedProcess)
+    if (m_prewarmedProcesses.computeSize() >= prewarmedProcessCountLimit())
         return;
 
-    if (WebProcessProxy::hasReachedProcessCountLimit())
+    if (WebProcessProxy::hasReachedProcessCountLimit()) {
+        WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "prewarmProcess: Not prewarming a WebProcess due to reaching process count limit");
         return;
+    }
 
     WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "prewarmProcess: Prewarming a WebProcess for performance");
 
     auto lockdownMode = lockdownModeEnabledBySystem() ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled;
-    auto enhancedSecurity = WebProcessProxy::EnhancedSecurity::Disabled;
+    auto enhancedSecurity = EnhancedSecurity::Disabled;
     createNewWebProcess(nullptr, lockdownMode, enhancedSecurity, WebProcessProxy::IsPrewarmed::Yes);
 }
 
@@ -1185,15 +1196,31 @@ void WebProcessPool::processDidFinishLaunching(WebProcessProxy& process)
         }
     }
 #endif
+
+    // Continue spawning prewarmed processes until we hit the prewarmed process limit.
+    if (process.isPrewarmed() && m_prewarmedProcesses.computeSize() < prewarmedProcessCountLimit()) {
+#if PLATFORM(COCOA)
+        static Seconds prewarmedLaunchInterval = []() {
+            auto value = CFPreferencesGetAppIntegerValue(CFSTR("DebugWebProcessPoolPrewarmingIntervalMillis"), kCFPreferencesCurrentApplication, nullptr);
+            return value ? Seconds::fromMilliseconds(value) : 0_s;
+        }();
+#else
+        static Seconds prewarmedLaunchInterval = 0_s;
+#endif
+        WorkQueue::mainSingleton().dispatchAfter(prewarmedLaunchInterval, [weakThis = WeakPtr { *this }]() mutable {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->didReachGoodTimeToPrewarm();
+        });
+    }
 }
 
 void WebProcessPool::disconnectProcess(WebProcessProxy& process)
 {
     ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == &process; }));
 
-    if (m_prewarmedProcess == &process) {
-        ASSERT(m_prewarmedProcess->isPrewarmed());
-        m_prewarmedProcess = nullptr;
+    if (process.isPrewarmed()) {
+        bool didRemove = m_prewarmedProcesses.remove(process);
+        ASSERT_UNUSED(didRemove, didRemove);
     } else if (process.isDummyProcessProxy()) {
         auto removedProcess = m_dummyProcessProxies.take(process.sessionID());
         ASSERT_UNUSED(removedProcess, removedProcess == &process);
@@ -1236,10 +1263,21 @@ void WebProcessPool::disconnectProcess(WebProcessProxy& process)
 #endif
 }
 
-Ref<WebProcessProxy> WebProcessPool::processForSite(WebsiteDataStore& websiteDataStore, const std::optional<Site>& site, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, const API::PageConfiguration& pageConfiguration, ProcessSwapDisposition processSwapDisposition)
+Ref<WebProcessProxy> WebProcessPool::processForSite(WebsiteDataStore& websiteDataStore, IsSharedProcess isSharedProcess, const std::optional<Site>& site, const std::optional<Site>& mainFrameSite, const HashSet<RegistrableDomain>& isolatedDomains, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, const API::PageConfiguration& pageConfiguration, ProcessSwapDisposition processSwapDisposition)
 {
-    // We don't reuse cached processess because the process cache is per site, whereas COOP swaps are based on origin.
-    if (site && !site->isEmpty() && processSwapDisposition != ProcessSwapDisposition::COOP) {
+    if (isSharedProcess == IsSharedProcess::Yes) {
+        ASSERT(mainFrameSite);
+        if (RefPtr process = webProcessCache().takeSharedProcess(*mainFrameSite, websiteDataStore, lockdownMode, enhancedSecurity, pageConfiguration)) {
+            if (process->sharedProcessDomains().intersectionWith(isolatedDomains).isEmpty()) {
+                ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == process; }));
+                WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForSite: Using shared WebProcess from WebProcess cache (process=%p, PID=%i)", process.get(), process->processID());
+                ASSERT(!process->isInProcessCache());
+                return process.releaseNonNull();
+            } else
+                WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForSite: discarding the shared process since it contains a domain that needs to be isolated (process=%p, PID=%i)", process.get(), process->processID());
+        }
+    } else if (site && !site->isEmpty() && processSwapDisposition != ProcessSwapDisposition::COOP) {
+        // We don't reuse cached processess because the process cache is per site, whereas COOP swaps are based on origin.
         if (RefPtr process = webProcessCache().takeProcess(*site, websiteDataStore, lockdownMode, enhancedSecurity, pageConfiguration)) {
             WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForSite: Using WebProcess from WebProcess cache (process=%p, PID=%i)", process.get(), process->processID());
             ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == process; }));
@@ -1264,13 +1302,13 @@ Ref<WebProcessProxy> WebProcessPool::processForSite(WebsiteDataStore& websiteDat
 
     if (usesSingleWebProcess()) {
 #if PLATFORM(COCOA)
-        bool mustMatchDataStore = WebKit::WebsiteDataStore::defaultDataStoreExists() && &websiteDataStore != WebKit::WebsiteDataStore::defaultDataStore().ptr();
+        bool mustMatchDataStore = WebKit::WebsiteDataStore::defaultDataStoreExists() && &websiteDataStore != &WebKit::WebsiteDataStore::defaultDataStore();
 #else
         bool mustMatchDataStore = false;
 #endif
 
         for (Ref process : m_processes) {
-            if (process.ptr() == m_prewarmedProcess.get() || process->isDummyProcessProxy())
+            if (process->isPrewarmed() || process->isDummyProcessProxy())
                 continue;
             if (process->isRunningServiceWorkers())
                 continue;
@@ -1297,7 +1335,7 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
 
     RefPtr<WebProcessProxy> process;
     auto lockdownMode = pageConfiguration->lockdownModeEnabled() ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled;
-    auto enhancedSecurity = pageConfiguration->enhancedSecurityEnabled() ? WebProcessProxy::EnhancedSecurity::Enabled : WebProcessProxy::EnhancedSecurity::Disabled;
+    auto enhancedSecurity = (pageConfiguration->protectedPreferences()->forceEnhancedSecurity() || pageConfiguration->isEnhancedSecurityEnabled()) ? EnhancedSecurity::EnabledPolicy : EnhancedSecurity::Disabled;
     RefPtr relatedPage = pageConfiguration->relatedPage();
 
     if (auto& openerInfo = pageConfiguration->openerInfo(); openerInfo && Ref { pageConfiguration->preferences() }->siteIsolationEnabled())
@@ -1319,7 +1357,7 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
         }
     } else {
         WEBPROCESSPOOL_RELEASE_LOG(Process, "createWebPage: Not delaying WebProcess launch");
-        process = processForSite(pageConfiguration->protectedWebsiteDataStore(), std::nullopt, lockdownMode, enhancedSecurity, pageConfiguration, WebCore::ProcessSwapDisposition::None);
+        process = processForSite(pageConfiguration->protectedWebsiteDataStore(), IsSharedProcess::No, std::nullopt, std::nullopt, { }, lockdownMode, enhancedSecurity, pageConfiguration, WebCore::ProcessSwapDisposition::None);
     }
 
     Ref userContentController = pageConfiguration->userContentController();
@@ -1445,8 +1483,7 @@ void WebProcessPool::didReachGoodTimeToPrewarm()
         return;
 
     if (MemoryPressureHandler::singleton().isUnderMemoryPressure()) {
-        if (!m_prewarmedProcess)
-            WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "didReachGoodTimeToPrewarm: Not automatically prewarming a WebProcess due to memory pressure");
+        WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "prewarmProcess: Not prewarming a WebProcess due to memory pressure");
         return;
     }
 
@@ -1474,17 +1511,25 @@ void WebProcessPool::handleMemoryPressureWarning(Critical)
     m_backForwardCache->clear();
     m_webProcessCache->clear();
 
-    if (RefPtr prewarmedProcess = m_prewarmedProcess.get())
-        prewarmedProcess->shutDown();
-    ASSERT(!m_prewarmedProcess);
+    for (WeakPtr maybePrewarmedProcess : copyToVector(m_prewarmedProcesses)) {
+        if (RefPtr prewarmedProcess = maybePrewarmedProcess.get())
+            prewarmedProcess->shutDown();
+    }
+
+    ASSERT(m_prewarmedProcesses.isEmptyIgnoringNullReferences());
 
     for (Ref process : m_processes)
         process->clearSandboxExtensions();
 }
 
-ProcessID WebProcessPool::prewarmedProcessID()
+HashSet<ProcessID> WebProcessPool::prewarmedProcessIdentifiers()
 {
-    return m_prewarmedProcess ? m_prewarmedProcess->processID() : 0;
+    HashSet<ProcessID> pids;
+    for (Ref process : m_prewarmedProcesses) {
+        if (auto pid = process->processID())
+            pids.add(pid);
+    }
+    return pids;
 }
 
 void WebProcessPool::activePagesOriginsInWebProcessForTesting(ProcessID pid, CompletionHandler<void(Vector<String>&&)>&& completionHandler)
@@ -1494,6 +1539,33 @@ void WebProcessPool::activePagesOriginsInWebProcessForTesting(ProcessID pid, Com
             return process->activePagesDomainsForTesting(WTFMove(completionHandler));
     }
     completionHandler({ });
+}
+
+void WebProcessPool::countWebPagesInAllProcessesForTesting(CompletionHandler<void(unsigned)>&& completionHandler)
+{
+    class ResultAggregator : public RefCounted<ResultAggregator> {
+    public:
+        static Ref<ResultAggregator> create(CompletionHandler<void(size_t)>&& completionHandler) { return adoptRef(*new ResultAggregator(WTFMove(completionHandler))); }
+        void addWebPageCount(unsigned count) { m_count += count; }
+        ~ResultAggregator()
+        {
+            m_completionHandler(m_count);
+        }
+
+    private:
+        ResultAggregator(CompletionHandler<void(unsigned)>&& completionHandler)
+            : m_completionHandler(WTFMove(completionHandler)) { }
+
+        CompletionHandler<void(unsigned)> m_completionHandler;
+        unsigned m_count { 0 };
+    };
+
+    Ref aggregator = ResultAggregator::create(WTFMove(completionHandler));
+    for (auto& process : m_processes) {
+        process->sendWithAsyncReply(Messages::WebProcess::CountWebPagesForTesting(), [aggregator] (unsigned count) mutable {
+            aggregator->addWebPageCount(count);
+        });
+    }
 }
 
 void WebProcessPool::setAlwaysUsesComplexTextCodePath(bool alwaysUseComplexText)
@@ -1793,11 +1865,11 @@ bool WebProcessPool::httpPipeliningEnabled() const
 #endif
 }
 
-WebProcessProxy* WebProcessPool::webProcessProxyFromConnection(const IPC::Connection& connection) const
+RefPtr<WebProcessProxy> WebProcessPool::webProcessProxyFromConnection(const IPC::Connection& connection) const
 {
     for (Ref process : m_processes) {
         if (process->hasConnection(connection))
-            return process.ptr();
+            return process;
     }
 
     ASSERT_NOT_REACHED();
@@ -2013,11 +2085,10 @@ void WebProcessPool::updateProcessAssertions()
     // Check on next run loop since the web process proxy tokens are probably being updated.
     callOnMainRunLoop([] {
         remoteWorkerProcesses().forEach([](auto& workerProcess) {
-            Ref protectedWorkerProcess { workerProcess };
-            if (protectedWorkerProcess->isRunningServiceWorkers())
-                protectedWorkerProcess->updateRemoteWorkerProcessAssertion(RemoteWorkerType::ServiceWorker);
-            if (protectedWorkerProcess->isRunningSharedWorkers())
-                protectedWorkerProcess->updateRemoteWorkerProcessAssertion(RemoteWorkerType::SharedWorker);
+            if (workerProcess.isRunningServiceWorkers())
+                workerProcess.updateRemoteWorkerProcessAssertion(RemoteWorkerType::ServiceWorker);
+            if (workerProcess.isRunningSharedWorkers())
+                workerProcess.updateRemoteWorkerProcessAssertion(RemoteWorkerType::SharedWorker);
         });
     });
 }
@@ -2053,19 +2124,49 @@ void WebProcessPool::removeProcessFromOriginCacheSet(WebProcessProxy& process)
     });
 }
 
-void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& frame, const API::Navigation& navigation, const URL& sourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, LoadedWebArchive loadedWebArchive, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&& completionHandler)
+unsigned WebProcessPool::prewarmedProcessCountLimit() const
+{
+#if PLATFORM(COCOA)
+    static unsigned processCountLimitFromPreferences = []() {
+        return static_cast<unsigned>(CFPreferencesGetAppIntegerValue(CFSTR("DebugWebProcessPoolPrewarmedProcessCountLimit"), kCFPreferencesCurrentApplication, nullptr));
+    }();
+
+    if (processCountLimitFromPreferences)
+        return processCountLimitFromPreferences;
+#endif
+
+    if (unsigned limit = m_configuration->prewarmedProcessCountLimitForTesting())
+        return limit;
+
+    return m_hasUsedSiteIsolation ? 2 : 1;
+}
+
+void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& frame, const API::Navigation& navigation, const URL& sourceURL, BrowsingContextGroup& browsingContextGroup, IsSharedProcess isSharedProcess, const Site& mainFrameSite, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, LoadedWebArchive loadedWebArchive, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&& completionHandler)
 {
     Site site { navigation.currentRequest().url() };
+
     bool siteIsolationEnabled = page.protectedPreferences()->siteIsolationEnabled();
+    if (siteIsolationEnabled && !m_hasUsedSiteIsolation)
+        m_hasUsedSiteIsolation = true;
+
+    bool isMainFrameNavigation = frame.isMainFrame();
+    Ref sourceProcess = frame.process();
+    if (siteIsolationEnabled && !isMainFrameNavigation && page.didLoadWebArchive()) {
+        ASSERT(sourceProcess.ptr() == &page.protectedMainFrame()->process());
+        return completionHandler(sourceProcess.copyRef(), nullptr, "Navigation is treated as same-site (archive load)"_s);
+    }
+
     if (siteIsolationEnabled && !site.isEmpty()) {
-        auto mainFrameSite = frameInfo.isMainFrame ? site : Site(URL(page.protectedPageLoadState()->activeURL()));
+        ASSERT(frameInfo.isMainFrame ? site == mainFrameSite : Site(URL(page.protectedPageLoadState()->activeURL())) == mainFrameSite);
         if (!frame.isMainFrame() && site == mainFrameSite) {
             Ref mainFrameProcess = page.protectedMainFrame()->process();
             if (!mainFrameProcess->isInProcessCache())
                 return completionHandler(mainFrameProcess.copyRef(), nullptr, "Found process for the same site as main frame"_s);
         }
-        RefPtr process = &page.websiteDataStore() == dataStore.ptr() ? page.processForSite(site) : nullptr;
-        if (process && !process->isInProcessCache()) {
+        RefPtr<WebProcessProxy> process;
+        if (RefPtr frameProcess = browsingContextGroup.processForSite(site))
+            process = &frameProcess->process();
+        if (process && process->websiteDataStore() == dataStore.ptr() && process->websiteDataStore() == &page.websiteDataStore() && !process->isInProcessCache() && process->lockdownMode() == lockdownMode && enhancedSecurityStatesAreConsistent(process->enhancedSecurity(), enhancedSecurity)) {
             dataStore->protectedNetworkProcess()->addAllowedFirstPartyForCookies(*process, mainFrameSite.domain(), LoadedWebArchive::No, [completionHandler = WTFMove(completionHandler), process] () mutable {
                 completionHandler(process.releaseNonNull(), nullptr, "Found process for the same site"_s);
             });
@@ -2073,8 +2174,8 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
         }
     }
 
-    Ref sourceProcess = frame.process();
-    auto [process, suspendedPage, reason] = processForNavigationInternal(page, navigation, sourceProcess.copyRef(), sourceURL, processSwapRequestedByClient, lockdownMode, enhancedSecurity, frameInfo, dataStore.copyRef());
+    ASSERT(isSharedProcess == IsSharedProcess::No);
+    auto [process, suspendedPage, reason] = processForNavigationInternal(page, navigation, sourceProcess.copyRef(), sourceURL, isSharedProcess, mainFrameSite, processSwapRequestedByClient, lockdownMode, enhancedSecurity, frameInfo, dataStore.copyRef());
 
     // We are process-swapping so automatic process prewarming would be beneficial if the client has not explicitly enabled / disabled it.
     bool doingAnAutomaticProcessSwap = processSwapRequestedByClient == ProcessSwapRequestedByClient::No && process.ptr() != sourceProcess.ptr();
@@ -2095,23 +2196,25 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, WebFrameProxy& fra
         LOG(ProcessSwapping, "(ProcessSwapping) Navigating from %s to %s, keeping around old process. Now holding on to old processes for %u origins.", sourceURL.string().utf8().data(), navigation.currentRequest().url().string().utf8().data(), m_swappedProcessesPerRegistrableDomain.size());
     }
 
-    if (!frame.isMainFrame() && siteIsolationEnabled)
+    if (!isMainFrameNavigation && siteIsolationEnabled)
         return completionHandler(WTFMove(process), suspendedPage.get(), reason);
 
     ASSERT(process->state() != AuxiliaryProcessProxy::State::Terminated);
-    prepareProcessForNavigation(WTFMove(process), page, suspendedPage.get(), reason, site, navigation, lockdownMode, enhancedSecurity, loadedWebArchive, WTFMove(dataStore), WTFMove(completionHandler));
+    prepareProcessForNavigation(WTFMove(process), page, suspendedPage.get(), reason, isSharedProcess, site, mainFrameSite, navigation, lockdownMode, enhancedSecurity, loadedWebArchive, WTFMove(dataStore), WTFMove(completionHandler));
 }
 
-void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process, WebPageProxy& page, SuspendedPageProxy* suspendedPage, ASCIILiteral reason, const Site& site, const API::Navigation& navigation, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, LoadedWebArchive loadedWebArchive, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&& completionHandler, unsigned previousAttemptsCount)
+void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process, WebPageProxy& page, SuspendedPageProxy* suspendedPage, ASCIILiteral reason, IsSharedProcess isSharedProcess, const Site& site, const Site& mainFrameSite,
+    const API::Navigation& navigation, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, LoadedWebArchive loadedWebArchive, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, ASCIILiteral)>&& completionHandler, unsigned previousAttemptsCount)
 {
     static constexpr unsigned maximumNumberOfAttempts = 3;
     auto preventProcessShutdownScope = process->shutdownPreventingScope();
-    auto callCompletionHandler = [this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler), page = Ref { page }, navigation = Ref { navigation }, process, preventProcessShutdownScope = WTFMove(preventProcessShutdownScope), reason, dataStore, lockdownMode, enhancedSecurity, loadedWebArchive, previousAttemptsCount, site](SuspendedPageProxy* suspendedPage) mutable {
+    auto callCompletionHandler = [this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler), page = Ref { page }, navigation = Ref { navigation }, process, preventProcessShutdownScope = WTFMove(preventProcessShutdownScope), reason, dataStore, lockdownMode, enhancedSecurity, loadedWebArchive, previousAttemptsCount, isSharedProcess, site, mainFrameSite](SuspendedPageProxy* suspendedPage) mutable {
         // Since the IPC is asynchronous, make sure the destination process and suspended page are still valid.
         if (process->state() == AuxiliaryProcessProxy::State::Terminated && previousAttemptsCount < maximumNumberOfAttempts) {
             // The destination process crashed during the IPC to the network process, use a new process.
-            Ref fallbackProcess = processForSite(dataStore, site, lockdownMode, enhancedSecurity, page->configuration(), WebCore::ProcessSwapDisposition::None);
-            prepareProcessForNavigation(WTFMove(fallbackProcess), page, nullptr, reason, site, navigation, lockdownMode, enhancedSecurity, loadedWebArchive, WTFMove(dataStore), WTFMove(completionHandler), previousAttemptsCount + 1);
+            ASSERT(isSharedProcess == IsSharedProcess::No);
+            Ref fallbackProcess = processForSite(dataStore, isSharedProcess, site, mainFrameSite, { }, lockdownMode, enhancedSecurity, page->configuration(), WebCore::ProcessSwapDisposition::None);
+            prepareProcessForNavigation(WTFMove(fallbackProcess), page, nullptr, reason, isSharedProcess, site, mainFrameSite, navigation, lockdownMode, enhancedSecurity, loadedWebArchive, WTFMove(dataStore), WTFMove(completionHandler), previousAttemptsCount + 1);
             return;
         }
         if (suspendedPage) {
@@ -2129,14 +2232,15 @@ void WebProcessPool::prepareProcessForNavigation(Ref<WebProcessProxy>&& process,
     });
 }
 
-std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::EnhancedSecurity enhancedSecurity, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
+std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, IsSharedProcess isSharedProcess, const Site& mainFrameSite, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore)
 {
     auto& targetURL = navigation.currentRequest().url();
     auto targetSite = Site { targetURL };
     Ref pageConfiguration = page.configuration();
 
     auto createNewProcess = [&] () -> Ref<WebProcessProxy> {
-        return processForSite(dataStore, targetSite, lockdownMode, enhancedSecurity, pageConfiguration, WebCore::ProcessSwapDisposition::None);
+        ASSERT(isSharedProcess == IsSharedProcess::No);
+        return processForSite(dataStore, isSharedProcess, targetSite, mainFrameSite, { }, lockdownMode, enhancedSecurity, pageConfiguration, WebCore::ProcessSwapDisposition::None);
     };
 
     if (usesSingleWebProcess())
@@ -2148,7 +2252,7 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     if (sourceProcess->lockdownMode() != lockdownMode)
         return { createNewProcess(), nullptr, "Process swap due to Lockdown mode change"_s };
 
-    if (sourceProcess->enhancedSecurity() != enhancedSecurity)
+    if (!enhancedSecurityStatesAreConsistent(sourceProcess->enhancedSecurity(), enhancedSecurity))
         return { createNewProcess(), nullptr, "Process swap due to EnhancedSecurity change"_s };
 
     if (processSwapRequestedByClient == ProcessSwapRequestedByClient::Yes)
@@ -2181,7 +2285,7 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
     // may be a response generated by the engine, so consider those navigations as non-client-initiated.
     bool isRequestFromClientOrUserInput = navigation.isRequestFromClientOrUserInput() && !navigation.substituteData();
     if (navigation.openedByDOMWithOpener()
-        && page.mainFrame() && page.mainFrame()->opener()
+        && page.mainFrame() && (page.mainFrame()->opener() || page.mainFrame()->disownedOpener())
         && !(isRequestFromClientOrUserInput || siteIsolationEnabled || page.protectedWebsiteDataStore()->openerTypeForDomain(targetSite.domain()) == RestrictedOpenerType::NoOpener))
         return { WTFMove(sourceProcess), nullptr, "Browsing context been opened by DOM without 'noopener'"_s };
 
@@ -2246,11 +2350,27 @@ std::tuple<Ref<WebProcessProxy>, RefPtr<SuspendedPageProxy>, ASCIILiteral> WebPr
         return { WTFMove(sourceProcess), nullptr, "Navigation is same-site"_s };
 
     if (sourceURL.protocolIsAbout()) {
-        if (sourceProcess->site() && sourceProcess->site()->domain().matches(targetURL))
-            return { WTFMove(sourceProcess), nullptr, "Navigation is treated as same-site"_s };
-        // With site isolation enabled, this condition is not enough to indicate the web process can be reused;
-        // we may also need to consider whether the process is used or in use by other sites.
-        if (!siteIsolationEnabled && !sourceProcess->hasCommittedAnyMeaningfulProvisionalLoads())
+        if (auto sourceSite = sourceProcess->site()) {
+            if (!siteIsolationEnabled && sourceSite->domain().matches(targetURL))
+                return { WTFMove(sourceProcess), nullptr, "Navigation is treated as same-site (matched domain)"_s };
+            if (siteIsolationEnabled && sourceSite->matches(targetURL))
+                return { WTFMove(sourceProcess), nullptr, "Navigation is treated as same-site (matched site)"_s };
+        }
+
+        const bool treatAsSameSiteForAboutNavigation = [&sourceProcess, &siteIsolationEnabled] {
+            if (sourceProcess->hasCommittedAnyMeaningfulProvisionalLoads())
+                return false;
+            if (siteIsolationEnabled) {
+                auto sourceSite = sourceProcess->site();
+                if (sourceSite)
+                    return sourceSite->isEmpty();
+                return sourceSite.error() == WebProcessProxy::SiteState::NotYetSpecified;
+            }
+
+            return true;
+        }();
+
+        if (treatAsSameSiteForAboutNavigation)
             return { WTFMove(sourceProcess), nullptr, "Navigation is treated as same-site"_s };
     }
 

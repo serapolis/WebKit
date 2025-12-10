@@ -27,6 +27,7 @@
 
 #include "AnimationUtilities.h"
 #include "CSSURLValue.h"
+#include "RenderStyleSetters.h"
 #include "StyleBuilderChecking.h"
 #include "StyleForVisitedLink.h"
 
@@ -83,7 +84,7 @@ auto CSSValueConversion<SVGPaint>::operator()(BuilderState& state, const CSSValu
 
         case CSSValueCurrentcolor:
             state.style().setDisallowsFastPathInheritance();
-            return Color::currentColor();
+            return Color { Color::currentColor() };
 
         default:
             break;

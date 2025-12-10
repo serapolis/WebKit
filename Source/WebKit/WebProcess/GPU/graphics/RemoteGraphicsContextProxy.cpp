@@ -32,6 +32,7 @@
 #include "RemoteGraphicsContextMessages.h"
 #include "RemoteImageBufferProxy.h"
 #include "RemoteRenderingBackendProxy.h"
+#include "RemoteSnapshotRecorderMessages.h"
 #include "SharedVideoFrame.h"
 #include "StreamClientConnection.h"
 #include "WebProcess.h"
@@ -110,6 +111,15 @@ void RemoteGraphicsContextProxy::didBecomeUnresponsive() const
     if (!backend) [[unlikely]]
         return;
     backend->didBecomeUnresponsive();
+}
+
+bool RemoteGraphicsContextProxy::knownToHaveFloatBasedBacking() const
+{
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    return m_contentsFormat && *m_contentsFormat == ContentsFormat::RGBA16F;
+#else
+    return false;
+#endif
 }
 
 RenderingMode RemoteGraphicsContextProxy::renderingMode() const
@@ -211,7 +221,8 @@ void RemoteGraphicsContextProxy::clipOutRoundedRect(const FloatRoundedRect& rect
 void RemoteGraphicsContextProxy::clipToImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destinationRect)
 {
     updateStateForClipToImageBuffer(destinationRect);
-    recordResourceUse(imageBuffer);
+    if (!recordResourceUse(imageBuffer))
+        return;
     send(Messages::RemoteGraphicsContext::ClipToImageBuffer(imageBuffer.renderingResourceIdentifier(), destinationRect));
 }
 
@@ -298,7 +309,7 @@ void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const
     send(Messages::RemoteGraphicsContext::DrawImageBuffer(imageBuffer.renderingResourceIdentifier(), destRect, srcRect, options));
 }
 
-void RemoteGraphicsContextProxy::drawNativeImageInternal(NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawNativeImage(NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
     auto headroom = options.headroom();
@@ -313,7 +324,8 @@ void RemoteGraphicsContextProxy::drawNativeImageInternal(NativeImage& image, con
     ImagePaintingOptions clampedOptions(options, headroom);
 #endif
     appendStateChangeItemIfNecessary();
-    recordResourceUse(image);
+    if (!recordResourceUse(image))
+        return;
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
     send(Messages::RemoteGraphicsContext::DrawNativeImage(image.renderingResourceIdentifier(), destRect, srcRect, clampedOptions));
 #else
@@ -330,7 +342,8 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
             auto nativeImage = image->nativeImage();
             if (!nativeImage)
                 return;
-            recordResourceUse(*nativeImage);
+            if (!recordResourceUse(*nativeImage))
+                return;
         }
     }
 #endif
@@ -340,7 +353,8 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
 void RemoteGraphicsContextProxy::drawPattern(NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
 {
     appendStateChangeItemIfNecessary();
-    recordResourceUse(image);
+    if (!recordResourceUse(image))
+        return;
     send(Messages::RemoteGraphicsContext::DrawPatternNativeImage(image.renderingResourceIdentifier(), destRect, tileRect, patternTransform, phase, spacing, options));
 }
 
@@ -502,7 +516,7 @@ void RemoteGraphicsContextProxy::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RemoteGraphicsContextProxy::drawVideoFrame(VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
 {
     appendStateChangeItemIfNecessary();
 #if PLATFORM(COCOA)
@@ -654,8 +668,7 @@ bool RemoteGraphicsContextProxy::recordResourceUse(NativeImage& image)
 #endif
     }
 
-    renderingBackend->remoteResourceCacheProxy().recordNativeImageUse(image, colorSpace);
-    return true;
+    return renderingBackend->remoteResourceCacheProxy().recordNativeImageUse(image, colorSpace);
 }
 
 bool RemoteGraphicsContextProxy::recordResourceUse(ImageBuffer& imageBuffer)
@@ -765,8 +778,13 @@ void RemoteGraphicsContextProxy::appendStateChangeItemIfNecessary()
         if (auto packedColor = fillBrush.packedColor())
             send(Messages::RemoteGraphicsContext::SetFillPackedColor(*packedColor));
         else if (RefPtr pattern = fillBrush.pattern()) {
-            recordResourceUse(pattern->tileImage());
-            send(Messages::RemoteGraphicsContext::SetFillPattern(pattern->tileImage().imageIdentifier(), pattern->parameters()));
+            if (RefPtr image = pattern->tileNativeImage()) {
+                if (recordResourceUse(*image))
+                    send(Messages::RemoteGraphicsContext::SetFillPatternNativeImage(image->renderingResourceIdentifier(), pattern->parameters()));
+            } else if (RefPtr buffer = pattern->tileImageBuffer()) {
+                if (recordResourceUse(*buffer))
+                    send(Messages::RemoteGraphicsContext::SetFillPatternImageBuffer(buffer->renderingResourceIdentifier(), pattern->parameters()));
+            }
         } else if (RefPtr gradient = fillBrush.gradient()) {
             if (auto identifier = recordResourceUse(*gradient))
                 send(Messages::RemoteGraphicsContext::SetFillCachedGradient(*identifier, fillBrush.gradientSpaceTransform()));
@@ -784,8 +802,13 @@ void RemoteGraphicsContextProxy::appendStateChangeItemIfNecessary()
             } else
                 send(Messages::RemoteGraphicsContext::SetStrokePackedColor(*packedColor));
         } else if (RefPtr pattern = strokeBrush.pattern()) {
-            recordResourceUse(pattern->tileImage());
-            send(Messages::RemoteGraphicsContext::SetStrokePattern(pattern->tileImage().imageIdentifier(), pattern->parameters()));
+            if (RefPtr image = pattern->tileNativeImage()) {
+                if (recordResourceUse(*image))
+                    send(Messages::RemoteGraphicsContext::SetStrokePatternNativeImage(image->renderingResourceIdentifier(), pattern->parameters()));
+            } else if (RefPtr buffer = pattern->tileImageBuffer()) {
+                if (recordResourceUse(*buffer))
+                    send(Messages::RemoteGraphicsContext::SetStrokePatternImageBuffer(buffer->renderingResourceIdentifier(), pattern->parameters()));
+            }
         } else if (RefPtr gradient = strokeBrush.gradient()) {
             if (auto identifier = recordResourceUse(*gradient))
                 send(Messages::RemoteGraphicsContext::SetStrokeCachedGradient(*identifier, strokeBrush.gradientSpaceTransform()));
@@ -884,6 +907,9 @@ void RemoteGraphicsContextProxy::abandon()
     disconnect();
     m_renderingBackend = nullptr;
 }
+
+// Instantiate the send() helper for the few subclass messages here to avoid listing it in the header.
+template void RemoteGraphicsContextProxy::send<Messages::RemoteSnapshotRecorder::DrawSnapshotFrame>(Messages::RemoteSnapshotRecorder::DrawSnapshotFrame&&);
 
 }
 

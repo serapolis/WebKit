@@ -94,13 +94,13 @@ class StringPrinter(object):
         return 'string'
 
 
-class UCharStringPrinter(StringPrinter):
+class UTF16StringPrinter(StringPrinter):
     "Print a char16_t*; we must guess at the length"
     def to_string(self):
         return ustring_to_string(self.val)
 
 
-class LCharStringPrinter(StringPrinter):
+class Latin1StringPrinter(StringPrinter):
     "Print a Latin1Character*; we must guess at the length"
     def to_string(self):
         return lstring_to_string(self.val)
@@ -324,9 +324,9 @@ def add_pretty_printers():
         if type.code == gdb.TYPE_CODE_PTR:
             name = str(type.target().unqualified())
             if name == 'char16_t':
-                return UCharStringPrinter(val)
+                return UTF16StringPrinter(val)
             if name == 'Latin1Character':
-                return LCharStringPrinter(val)
+                return Latin1StringPrinter(val)
         return None
 
     gdb.pretty_printers.append(lookup_function)

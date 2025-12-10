@@ -35,13 +35,13 @@
 #include "WebWheelEvent.h"
 #include <WebCore/GraphicsLayer.h>
 #include <WebCore/GraphicsLayerAnimation.h>
-#include <WebCore/Length.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/PlatformWheelEvent.h>
 #include <WebCore/TiledBacking.h>
 #include <WebCore/TimingFunction.h>
 #include <WebCore/TransformOperations.h>
 #include <WebCore/TransformationMatrix.h>
+#include <WebCore/TranslateTransformOperation.h>
 #include <pal/spi/mac/NSScrollViewSPI.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -486,12 +486,9 @@ void PDFDiscretePresentationController::startTransitionAnimation(PageTransitionS
     auto transitionDuration = defaultTransitionDuration;
 
     auto transformAnimationValueForTranslation = [](double keyTime, FloatSize offset) {
-        auto xLength = Length(offset.width(), LengthType::Fixed);
-        auto yLength = Length(offset.height(), LengthType::Fixed);
-
         Vector<Ref<TransformOperation>> operations;
         operations.reserveInitialCapacity(1);
-        operations.append(TranslateTransformOperation::create(xLength, yLength, Length(0, LengthType::Fixed), TransformOperationType::Translate));
+        operations.append(TranslateTransformOperation::create(offset.width(), offset.height(), 0, TransformOperationType::Translate));
 
         return makeUnique<TransformAnimationValue>(keyTime, TransformOperations { WTFMove(operations) }, nullptr);
     };
@@ -540,16 +537,16 @@ void PDFDiscretePresentationController::startTransitionAnimation(PageTransitionS
         moveAnimation->setDuration(transitionDuration.seconds());
         moveAnimation->setTimingFunction(WTFMove(moveTimingFunction));
         Ref animatingRowContainerLayer = *animatingRow.containerLayer;
-        animatingRowContainerLayer->addAnimation(moveFrames, { }, moveAnimation.ptr(), "move"_s, 0);
+        animatingRowContainerLayer->addAnimation(moveFrames, moveAnimation.ptr(), "move"_s, 0);
 
         auto fadeKeyframes = createOpacityKeyframesForAnimation(direction, layerEndOpacities[topLayerIndex]);
         Ref fadeAnimation = GraphicsLayerAnimation::create();
         fadeAnimation->setDuration(transitionDuration.seconds());
         fadeAnimation->setTimingFunction(WTFMove(fadeTimingFunction));
-        animatingRowContainerLayer->addAnimation(fadeKeyframes, { }, fadeAnimation.ptr(), "fade"_s, 0);
+        animatingRowContainerLayer->addAnimation(fadeKeyframes, fadeAnimation.ptr(), "fade"_s, 0);
 
         auto stationaryLayerFadeKeyframes = createOpacityKeyframesForAnimation(direction, layerEndOpacities[bottomLayerIndex]);
-        stationaryRow.protectedContainerLayer()->addAnimation(stationaryLayerFadeKeyframes, { }, fadeAnimation.ptr(), "fade"_s, 0);
+        stationaryRow.protectedContainerLayer()->addAnimation(stationaryLayerFadeKeyframes, fadeAnimation.ptr(), "fade"_s, 0);
 
         return transitionDuration;
     };
@@ -588,7 +585,7 @@ void PDFDiscretePresentationController::startTransitionAnimation(PageTransitionS
 
     case TransitionDirection::NextHorizontal:
     case TransitionDirection::NextVertical: {
-        // Top page animates up, fading out. Botom page fades in.
+        // Top page animates up, fading out. Bottom page fades in.
         auto additionalVisibleRowIndex = additionalVisibleRowIndexForDirection(*m_transitionDirection);
         if (!additionalVisibleRowIndex)
             return;
@@ -1075,7 +1072,7 @@ void PDFDiscretePresentationController::buildRows()
 
         row.leftPageContainerLayer = makePageContainerLayer(leftPageIndex);
         RefPtr pageBackgroundLayer = pageBackgroundLayerForPageContainerLayer(*row.protectedLeftPageContainerLayer());
-        m_layerToRowIndexMap.add(pageBackgroundLayer.get(), rowIndex);
+        m_layerToRowIndexMap.add(*pageBackgroundLayer, rowIndex);
 
         if (row.pages.numPages() == 1) {
             ASSERT(!row.rightPageContainerLayer);
@@ -1085,7 +1082,7 @@ void PDFDiscretePresentationController::buildRows()
         auto rightPageIndex = layoutRow.pages[1];
         row.rightPageContainerLayer = makePageContainerLayer(rightPageIndex);
         RefPtr rightPageBackgroundLayer = pageBackgroundLayerForPageContainerLayer(*row.protectedRightPageContainerLayer());
-        m_layerToRowIndexMap.add(rightPageBackgroundLayer.get(), rowIndex);
+        m_layerToRowIndexMap.add(*rightPageBackgroundLayer, rowIndex);
     };
 
     auto parentRowLayers = [](RowData& row) {
@@ -1118,14 +1115,14 @@ void PDFDiscretePresentationController::buildRows()
         // This is the call that enables async rendering.
         asyncRenderer()->startTrackingLayer(*rowContentsLayer);
 
-        m_layerToRowIndexMap.set(rowContentsLayer.get(), rowIndex);
+        m_layerToRowIndexMap.set(*rowContentsLayer, rowIndex);
 
         RefPtr rowSelectionLayer = row.selectionLayer = createGraphicsLayer(makeString("Row selection "_s, rowIndex), GraphicsLayer::Type::TiledBacking);
         rowSelectionLayer->setAnchorPoint({ });
         rowSelectionLayer->setDrawsContent(true);
         rowSelectionLayer->setAcceleratesDrawing(true);
         rowSelectionLayer->setBlendMode(BlendMode::Multiply);
-        m_layerToRowIndexMap.set(rowSelectionLayer.get(), rowIndex);
+        m_layerToRowIndexMap.set(*rowSelectionLayer, rowIndex);
 
         parentRowLayers(row);
     };
@@ -1401,13 +1398,13 @@ float PDFDiscretePresentationController::deviceScaleFactor() const
     return m_plugin->deviceScaleFactor();
 }
 
-std::optional<float> PDFDiscretePresentationController::customContentsScale(const GraphicsLayer* layer) const
+std::optional<float> PDFDiscretePresentationController::customContentsScale(const GraphicsLayer& layer) const
 {
     auto* rowData = rowDataForLayer(layer);
     if (!rowData)
         return { };
 
-    if (rowData->isPageBackgroundLayer(layer))
+    if (rowData->isPageBackgroundLayer(&layer))
         return scaleForPagePreviews();
 
     return { };
@@ -1453,7 +1450,7 @@ void PDFDiscretePresentationController::paintBackgroundLayerForRow(const Graphic
     }
 }
 
-auto PDFDiscretePresentationController::rowDataForLayer(const GraphicsLayer* layer) const -> const RowData*
+auto PDFDiscretePresentationController::rowDataForLayer(const GraphicsLayer& layer) const -> const RowData*
 {
     auto rowIndex = m_layerToRowIndexMap.getOptional(layer);
     if (!rowIndex)
@@ -1473,16 +1470,15 @@ std::optional<PDFLayoutRow> PDFDiscretePresentationController::visibleRow() cons
     return m_rows[m_visibleRowIndex].pages;
 }
 
-std::optional<PDFLayoutRow> PDFDiscretePresentationController::rowForLayer(const GraphicsLayer* layer) const
+std::optional<PDFLayoutRow> PDFDiscretePresentationController::rowForLayer(const GraphicsLayer& layer) const
 {
-    auto* rowData = rowDataForLayer(layer);
-    if (rowData)
+    if (auto* rowData = rowDataForLayer(layer))
         return rowData->pages;
 
     return { };
 }
 
-void PDFDiscretePresentationController::paintContents(const GraphicsLayer* layer, GraphicsContext& context, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>)
+void PDFDiscretePresentationController::paintContents(const GraphicsLayer& layer, GraphicsContext& context, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>)
 {
     auto rowIndex = m_layerToRowIndexMap.getOptional(layer);
     if (!rowIndex)
@@ -1492,19 +1488,19 @@ void PDFDiscretePresentationController::paintContents(const GraphicsLayer* layer
         return;
 
     auto& rowData = m_rows[*rowIndex];
-    if (rowData.isPageBackgroundLayer(layer)) {
-        paintBackgroundLayerForRow(layer, context, clipRect, *rowIndex);
+    if (rowData.isPageBackgroundLayer(&layer)) {
+        paintBackgroundLayerForRow(&layer, context, clipRect, *rowIndex);
         return;
     }
 
-    if (layer == rowData.contentsLayer.get()) {
+    if (&layer == rowData.contentsLayer.get()) {
         RefPtr asyncRenderer = asyncRendererIfExists();
-        m_plugin->paintPDFContent(layer, context, clipRect, rowData.pages, asyncRenderer.get());
+        m_plugin->paintPDFContent(&layer, context, clipRect, rowData.pages, asyncRenderer.get());
         return;
     }
 
-    if (layer == rowData.selectionLayer.get()) {
-        paintPDFSelection(layer, context, clipRect, rowData.pages);
+    if (&layer == rowData.selectionLayer.get()) {
+        paintPDFSelection(&layer, context, clipRect, rowData.pages);
         return;
     }
 }

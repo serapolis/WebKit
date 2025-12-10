@@ -156,6 +156,9 @@ bool MockPaymentCoordinator::showPaymentUI(const URL&, const Vector<URL>&, const
 #if ENABLE(APPLE_PAY_MERCHANT_CATEGORY_CODE)
     m_merchantCategoryCode = request.merchantCategoryCode();
 #endif
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    m_isDelegatedRequest = request.isDelegatedRequest();
+#endif
 
     RefPtr page = m_page.get();
     if (!page)

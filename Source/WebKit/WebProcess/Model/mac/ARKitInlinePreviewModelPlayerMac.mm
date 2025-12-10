@@ -33,7 +33,9 @@
 #import "MessageSenderInlines.h"
 #import "WebPage.h"
 #import "WebPageProxyMessages.h"
+#import <WebCore/GraphicsLayer.h>
 #import <WebCore/Model.h>
+#import <WebCore/ModelPlayerGraphicsLayerConfiguration.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <pal/spi/mac/SystemPreviewSPI.h>
 #import <wtf/FileHandle.h>
@@ -136,7 +138,7 @@ void ARKitInlinePreviewModelPlayerMac::load(WebCore::Model& modelSource, WebCore
 {
     m_size = size;
 
-    auto* client = this->client();
+    RefPtr client = this->client();
     if (!client)
         return;
 
@@ -156,7 +158,7 @@ void ARKitInlinePreviewModelPlayerMac::createPreviewsForModelWithURL(const URL& 
     m_inlinePreview = adoptNS([allocASVInlinePreviewInstance() initWithFrame:CGRectMake(0, 0, m_size.width(), m_size.height())]);
     LOG(ModelElement, "ARKitInlinePreviewModelPlayerMac::createPreviewsForModelWithURL() created preview with UUID %s and size %f x %f.", ((String)[m_inlinePreview uuid].UUIDString).utf8().data(), m_size.width().toDouble(), m_size.height().toDouble());
 
-    auto* client = this->client();
+    RefPtr client = this->client();
     if (!client)
         return;
 
@@ -171,7 +173,7 @@ void ARKitInlinePreviewModelPlayerMac::createPreviewsForModelWithURL(const URL& 
         if (!strongSelf)
             return;
 
-        auto* client = strongSelf->client();
+        RefPtr client = strongSelf->client();
         if (!client)
             return;
 
@@ -202,7 +204,7 @@ void ARKitInlinePreviewModelPlayerMac::createPreviewsForModelWithURL(const URL& 
 
 void ARKitInlinePreviewModelPlayerMac::didCreateRemotePreviewForModelWithURL(const URL& url)
 {
-    auto* client = this->client();
+    RefPtr client = this->client();
     if (!client)
         return;
 
@@ -217,7 +219,7 @@ void ARKitInlinePreviewModelPlayerMac::didCreateRemotePreviewForModelWithURL(con
         if (!strongSelf)
             return;
 
-        auto* client = strongSelf->client();
+        RefPtr client = strongSelf->client();
         if (!client)
             return;
 
@@ -269,9 +271,9 @@ void ARKitInlinePreviewModelPlayerMac::sizeDidChange(WebCore::LayoutSize size)
     page->sendWithAsyncReply(Messages::WebPageProxy::ModelElementSizeDidChange(uuid, size), WTFMove(completionHandler));
 }
 
-PlatformLayer* ARKitInlinePreviewModelPlayerMac::layer()
+void ARKitInlinePreviewModelPlayerMac::configureGraphicsLayer(WebCore::GraphicsLayer& graphicsLayer, WebCore::ModelPlayerGraphicsLayerConfiguration&&)
 {
-    return [m_inlinePreview layer];
+    graphicsLayer.setContentsToPlatformLayer([m_inlinePreview layer], WebCore::GraphicsLayer::ContentsLayerPurpose::Model);
 }
 
 bool ARKitInlinePreviewModelPlayerMac::supportsMouseInteraction()

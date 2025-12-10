@@ -1790,7 +1790,7 @@ void testMemoryFill()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
-    auto arguments = cCallArgumentValues<void*, void*, void*>(proc, root);
+    auto arguments = cCallArgumentValues<void*, uint32_t, void*>(proc, root);
     root->appendNew<BulkMemoryValue>(proc, MemoryFill, Origin(), arguments[0], arguments[1], arguments[2]);
     root->appendNewControlValue(proc, Return, Origin());
 
@@ -1819,7 +1819,7 @@ void testMemoryFillConstant()
             Procedure proc;
             BasicBlock* root = proc.addBlock();
             auto arguments = cCallArgumentValues<void*>(proc, root);
-            root->appendNew<BulkMemoryValue>(proc, MemoryFill, Origin(), arguments[0], root->appendIntConstant(proc, Origin(), pointerType(), a.value), root->appendIntConstant(proc, Origin(), pointerType(), width));
+            root->appendNew<BulkMemoryValue>(proc, MemoryFill, Origin(), arguments[0], root->appendIntConstant(proc, Origin(), Int32, a.value), root->appendIntConstant(proc, Origin(), pointerType(), width));
             root->appendNewControlValue(proc, Return, Origin());
             auto code = compileProc(proc);
 
@@ -1832,6 +1832,24 @@ void testMemoryFillConstant()
     }
 }
 
+void testLoadImmutable()
+{
+    Vector<uint64_t> memory(4);
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<void*, void*>(proc, root);
+
+    auto* value1 = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), arguments[0]);
+    value1->setReadsMutability(B3::Mutability::Immutable);
+    root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const32Value>(proc, Origin(), 0), arguments[1]);
+    auto* value2 = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), arguments[0]);
+    value2->setReadsMutability(B3::Mutability::Immutable);
+    root->appendNewControlValue(proc, Return, Origin(), root->appendNew<Value>(proc, Add, Origin(), value1, value2));
+    auto code = compileProc(proc);
+
+    memory.fill(42);
+    CHECK_EQ(invoke<uint64_t>(*code, memory.mutableSpan().data(), memory.mutableSpan().data() + 1), 84U);
+}
 
 #endif // ENABLE(B3_JIT)
 

@@ -74,7 +74,10 @@ public:
 #if USE(GBM)
         GBM,
 #endif
-#if PLATFORM(GTK)
+#if OS(ANDROID)
+        Android,
+#endif
+#if PLATFORM(GTK) || OS(ANDROID)
         Default,
 #endif
     };
@@ -111,7 +114,7 @@ public:
 
 #if USE(SKIA)
     GLContext* skiaGLContext();
-    GrDirectContext* skiaGrContext();
+    GrDirectContext* skiaGrContext() const;
     unsigned msaaSampleCount() const;
 #endif
 
@@ -131,15 +134,10 @@ private:
     void clearSkiaGLContext();
 #endif
 
-#if ENABLE(WEBGL) && !PLATFORM(WIN)
-    void clearANGLESharingGLContext();
-#endif
-
     void terminateEGLDisplay();
 
 #if ENABLE(WEBGL) && !PLATFORM(WIN)
     mutable EGLDisplay m_angleEGLDisplay { nullptr };
-    EGLContext m_angleSharingGLContext { nullptr };
 #endif
 
 #if ENABLE(VIDEO) && USE(GSTREAMER_GL)

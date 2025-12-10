@@ -25,7 +25,7 @@
 #pragma once
 
 #include <WebCore/CSSPrimitiveKeywordList.h>
-#include <WebCore/CalculationValue.h>
+#include <WebCore/LayoutUnit.h>
 #include <WebCore/StyleLengthWrapperData.h>
 #include <WebCore/StylePrimitiveNumericTypes.h>
 #include <wtf/StdLibExtras.h>
@@ -35,7 +35,7 @@ namespace WebCore {
 namespace Style {
 
 template<typename, CSS::PrimitiveKeyword...> struct LengthWrapperBase;
-template<typename> struct MinimumEvaluation;
+template<typename, typename> struct MinimumEvaluation;
 
 // Transitionary type acting as a `Style::PrimitiveNumericOrKeyword<...>` but implemented by wrapping a `LengthWrapperData`.
 template<typename Numeric, CSS::PrimitiveKeyword... Ks> struct LengthWrapperBase {
@@ -69,8 +69,8 @@ template<typename Numeric, CSS::PrimitiveKeyword... Ks> struct LengthWrapperBase
 
     LengthWrapperBase(CSS::ValidKeywordForList<Keywords> auto keyword) : m_value(Keywords::offsetForKeyword(keyword)) { }
 
-    LengthWrapperBase(Fixed fixed) : m_value(indexForFixed, fixed.value) { }
-    LengthWrapperBase(Fixed fixed, bool hasQuirk) : m_value(indexForFixed, fixed.value, hasQuirk) { }
+    LengthWrapperBase(Fixed fixed) : m_value(indexForFixed, fixed.unresolvedValue()) { }
+    LengthWrapperBase(Fixed fixed, bool hasQuirk) : m_value(indexForFixed, fixed.unresolvedValue(), hasQuirk) { }
     LengthWrapperBase(Percentage percent) : m_value(indexForPercentage, percent.value) { }
     LengthWrapperBase(Calc&& calc) : m_value(indexForCalc, calc.protectedCalculation()) { }
     LengthWrapperBase(Specified&& specified) : m_value(toData(specified)) { }
@@ -78,9 +78,6 @@ template<typename Numeric, CSS::PrimitiveKeyword... Ks> struct LengthWrapperBase
 
     LengthWrapperBase(CSS::ValueLiteral<CSS::LengthUnit::Px> literal) : LengthWrapperBase(Fixed { literal }) { }
     LengthWrapperBase(CSS::ValueLiteral<CSS::PercentageUnit::Percentage> literal) : LengthWrapperBase(Percentage { literal }) { }
-
-    explicit LengthWrapperBase(WebCore::Length&& other) : m_value(toData(other)) { }
-    explicit LengthWrapperBase(const WebCore::Length& other) : m_value(toData(other)) { }
 
     explicit LengthWrapperBase(WTF::HashTableEmptyValueType token) : m_value(token) { }
 
@@ -94,9 +91,19 @@ template<typename Numeric, CSS::PrimitiveKeyword... Ks> struct LengthWrapperBase
     ALWAYS_INLINE bool isPercentOrCalculated() const { return isPercent() || isCalculated(); }
     ALWAYS_INLINE bool isSpecified() const { return isFixed() || isPercent() || isCalculated(); }
 
-    ALWAYS_INLINE bool isZero() const { return m_value.isZero(); }
-    ALWAYS_INLINE bool isPositive() const { return m_value.isPositive(); }
-    ALWAYS_INLINE bool isNegative() const { return m_value.isNegative(); }
+    // `isKnownZero` returns whether the value can be guaranteed to be `0`. Keywords and calc() return `false`.
+    ALWAYS_INLINE bool isKnownZero() const requires (Fixed::range.min <= 0 && Fixed::range.max >= 0) { return m_value.isKnownZero(evaluationKind()); }
+    // `isKnownPositive` returns whether the value can be guaranteed to be more than `0`. Keywords and calc() return `false`.
+    ALWAYS_INLINE bool isKnownPositive() const requires (Fixed::range.max > 0) { return m_value.isKnownPositive(evaluationKind()); }
+    // `isKnownNegative` returns whether the value can be guaranteed to be less than `0`. Keywords and calc() return `false`.
+    ALWAYS_INLINE bool isKnownNegative() const requires (Fixed::range.min < 0) { return m_value.isKnownNegative(evaluationKind()); }
+
+    // `isPossiblyZero` returns whether the value can possibly be `0`. Keywords and calc() return `true`.
+    ALWAYS_INLINE bool isPossiblyZero() const requires (Fixed::range.min <= 0 && Fixed::range.max >= 0) { return m_value.isPossiblyZero(evaluationKind()); }
+    // `isPossiblyPositive` returns whether the value can possibly be more than `0`. Keywords and calc() return `true.
+    ALWAYS_INLINE bool isPossiblyPositive() const requires (Fixed::range.max > 0) { return m_value.isPossiblyPositive(evaluationKind()); }
+    // `isPossiblyNegative` returns whether the value can possibly be less than `0`. Keywords and calc() return `true.
+    ALWAYS_INLINE bool isPossiblyNegative() const requires (Fixed::range.min < 0) { return m_value.isPossiblyNegative(evaluationKind()); }
 
     std::optional<Fixed> tryFixed() const { return isFixed() ? std::make_optional(Fixed { m_value.value() }) : std::nullopt; }
     std::optional<Percentage> tryPercentage() const { return isPercent() ? std::make_optional(Percentage { m_value.value() }) : std::nullopt; }
@@ -147,15 +154,16 @@ template<typename Numeric, CSS::PrimitiveKeyword... Ks> struct LengthWrapperBase
 
 private:
     template<typename> friend struct ToPlatform;
-    template<typename> friend struct Evaluation;
-    template<typename> friend struct MinimumEvaluation;
+    template<typename, typename> friend struct Evaluation;
+    template<typename, typename> friend struct MinimumEvaluation;
     template<typename> friend struct Blending;
+    template<typename> friend struct LengthWrapperBlendingSupport;
 
     static LengthWrapperData toData(const Specified& specified)
     {
         return WTF::switchOn(specified,
             [](const Fixed& fixed) {
-                return LengthWrapperData { indexForFixed, fixed.value };
+                return LengthWrapperData { indexForFixed, fixed.unresolvedValue() };
             },
             [](const Percentage& percentage) {
                 return LengthWrapperData { indexForPercentage, percentage.value };
@@ -179,81 +187,6 @@ private:
         }
 
         return LengthWrapperData { WTFMove(ipcData) };
-    }
-
-    static LengthWrapperData toData(const WebCore::Length& length)
-    {
-        switch (length.type()) {
-        case WebCore::LengthType::Fixed:
-            return LengthWrapperData(indexForFixed, CSS::clampToRange<Fixed::range, float>(length.value()), length.hasQuirk());
-        case WebCore::LengthType::Percent:
-            return LengthWrapperData(indexForPercentage, CSS::clampToRange<Percentage::range, float>(length.value()));
-        case WebCore::LengthType::Calculated:
-            return LengthWrapperData(indexForCalc, LengthWrapperData::LengthCalculation { length });
-        case WebCore::LengthType::Auto:
-            if constexpr (SupportsAuto) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::Auto { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::Content:
-            if constexpr (SupportsContent) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::Content { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::FillAvailable:
-            if constexpr (SupportsWebkitFillAvailable) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::WebkitFillAvailable { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::FitContent:
-            if constexpr (SupportsFitContent) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::FitContent { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::Intrinsic:
-            if constexpr (SupportsIntrinsic) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::Intrinsic { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::MinIntrinsic:
-            if constexpr (SupportsMinIntrinsic) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::MinIntrinsic { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::MinContent:
-            if constexpr (SupportsMinContent) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::MinContent { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::MaxContent:
-            if constexpr (SupportsMaxContent) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::MaxContent { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::Normal:
-            if constexpr (SupportsNormal) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::Normal { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::Undefined:
-            if constexpr (SupportsNone) {
-                return { Keywords::offsetForKeyword(CSS::Keyword::None { }) };
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        case WebCore::LengthType::Relative:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        RELEASE_ASSERT_NOT_REACHED();
     }
 
     LengthWrapperDataEvaluationKind evaluationKind() const
@@ -281,40 +214,57 @@ template<typename T> concept LengthWrapperBaseDerived = WTF::IsBaseOfTemplate<Le
 
 // MARK: - Evaluation
 
-template<LengthWrapperBaseDerived T> struct Evaluation<T> {
-    auto operator()(const T& value, NOESCAPE const Invocable<LayoutUnit()> auto& lazyMaximumValueFunctor, float zoom) -> LayoutUnit
+template<LengthWrapperBaseDerived T, typename Result> struct Evaluation<T, Result> {
+    auto operator()(const T& value, NOESCAPE const Invocable<Result()> auto& lazyMaximumValueFunctor, ZoomNeeded token) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Default)
     {
-        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), lazyMaximumValueFunctor, zoom);
+        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<Result, Result>(value.evaluationKind(), lazyMaximumValueFunctor, token);
     }
-    auto operator()(const T& value, NOESCAPE const Invocable<float()> auto& lazyMaximumValueFunctor, float zoom) -> float
+    auto operator()(const T& value, Result maximumValue, ZoomNeeded token) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Default)
     {
-        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<float, float>(value.evaluationKind(), lazyMaximumValueFunctor, zoom);
+        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<Result, Result>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return maximumValue; }, token);
     }
-    auto operator()(const T& value, LayoutUnit maximumValue, float zoom) -> LayoutUnit
+
+    auto operator()(const T& value, NOESCAPE const Invocable<Result()> auto& lazyMaximumValueFunctor, ZoomFactor zoom) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Unzoomed)
     {
-        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return maximumValue; }, zoom);
+        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<Result, Result>(value.evaluationKind(), lazyMaximumValueFunctor, zoom);
     }
-    auto operator()(const T& value, float maximumValue, float zoom) -> float
+    auto operator()(const T& value, Result maximumValue, ZoomFactor zoom) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Unzoomed)
     {
-        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<float, float>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return maximumValue; }, zoom);
+        return value.m_value.template valueForLengthWrapperDataWithLazyMaximum<Result, Result>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return maximumValue; }, zoom);
     }
 };
 
-template<typename StyleType, typename Reference> decltype(auto) evaluateMinimum(const StyleType& value, NOESCAPE Reference&& reference, float zoom)
-{
-    return MinimumEvaluation<StyleType> { }(value, std::forward<Reference>(reference), zoom);
-}
+template<typename Result> struct EvaluationMinimumInvoker {
+    template<typename StyleType, typename Reference, typename Zoom> decltype(auto) operator()(const StyleType& value, NOESCAPE Reference&& reference, Zoom&& zoom) const
+    {
+        return MinimumEvaluation<StyleType, Result> { }(value, std::forward<Reference>(reference), std::forward<Zoom>(zoom));
+    }
+};
+template<typename Result> inline constexpr EvaluationMinimumInvoker<Result> evaluateMinimum{};
 
-template<LengthWrapperBaseDerived T> struct MinimumEvaluation<T> {
-    auto operator()(const T& value, NOESCAPE const Invocable<LayoutUnit()> auto& lazyMaximumValueFunctor, float zoom) -> LayoutUnit
+template<LengthWrapperBaseDerived T, typename Result> struct MinimumEvaluation<T, Result> {
+    auto operator()(const T& value, NOESCAPE const Invocable<Result()> auto& lazyMaximumValueFunctor, ZoomNeeded token) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Default)
+    {
+        return value.m_value.template minimumValueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), lazyMaximumValueFunctor, token);
+    }
+    auto operator()(const T& value, Result maximumValue, ZoomNeeded token) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Default)
+    {
+        return value.m_value.template minimumValueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return LayoutUnit(maximumValue); }, token);
+    }
+
+    auto operator()(const T& value, NOESCAPE const Invocable<Result()> auto& lazyMaximumValueFunctor, ZoomFactor zoom) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Unzoomed)
     {
         return value.m_value.template minimumValueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), lazyMaximumValueFunctor, zoom);
     }
-    auto operator()(const T& value, LayoutUnit maximumValue, float zoom) -> LayoutUnit
-    {
-        return value.m_value.template minimumValueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return maximumValue; }, zoom);
-    }
-    auto operator()(const T& value, float maximumValue, float zoom) -> float
+    auto operator()(const T& value, Result maximumValue, ZoomFactor zoom) -> Result
+        requires (T::Fixed::range.zoomOptions == CSS::RangeZoomOptions::Unzoomed)
     {
         return value.m_value.template minimumValueForLengthWrapperDataWithLazyMaximum<LayoutUnit, LayoutUnit>(value.evaluationKind(), [&] ALWAYS_INLINE_LAMBDA { return LayoutUnit(maximumValue); }, zoom);
     }

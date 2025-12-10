@@ -35,13 +35,12 @@
 #include "WebPage.h"
 #include "WebProcess.h"
 #include "XRDeviceInfo.h"
+#include <WebCore/ExceptionData.h>
 #include <WebCore/Page.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/Settings.h>
 #include <WebCore/XRCanvasConfiguration.h>
 #include <wtf/Vector.h>
-
-using namespace PlatformXR;
 
 namespace WebKit {
 
@@ -61,13 +60,13 @@ Ref<WebPage> PlatformXRSystemProxy::protectedPage() const
     return m_page.get();
 }
 
-void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(const Instance::DeviceList&)>&& completionHandler)
+void PlatformXRSystemProxy::enumerateImmersiveXRDevices(CompletionHandler<void(const PlatformXR::DeviceList&)>&& completionHandler)
 {
     protectedPage()->sendWithAsyncReply(Messages::PlatformXRSystem::EnumerateImmersiveXRDevices(), [this, weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)](Vector<XRDeviceInfo>&& devicesInfos) mutable {
         if (!weakThis)
             return;
 
-        PlatformXR::Instance::DeviceList devices;
+        PlatformXR::DeviceList devices;
         for (auto& deviceInfo : devicesInfos) {
             if (auto device = deviceByIdentifier(deviceInfo.identifier))
                 devices.append(*device);
@@ -113,13 +112,17 @@ void PlatformXRSystemProxy::requestFrame(std::optional<PlatformXR::RequestData>&
 std::optional<PlatformXR::LayerHandle> PlatformXRSystemProxy::createLayerProjection(uint32_t width, uint32_t height, bool alpha)
 {
 #if USE(OPENXR)
-    protectedPage()->send(Messages::PlatformXRSystem::CreateLayerProjection(width, height, alpha));
+    auto result = protectedPage()->sendSync(Messages::PlatformXRSystem::CreateLayerProjection(width, height, alpha));
+    if (!result.succeeded())
+        return std::nullopt;
+    auto [layerHandle] = result.takeReply();
+    return layerHandle;
 #else
     UNUSED_PARAM(width);
     UNUSED_PARAM(height);
     UNUSED_PARAM(alpha);
-#endif
     return PlatformXRCoordinator::defaultLayerHandle();
+#endif
 }
 
 #if USE(OPENXR)
@@ -185,6 +188,38 @@ void PlatformXRSystemProxy::deref() const
 {
     m_page->deref();
 }
+
+#if ENABLE(WEBXR_HIT_TEST)
+void PlatformXRSystemProxy::requestHitTestSource(const PlatformXR::HitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&& completionHandler)
+{
+    protectedPage()->sendWithAsyncReply(Messages::PlatformXRSystem::RequestHitTestSource(options), [protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](Expected<PlatformXR::HitTestSource, WebCore::ExceptionData> exceptionOrSource) mutable {
+        if (exceptionOrSource)
+            completionHandler(WTFMove(exceptionOrSource).value());
+        else
+            completionHandler(WTFMove(exceptionOrSource).error().toException());
+    });
+}
+
+void PlatformXRSystemProxy::deleteHitTestSource(PlatformXR::HitTestSource source)
+{
+    protectedPage()->send(Messages::PlatformXRSystem::DeleteHitTestSource(source));
+}
+
+void PlatformXRSystemProxy::requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions& options, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource>)>&& completionHandler)
+{
+    protectedPage()->sendWithAsyncReply(Messages::PlatformXRSystem::RequestTransientInputHitTestSource(options), [protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](Expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData> exceptionOrSource) mutable {
+        if (exceptionOrSource)
+            completionHandler(WTFMove(exceptionOrSource).value());
+        else
+            completionHandler(WTFMove(exceptionOrSource).error().toException());
+    });
+}
+
+void PlatformXRSystemProxy::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
+{
+    protectedPage()->send(Messages::PlatformXRSystem::DeleteTransientInputHitTestSource(source));
+}
+#endif
 
 } // namespace WebKit
 

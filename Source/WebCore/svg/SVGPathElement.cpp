@@ -28,13 +28,14 @@
 #include "LegacyRenderSVGResource.h"
 #include "MutableStyleProperties.h"
 #include "RenderSVGPath.h"
+#include "RenderStyleInlines.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGMPathElement.h"
 #include "SVGNames.h"
 #include "SVGPathUtilities.h"
 #include "SVGPoint.h"
-#include "SVGRenderStyle.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -100,10 +101,11 @@ inline SVGPathElement::SVGPathElement(const QualifiedName& tagName, Document& do
 {
     ASSERT(hasTagName(SVGNames::pathTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::dAttr, &SVGPathElement::m_pathSegList>();
-    });
+    }
 }
 
 Ref<SVGPathElement> SVGPathElement::create(const QualifiedName& tagName, Document& document)

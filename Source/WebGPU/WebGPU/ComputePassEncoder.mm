@@ -243,7 +243,7 @@ void ComputePassEncoder::executePreDispatchCommands(const Buffer* indirectBuffer
                     continue;
 
                 if (!addResourceToActiveResources(usageData.resource, usageData.usage, BindGroupId { bindGroupIndex }, usagesForResource, textureUsagesForResource, protectedParentEncoder())) {
-                    makeInvalid();
+                    makeInvalid(@"GPUComputePassEncoder.executePreDispatchCommands - could not track resource");
                     return;
                 }
             }
@@ -276,7 +276,7 @@ void ComputePassEncoder::dispatch(uint32_t x, uint32_t y, uint32_t z)
     executePreDispatchCommands();
     auto dimensionMax = m_device->limits().maxComputeWorkgroupsPerDimension;
     if (x > dimensionMax || y > dimensionMax || z > dimensionMax) {
-        makeInvalid();
+        makeInvalid([NSString stringWithFormat:@"x(%u) > dimensionMax(%u) || y(%u) > dimensionMax(%u) || z(%u) > dimensionMax(%u)", x, dimensionMax, y, dimensionMax, z, dimensionMax]);
         return;
     }
 
@@ -288,11 +288,9 @@ void ComputePassEncoder::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 id<MTLBuffer> ComputePassEncoder::runPredispatchIndirectCallValidation(const Buffer& indirectBuffer, uint64_t indirectOffset)
 {
-    static id<MTLFunction> function = nil;
-    id<MTLDevice> mtlDevice = m_device->device();
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [protectedThis = Ref { *this }, &mtlDevice] {
-        auto dimensionMax = protectedThis->m_device->limits().maxComputeWorkgroupsPerDimension;
+    static id<MTLFunction> function = [this] {
+        id<MTLDevice> mtlDevice = m_device->device();
+        auto dimensionMax = m_device->limits().maxComputeWorkgroupsPerDimension;
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
@@ -302,8 +300,8 @@ id<MTLBuffer> ComputePassEncoder::runPredispatchIndirectCallValidation(const Buf
         if (error)
             WTFLogAlways("%@", error); // NOLINT
 
-        function = [library newFunctionWithName:@"csDispatchClamp"];
-    });
+        return [library newFunctionWithName:@"csDispatchClamp"];
+    }();
     RELEASE_ASSERT(function);
 
     auto device = m_device;
@@ -320,13 +318,13 @@ void ComputePassEncoder::dispatchIndirect(const Buffer& indirectBuffer, uint64_t
 {
     RETURN_IF_FINISHED();
     if (!isValidToUseWith(indirectBuffer, *this)) {
-        makeInvalid();
+        makeInvalid(@"GPUComputePassEncoder.dispatchIndirect: indirectBuffer is not valid to use with this GPUComputePassEncoder");
         return;
     }
 
     auto indirectOffsetSum = checkedSum<uint64_t>(indirectOffset, 3 * sizeof(uint32_t));
     if ((indirectOffset % 4) || !(indirectBuffer.usage() & WGPUBufferUsage_Indirect) || indirectOffsetSum.hasOverflowed() || (indirectOffsetSum.value() > indirectBuffer.initialSize())) {
-        makeInvalid();
+        makeInvalid([NSString stringWithFormat:@"GPUComputePassEncoder.dispatchIndirect: (indirectOffset(%llu) mod 4) || !(indirectBuffer.usage(%u) & WGPUBufferUsage_Indirect(%u)) || indirectOffsetSum.hasOverflowed(%d) || (indirectOffsetSum(%llu) > indirectBuffer.initialSize(%llu))", indirectOffset, indirectBuffer.usage(), WGPUBufferUsage_Indirect, indirectOffsetSum.hasOverflowed(), indirectOffsetSum.hasOverflowed() ? 0 : indirectOffsetSum.value(), indirectBuffer.initialSize()]);
         return;
     }
 
@@ -511,7 +509,7 @@ void ComputePassEncoder::setPipeline(const ComputePipeline& pipeline)
 {
     RETURN_IF_FINISHED();
     if (!isValidToUseWith(pipeline, *this)) {
-        makeInvalid();
+        makeInvalid(@"GPUComputePipeline is invalid to use with this GPUComputePassEncoder");
         return;
     }
 

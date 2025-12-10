@@ -28,6 +28,7 @@
 #include <WebCore/GlyphMetricsMap.h>
 #include <WebCore/GlyphPage.h>
 #include <WebCore/RenderingResourceIdentifier.h>
+#include <WebCore/TrustedFonts.h>
 #include <wtf/BitVector.h>
 #include <wtf/Hasher.h>
 #include <wtf/Platform.h>
@@ -50,6 +51,12 @@
 
 #if PLATFORM(WIN)
 #include <usp10.h>
+#endif
+
+#if USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkTextBlob.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WTF {
@@ -78,6 +85,8 @@ enum class FontVisibility : bool { Visible, Invisible };
 enum class FontIsOrientationFallback : bool { No, Yes };
 
 #if USE(CORE_TEXT)
+using IPCFontData = Variant<WebCore::InstalledFont, WebCore::CustomFontCreationData>;
+
 bool fontHasEitherTable(CTFontRef, unsigned tableTag1, unsigned tableTag2);
 bool supportsOpenTypeFeature(CTFontRef, CFStringRef featureTag);
 #endif
@@ -102,7 +111,7 @@ public:
     using IsOrientationFallback = FontIsOrientationFallback;
 
     WEBCORE_EXPORT static Ref<Font> create(const FontPlatformData&, Origin = Origin::Local, IsInterstitial = IsInterstitial::No, Visibility = Visibility::Visible, IsOrientationFallback = IsOrientationFallback::No, std::optional<RenderingResourceIdentifier> = std::nullopt);
-    WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic);
+    WEBCORE_EXPORT static Ref<Font> create(Ref<SharedBuffer>&& fontFaceData, Font::Origin, float fontSize, bool syntheticBold, bool syntheticItalic, DownloadableBinaryFontTrustedTypes);
     WEBCORE_EXPORT static Ref<Font> create(WebCore::FontInternalAttributes&&, WebCore::FontPlatformData&&);
 
     WEBCORE_EXPORT ~Font();
@@ -171,7 +180,7 @@ public:
     void setAvgCharWidth(float avgCharWidth) { m_avgCharWidth = avgCharWidth; }
 
     FloatRect boundsForGlyph(Glyph) const;
-#if USE(CORE_TEXT)
+#if USE(CORE_TEXT) || USE(SKIA)
     static constexpr size_t inlineGlyphRunCapacity = 128;
     Vector<FloatRect, inlineGlyphRunCapacity> boundsForGlyphs(std::span<const Glyph>) const;
 #endif
@@ -241,6 +250,11 @@ public:
 #endif
 #endif
 
+#if USE(SKIA)
+    sk_sp<SkTextBlob> buildTextBlob(std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, FontSmoothingMode) const;
+    bool enableAntialiasing(FontSmoothingMode) const;
+#endif
+
     bool canRenderCombiningCharacterSequence(StringView) const;
     GlyphBufferAdvance applyTransforms(GlyphBuffer&, unsigned beginningGlyphIndex, unsigned beginningStringIndex, bool enableKerning, bool requiresShaping, const AtomString& locale, StringView text, TextDirection) const;
 
@@ -248,7 +262,11 @@ public:
     std::optional<BitVector> findOTSVGGlyphs(std::span<const GlyphBufferGlyph>) const;
 
     bool hasAnyComplexColorFormatGlyphs(std::span<const GlyphBufferGlyph>) const;
-
+#if USE(CORE_TEXT)
+    WEBCORE_EXPORT static std::optional<Ref<Font>> fromIPCData(IPCFontData&&);
+    WEBCORE_EXPORT IPCFontData toSerializableFont() const;
+    WEBCORE_EXPORT std::optional<InstalledFont> toSerializableInstalledFont() const;
+#endif
 #if PLATFORM(WIN)
     SCRIPT_CACHE* scriptCache() const { return &m_scriptCache; }
 #endif
@@ -282,7 +300,7 @@ private:
     DerivedFonts& ensureDerivedFontData() const;
 
     FloatRect platformBoundsForGlyph(Glyph) const;
-#if USE(CORE_TEXT)
+#if USE(CORE_TEXT) || USE(SKIA)
     Vector<FloatRect, inlineGlyphRunCapacity> platformBoundsForGlyphs(const Vector<Glyph, inlineGlyphRunCapacity>&) const;
 #endif
     float platformWidthForGlyph(Glyph) const;
@@ -439,7 +457,7 @@ ALWAYS_INLINE FloatRect Font::boundsForGlyph(Glyph glyph) const
     return bounds;
 }
 
-#if USE(CORE_TEXT)
+#if USE(CORE_TEXT) || USE(SKIA)
 ALWAYS_INLINE Vector<FloatRect, Font::inlineGlyphRunCapacity> Font::boundsForGlyphs(std::span<const Glyph> glyphs) const
 {
     const auto glyphCount = glyphs.size();

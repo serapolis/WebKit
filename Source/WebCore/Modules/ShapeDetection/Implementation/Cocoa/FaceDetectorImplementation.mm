@@ -61,27 +61,21 @@ static Vector<Landmark> convertLandmarks(VNFaceLandmarks2D *landmarks, const Flo
 {
     return {
         {
-            convertLandmark(landmarks.leftEye, imageSize),
+            convertLandmark(retainPtr(landmarks.leftEye).get(), imageSize),
             WebCore::ShapeDetection::LandmarkType::Eye,
         }, {
-            convertLandmark(landmarks.rightEye, imageSize),
+            convertLandmark(retainPtr(landmarks.rightEye).get(), imageSize),
             WebCore::ShapeDetection::LandmarkType::Eye,
         }, {
-            convertLandmark(landmarks.nose, imageSize),
+            convertLandmark(retainPtr(landmarks.nose).get(), imageSize),
             WebCore::ShapeDetection::LandmarkType::Nose,
         },
     };
 }
 
-void FaceDetectorImpl::detect(Ref<ImageBuffer>&& imageBuffer, CompletionHandler<void(Vector<DetectedFace>&&)>&& completionHandler)
+void FaceDetectorImpl::detect(const NativeImage& image, CompletionHandler<void(Vector<DetectedFace>&&)>&& completionHandler)
 {
-    auto nativeImage = imageBuffer->copyNativeImage();
-    if (!nativeImage) {
-        completionHandler({ });
-        return;
-    }
-
-    auto platformImage = nativeImage->platformImage();
+    auto platformImage = image.platformImage();
     if (!platformImage) {
         completionHandler({ });
         return;
@@ -99,12 +93,13 @@ void FaceDetectorImpl::detect(Ref<ImageBuffer>&& imageBuffer, CompletionHandler<
         return;
     }
 
+    auto imageSize = image.size();
     Vector<DetectedFace> results;
     results.reserveInitialCapacity(std::min<size_t>(m_maxDetectedFaces, request.get().results.count));
     for (VNFaceObservation *observation in request.get().results) {
         results.append({
-            convertRectFromVisionToWeb(nativeImage->size(), observation.boundingBox),
-            { convertLandmarks(observation.landmarks, nativeImage->size()) },
+            convertRectFromVisionToWeb(imageSize, observation.boundingBox),
+            { convertLandmarks(retainPtr(observation.landmarks).get(), imageSize) },
         });
         if (results.size() >= m_maxDetectedFaces)
             break;

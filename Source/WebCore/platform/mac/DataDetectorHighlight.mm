@@ -117,13 +117,11 @@ void DataDetectorHighlight::invalidate()
 
 void DataDetectorHighlight::notifyFlushRequired(const GraphicsLayer*)
 {
-    if (!m_client)
-        return;
-
-    m_client->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
+    if (RefPtr client = m_client.get())
+        client->scheduleRenderingUpdate(RenderingUpdateStep::LayerFlush);
 }
 
-void DataDetectorHighlight::paintContents(const GraphicsLayer*, GraphicsContext& graphicsContext, const FloatRect&, OptionSet<GraphicsLayerPaintBehavior>)
+void DataDetectorHighlight::paintContents(const GraphicsLayer&, GraphicsContext& graphicsContext, const FloatRect&, OptionSet<GraphicsLayerPaintBehavior>)
 {
     if (!PAL::isDataDetectorsFrameworkAvailable())
         return;
@@ -131,30 +129,28 @@ void DataDetectorHighlight::paintContents(const GraphicsLayer*, GraphicsContext&
     if (!highlight())
         return;
 
-    CGRect highlightBoundingRect = PAL::softLink_DataDetectors_DDHighlightGetBoundingRect(highlight());
+    CGRect highlightBoundingRect = PAL::softLink_DataDetectors_DDHighlightGetBoundingRect(protectedHighlight().get());
     highlightBoundingRect.origin = CGPointZero;
 
     auto imageBuffer = graphicsContext.createImageBuffer(FloatSize(highlightBoundingRect.size), deviceScaleFactor(), DestinationColorSpace::SRGB(), graphicsContext.renderingMode(), RenderingMethod::Local);
     if (!imageBuffer)
         return;
 
-    CGContextRef cgContext = imageBuffer->context().platformContext();
+    RetainPtr cgContext = imageBuffer->context().platformContext();
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    CGLayerRef highlightLayer = PAL::softLink_DataDetectors_DDHighlightGetLayerWithContext(highlight(), cgContext);
+    RetainPtr highlightLayer = PAL::softLink_DataDetectors_DDHighlightGetLayerWithContext(protectedHighlight().get(), cgContext.get());
 ALLOW_DEPRECATED_DECLARATIONS_END
 
-    CGContextDrawLayerInRect(cgContext, highlightBoundingRect, highlightLayer);
+    CGContextDrawLayerInRect(cgContext.get(), highlightBoundingRect, highlightLayer.get());
 
     graphicsContext.drawConsumingImageBuffer(WTFMove(imageBuffer), highlightBoundingRect);
 }
 
 float DataDetectorHighlight::deviceScaleFactor() const
 {
-    if (!m_client)
-        return 1;
-
-    return m_client->deviceScaleFactor();
+    RefPtr client = m_client.get();
+    return client ? client->deviceScaleFactor() : 1;
 }
 
 bool DataDetectorHighlight::isRangeSupportingType() const
@@ -234,10 +230,11 @@ void DataDetectorHighlight::startFadeAnimation()
 
 void DataDetectorHighlight::didFinishFadeOutAnimation()
 {
-    if (!m_client)
+    RefPtr client = m_client.get();
+    if (!client)
         return;
 
-    if (m_client->activeHighlight() == this)
+    if (client->activeHighlight() == this)
         return;
 
     layer().removeFromParent();

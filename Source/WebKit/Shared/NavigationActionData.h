@@ -34,8 +34,10 @@
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
+#include <WebCore/NavigationRequester.h>
 #include <WebCore/OwnerPermissionsPolicyData.h>
 #include <WebCore/PrivateClickMeasurement.h>
+#include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SandboxFlags.h>
@@ -67,14 +69,13 @@ struct NavigationActionData {
     bool isInitialFrameSrcLoad { false };
     bool isContentRuleListRedirect { false };
     String openedMainFrameName;
-    WebCore::SecurityOriginData requesterOrigin;
-    WebCore::SecurityOriginData requesterTopOrigin;
     std::optional<WebCore::BackForwardItemIdentifier> targetBackForwardItemIdentifier;
     std::optional<WebCore::BackForwardItemIdentifier> sourceBackForwardItemIdentifier;
     WebCore::LockHistory lockHistory { WebCore::LockHistory::No };
     WebCore::LockBackForwardList lockBackForwardList { WebCore::LockBackForwardList::No };
     WTF::String clientRedirectSourceForHistory;
     WebCore::SandboxFlags effectiveSandboxFlags;
+    WebCore::ReferrerPolicy effectiveReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
     std::optional<WebCore::OwnerPermissionsPolicyData> ownerPermissionsPolicy;
     std::optional<WebCore::PrivateClickMeasurement> privateClickMeasurement;
     OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections;
@@ -89,6 +90,7 @@ struct NavigationActionData {
     WebCore::ResourceRequest originalRequest;
     WebCore::ResourceRequest request;
     String invalidURLString;
+    std::optional<WebCore::NavigationRequester> requester;
 };
 
 }

@@ -20,16 +20,18 @@
 #pragma once
 
 #include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGResourceClipper.h"
 #include "RenderView.h"
 #include "SVGGraphicsElement.h"
+#include "Settings.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
 
-inline bool RenderLayer::canPaintTransparencyWithSetOpacity() const { return isBitmapOnly() && !hasNonOpacityTransparency(); }
+inline bool RenderLayer::canPaintTransparencyWithSetOpacity() const { return isBitmapOnly() && !hasNonOpacityTransparency() && !hasFilter(); }
 inline bool RenderLayer::hasBackdropFilter() const { return renderer().hasBackdropFilter(); }
 inline bool RenderLayer::hasFilter() const { return renderer().hasFilter(); }
 inline bool RenderLayer::hasPerspective() const { return renderer().style().hasPerspective(); }
@@ -44,6 +46,11 @@ inline Ref<Page> RenderLayer::protectedPage() const { return renderer().page(); 
 inline bool RenderLayer::hasAppleVisualEffect() const { return renderer().hasAppleVisualEffect(); }
 inline bool RenderLayer::hasAppleVisualEffectRequiringBackdropFilter() const { return renderer().hasAppleVisualEffectRequiringBackdropFilter(); }
 #endif
+
+inline bool RenderLayer::isViewportConstrained() const
+{
+    return renderer().isFixedPositioned() || renderer().isStickilyPositioned();
+}
 
 inline bool RenderLayer::isTransformed() const
 {

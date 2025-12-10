@@ -660,7 +660,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
 
         if (view.is8Bit()) {
             auto characters = view.span8();
-            Latin1Character convertedLChar;
+            Latin1Character converted;
             while (k < length) {
                 auto c = characters.subspan(k);
                 if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
@@ -670,8 +670,8 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
                         continue;
                     }
                 } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    convertedLChar = Latin1Character(Lexer<Latin1Character>::convertHex(c[1], c[2]));
-                    c = span(convertedLChar);
+                    converted = Latin1Character(Lexer<Latin1Character>::convertHex(c[1], c[2]));
+                    c = span(converted);
                     k += 2;
                 }
                 builder.append(c.front());
@@ -682,16 +682,16 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, Call
 
             while (k < length) {
                 auto c = characters.subspan(k);
-                char16_t convertedUChar;
+                char16_t converted;
                 if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
                     if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
-                        convertedUChar = Lexer<char16_t>::convertUnicode(c[2], c[3], c[4], c[5]);
-                        c = span(convertedUChar);
+                        converted = Lexer<char16_t>::convertUnicode(c[2], c[3], c[4], c[5]);
+                        c = span(converted);
                         k += 5;
                     }
                 } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    convertedUChar = char16_t(Lexer<char16_t>::convertHex(c[1], c[2]));
-                    c = span(convertedUChar);
+                    converted = char16_t(Lexer<char16_t>::convertHex(c[1], c[2]));
+                    c = span(converted);
                     k += 2;
                 }
                 ++k;
@@ -784,41 +784,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncSetPrototypeDirectOrThrow, (JSGlobalObject* g
 
     JSObject* object = asObject(callFrame->thisValue());
     object->setPrototypeDirect(vm, value);
-
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(globalFuncHostPromiseRejectionTracker, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSPromise* promise = jsCast<JSPromise*>(callFrame->argument(0));
-
-    // InternalPromises should not be exposed to user scripts.
-    if (jsDynamicCast<JSInternalPromise*>(promise))
-        return JSValue::encode(jsUndefined());
-
-    JSValue operationValue = callFrame->argument(1);
-
-    ASSERT(operationValue.isNumber());
-    auto operation = static_cast<JSPromiseRejectionOperation>(operationValue.toUInt32(globalObject));
-    ASSERT(operation == JSPromiseRejectionOperation::Reject || operation == JSPromiseRejectionOperation::Handle);
-    scope.assertNoException();
-
-    if (globalObject->globalObjectMethodTable()->promiseRejectionTracker)
-        globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, operation);
-    else {
-        switch (operation) {
-        case JSPromiseRejectionOperation::Reject:
-            vm.promiseRejected(promise);
-            break;
-        case JSPromiseRejectionOperation::Handle:
-            // do nothing
-            break;
-        }
-    }
-    RETURN_IF_EXCEPTION(scope, { });
 
     return JSValue::encode(jsUndefined());
 }
@@ -972,7 +937,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         return JSValue::encode(target);
     }
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -1059,7 +1024,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         return JSValue::encode(target);
     }
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, { });
 

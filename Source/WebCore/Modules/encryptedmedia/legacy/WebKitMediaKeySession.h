@@ -46,6 +46,7 @@ class WebKitMediaKeySession final : public RefCounted<WebKitMediaKeySession>, pu
 public:
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
+    // ActiveDOMObject, LegacyCDMSessionClient.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 

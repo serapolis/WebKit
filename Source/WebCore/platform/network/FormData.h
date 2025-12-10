@@ -20,12 +20,14 @@
 #pragma once
 
 #include <WebCore/BlobData.h>
+#include <optional>
 #include <wtf/ArgumentCoder.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
+#include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
 
 namespace PAL {
@@ -182,7 +184,7 @@ public:
     WEBCORE_EXPORT URL asBlobURL() const;
 
 private:
-    friend struct IPC::ArgumentCoder<FormData, void>;
+    friend struct IPC::ArgumentCoder<FormData>;
     FormData() = default;
     FormData(const FormData&);
 

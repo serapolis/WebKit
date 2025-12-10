@@ -34,13 +34,12 @@
 #include <WebCore/AdvancedPrivacyProtections.h>
 #include <WebCore/Blob.h>
 #include <WebCore/ClientOrigin.h>
-#include <WebCore/Document.h>
 #include <WebCore/DocumentInlines.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/ExceptionCode.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
-#include <WebCore/LocalFrame.h>
-#include <WebCore/Page.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/ThreadableWebSocketChannel.h>
 #include <WebCore/WebSocketChannelClient.h>
 #include <wtf/CheckedArithmetic.h>
@@ -60,9 +59,9 @@ void WebSocketChannel::notifySendFrame(WebSocketFrame::OpCode opCode, std::span<
     m_inspector.didSendWebSocketFrame(frame);
 }
 
-NetworkSendQueue WebSocketChannel::createMessageQueue(Document& document, WebSocketChannel& channel)
+Ref<NetworkSendQueue> WebSocketChannel::createMessageQueue(Document& document, WebSocketChannel& channel)
 {
-    return { document, [weakChannel = WeakPtr { channel }](auto& utf8String) {
+    return NetworkSendQueue::create(document, [weakChannel = WeakPtr { channel }](auto& utf8String) {
         RefPtr channel = weakChannel.get();
         if (!channel)
             return;
@@ -82,7 +81,7 @@ NetworkSendQueue WebSocketChannel::createMessageQueue(Document& document, WebSoc
         auto code = static_cast<int>(exceptionCode);
         channel->fail(makeString("Failed to load Blob: exception code = "_s, code));
         return NetworkSendQueue::Continue::No;
-    } };
+    });
 }
 
 WebSocketChannel::WebSocketChannel(WebPageProxyIdentifier webPageProxyID, Document& document, WebSocketChannelClient& client)
@@ -213,7 +212,7 @@ void WebSocketChannel::send(CString&& message)
     if (!increaseBufferedAmount(message.length()))
         return;
 
-    m_messageQueue.enqueue(WTFMove(message));
+    m_messageQueue->enqueue(WTFMove(message));
 }
 
 void WebSocketChannel::send(const JSC::ArrayBuffer& binaryData, unsigned byteOffset, unsigned byteLength)
@@ -221,7 +220,7 @@ void WebSocketChannel::send(const JSC::ArrayBuffer& binaryData, unsigned byteOff
     if (!increaseBufferedAmount(byteLength))
         return;
 
-    m_messageQueue.enqueue(binaryData, byteOffset, byteLength);
+    m_messageQueue->enqueue(binaryData, byteOffset, byteLength);
 }
 
 void WebSocketChannel::send(Blob& blob)
@@ -233,7 +232,7 @@ void WebSocketChannel::send(Blob& blob)
     if (!increaseBufferedAmount(byteLength))
         return;
 
-    m_messageQueue.enqueue(blob);
+    m_messageQueue->enqueue(blob);
 }
 
 void WebSocketChannel::close(int code, const String& reason)
@@ -273,7 +272,7 @@ void WebSocketChannel::disconnect()
 {
     m_client = nullptr;
     m_document = nullptr;
-    m_messageQueue.clear();
+    m_messageQueue->clear();
 
     m_inspector.didCloseWebSocket();
 

@@ -40,7 +40,7 @@ namespace WebCore {
             
             size_t size() const { return m_nodes.size(); }
             bool isEmpty() const { return m_nodes.isEmpty(); }
-            Node* operator[](unsigned i) const { return m_nodes.at(i).get(); }
+            Node* operator[](unsigned i) const LIFETIME_BOUND { return m_nodes.at(i).get(); }
             void reserveCapacity(size_t newCapacity) { m_nodes.reserveCapacity(newCapacity); }
             void clear() { m_nodes.clear(); }
 
@@ -64,8 +64,8 @@ namespace WebCore {
             void markSubtreesDisjoint(bool disjoint) { m_subtreesAreDisjoint = disjoint; }
             bool subtreesAreDisjoint() const { return m_subtreesAreDisjoint || m_nodes.size() < 2; }
 
-            const RefPtr<Node>* begin() const { return m_nodes.begin(); }
-            const RefPtr<Node>* end() const { return m_nodes.end(); }
+            const RefPtr<Node>* begin() const LIFETIME_BOUND { return m_nodes.begin(); }
+            const RefPtr<Node>* end() const LIFETIME_BOUND { return m_nodes.end(); }
 
         private:
             void traversalSort() const;

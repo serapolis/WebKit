@@ -34,8 +34,8 @@ OBJC_CLASS NSEvent;
 #endif
 
 #if PLATFORM(GTK)
-#include <WebCore/GRefPtrGtk.h>
-#include <WebCore/GUniquePtrGtk.h>
+#include "GRefPtrGtk.h"
+#include "GUniquePtrGtk.h"
 #if USE(GTK4)
 typedef struct _GdkEvent GdkEvent;
 #else
@@ -61,6 +61,7 @@ class NativeWebWheelEvent : public WebWheelEvent {
 public:
 #if USE(APPKIT)
     NativeWebWheelEvent(NSEvent *, NSView *);
+    explicit NativeWebWheelEvent(const WebWheelEvent&);
 #elif PLATFORM(GTK)
     NativeWebWheelEvent(const NativeWebWheelEvent&);
     NativeWebWheelEvent(GdkEvent*, const WebCore::IntPoint& position, const WebCore::IntPoint& globalPosition, const WebCore::FloatSize& delta, const WebCore::FloatSize& wheelTicks, WebWheelEvent::Phase, WebWheelEvent::Phase momentumPhase, bool hasPreciseDeltas = false);

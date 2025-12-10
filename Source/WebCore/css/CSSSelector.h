@@ -37,6 +37,7 @@ struct PossiblyQuotedIdentifier {
     AtomString identifier;
     bool wasQuoted { false };
 
+    bool operator==(const PossiblyQuotedIdentifier&) const = default;
     bool isNull() const { return identifier.isNull(); }
 };
 
@@ -121,7 +122,8 @@ public:
 
     enum AttributeMatchType { CaseSensitive, CaseInsensitive };
 
-    static PseudoId pseudoId(PseudoElement);
+    // Maps from the selector pseudo-element type to the style type. Only pseudo-elements that are not element-backed have a type in style.
+    static std::optional<PseudoElementType> stylePseudoElementTypeFor(PseudoElement);
     static bool isPseudoClassEnabled(PseudoClass, const CSSSelectorParserContext&);
     static bool isPseudoElementEnabled(PseudoElement, StringView, const CSSSelectorParserContext&);
     static std::optional<PseudoElement> parsePseudoElementName(StringView, const CSSSelectorParserContext&);
@@ -141,6 +143,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     const CSSSelector* firstInCompound() const;
     const CSSSelector* lastInCompound() const;
+    const CSSSelector* precedingInCompound() const;
 
     const QualifiedName& tagQName() const;
     const AtomString& tagLowercaseLocalName() const;
@@ -186,6 +189,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     // Implicit means that this selector is not author/UA written.
     bool isImplicit() const { return m_isImplicit; }
+
+    // Relation and selector list bits are ignored.
+    bool simpleSelectorEqual(const CSSSelector&) const;
 
 #if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
     bool destructorHasBeenCalled() const { return m_destructorHasBeenCalled; }
@@ -242,6 +248,8 @@ private:
         static Ref<RareData> create(AtomString);
         WEBCORE_EXPORT ~RareData();
 
+        bool equals(const RareData&) const;
+
         bool matchNth(int count);
 
         // For quirks mode, class and id are case-insensitive. In the case where uppercase
@@ -274,6 +282,11 @@ private:
 };
 
 bool complexSelectorCanMatchPseudoElement(const CSSSelector&);
+bool complexSelectorMatchesElementBackedPseudoElement(const CSSSelector&);
+
+// In the AllowNonElementBackedPseudoElements mode `.foo::before` and `.foo` compare equal.
+enum class ComplexSelectorsEqualMode : bool { Full, IgnoreNonElementBackedPseudoElements };
+bool complexSelectorsEqual(const CSSSelector&, const CSSSelector&, ComplexSelectorsEqualMode = ComplexSelectorsEqualMode::Full);
 
 inline bool operator==(const PossiblyQuotedIdentifier& a, const AtomString& b) { return a.identifier == b; }
 
@@ -322,6 +335,8 @@ inline bool isLogicalCombinationPseudoClass(CSSSelector::PseudoClass pseudoClass
         return false;
     }
 }
+
+bool isElementBackedPseudoElement(CSSSelector::PseudoElement);
 
 inline bool CSSSelector::isSiblingSelector() const
 {

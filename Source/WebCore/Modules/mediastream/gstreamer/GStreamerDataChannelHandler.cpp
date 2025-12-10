@@ -115,7 +115,7 @@ GStreamerDataChannelHandler::GStreamerDataChannelHandler(GRefPtr<GstWebRTCDataCh
         handler->onMessageData(bytes);
     }), this);
     g_signal_connect_swapped(m_channel.get(), "on-message-string", G_CALLBACK(+[](GStreamerDataChannelHandler* handler, const char* message) {
-        handler->onMessageString(message);
+        handler->onMessageString(CStringView::unsafeFromUTF8(message));
     }), this);
     g_signal_connect_swapped(m_channel.get(), "on-error", G_CALLBACK(+[](GStreamerDataChannelHandler* handler, GError* error) {
         handler->onError(error);
@@ -377,26 +377,26 @@ void GStreamerDataChannelHandler::onMessageData(GBytes* bytes)
     });
 }
 
-void GStreamerDataChannelHandler::onMessageString(const char* message)
+void GStreamerDataChannelHandler::onMessageString(CStringView message)
 {
     Locker locker { m_clientLock };
 
-    DC_TRACE("Incoming string: %s", message);
+    DC_TRACE("Incoming string: %s", message.utf8());
     if (!m_client) {
         DC_DEBUG("No client yet, keeping as buffered message");
-        m_pendingMessages.append(String::fromUTF8(message));
+        m_pendingMessages.append(String(message.span()));
         return;
     }
 
     if (!*m_client)
         return;
 
-    DC_DEBUG("Dispatching string of size %zu", strlen(message));
-    postTask([client = m_client, string = String::fromUTF8(message)] {
+    DC_DEBUG("Dispatching string of size %zu", message.lengthInBytes());
+    postTask([client = m_client, string = String(message.span())] mutable {
         if (!*client)
             return;
 
-        client.value()->didReceiveStringData(string);
+        client.value()->didReceiveStringData(WTFMove(string));
     });
 }
 

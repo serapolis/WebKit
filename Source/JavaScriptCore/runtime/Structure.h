@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,8 +59,8 @@ namespace JSC {
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
+class PropertyNameArrayBuilder;
 class PropertyNameArray;
-class PropertyNameArrayData;
 class PropertyTable;
 class StructureChain;
 class StructureShape;
@@ -396,7 +396,7 @@ public:
     // Type accessors.
     TypeInfo typeInfo() const { return m_blob.typeInfo(m_outOfLineTypeFlags); }
     bool isObject() const { return typeInfo().isObject(); }
-    const ClassInfo* classInfoForCells() const { return m_classInfo.get(); }
+    const ClassInfo* classInfoForCells() const { return m_classInfo; }
     CellState typeInfoDefaultCellState() const { return m_blob.defaultCellState(); }
 protected:
     // You probably want typeInfo().type()
@@ -702,7 +702,7 @@ public:
     void setCachedPropertyNames(VM&, CachedPropertyNamesKind, JSCellButterfly*);
     bool canCacheOwnPropertyNames() const;
 
-    void getPropertyNamesFromStructure(VM&, PropertyNameArray&, DontEnumPropertiesMode);
+    void getPropertyNamesFromStructure(VM&, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
     JSValue cachedSpecialProperty(CachedSpecialPropertyKey key)
     {
@@ -1090,7 +1090,7 @@ private:
 
     CompactRefPtr<UniquedStringImpl> m_transitionPropertyName;
 
-    CompactPtr<const ClassInfo> m_classInfo;
+    const ClassInfo* m_classInfo;
 
     StructureTransitionTable m_transitionTable;
 

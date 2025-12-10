@@ -58,6 +58,8 @@
 #include "RenderTreeUpdaterViewTransition.h"
 #include "RenderView.h"
 #include "SVGElement.h"
+#include "Settings.h"
+#include "StylableInlines.h"
 #include "StyleResolver.h"
 #include "StyleTreeResolver.h"
 #include "TextManipulationController.h"
@@ -149,7 +151,8 @@ void RenderTreeUpdater::updateRebuildRoots()
         auto* renderingAncestor = findRenderingAncestor(root);
         if (!renderingAncestor)
             return nullptr;
-        auto isInsideContinuation = root.renderer() && root.renderer()->parent()->isContinuation();
+        auto* rootRenderer = root.renderer();
+        auto isInsideContinuation = rootRenderer && rootRenderer->parent()->isContinuation();
         auto isInsideAnonymousFlexItemWithSiblings = [&] {
             if (!is<RenderFlexibleBox>(renderingAncestor->renderer()))
                 return false;
@@ -160,7 +163,12 @@ void RenderTreeUpdater::updateRebuildRoots()
                 return true;
             return false;
         };
-        if (isInsideContinuation || isInsideAnonymousFlexItemWithSiblings() || RenderTreeBuilder::isRebuildRootForChildren(*renderingAncestor->renderer()))
+        auto isBlockInInline = [&] {
+            if (!is<RenderInline>(renderingAncestor->renderer()))
+                return false;
+            return rootRenderer && rootRenderer->isInFlow() && !rootRenderer->isInline();
+        };
+        if (isInsideContinuation || isInsideAnonymousFlexItemWithSiblings() || isBlockInInline() || RenderTreeBuilder::isRebuildRootForChildren(*renderingAncestor->renderer()))
             return renderingAncestor;
         return nullptr;
     };
@@ -174,12 +182,13 @@ void RenderTreeUpdater::updateRebuildRoots()
             return true;
         }
 
-        if (!element.renderer())
-            return element.hasDisplayContents();
+        CheckedPtr existingStyle = element.renderOrDisplayContentsStyle();
+        if (!existingStyle)
+            return false;
 
         auto* parent = composedTreeAncestors(element).first();
         m_styleUpdate->addElement(element, parent, Style::ElementUpdate {
-            makeUnique<RenderStyle>(RenderStyle::cloneIncludingPseudoElements(element.renderer()->style())),
+            makeUnique<RenderStyle>(RenderStyle::cloneIncludingPseudoElements(*existingStyle)),
             Style::Change::Renderer
         });
         return true;
@@ -348,7 +357,7 @@ void RenderTreeUpdater::popParentsToDepth(unsigned depth)
 void RenderTreeUpdater::updateBeforeDescendants(Element& element, const Style::ElementUpdate* update)
 {
     if (update)
-        generatedContent().updateBeforeOrAfterPseudoElement(element, *update, PseudoId::Before);
+        generatedContent().updateBeforeOrAfterPseudoElement(element, *update, PseudoElementType::Before);
 
     if (auto* before = element.beforePseudoElement())
         storePreviousRenderer(*before);
@@ -357,7 +366,7 @@ void RenderTreeUpdater::updateBeforeDescendants(Element& element, const Style::E
 void RenderTreeUpdater::updateAfterDescendants(Element& element, const Style::ElementUpdate* update)
 {
     if (update)
-        generatedContent().updateBeforeOrAfterPseudoElement(element, *update, PseudoId::After);
+        generatedContent().updateBeforeOrAfterPseudoElement(element, *update, PseudoElementType::After);
 
     auto* renderer = element.renderer();
     if (!renderer) {
@@ -584,7 +593,23 @@ bool RenderTreeUpdater::textRendererIsNeeded(const Text& textNode)
         return true;
     }
 
-    if (parentRenderer.isRenderBlock() && !parentRenderer.childrenInline() && (!previousRenderer || !previousRenderer->isInline()))
+    auto wouldBeFirstInlineContentInsideBlock = [&] {
+        if (!parentRenderer.isRenderBlock())
+            return false;
+
+        if (!previousRenderer)
+            return !parentRenderer.childrenInline();
+
+        if (previousRenderer->parent() == &parentRenderer)
+            return !parentRenderer.childrenInline() && !previousRenderer->isInline();
+
+        if (CheckedPtr parent = previousRenderer->parent(); parent->isAnonymous())
+            return !parent->childrenInline() && !previousRenderer->isInline();
+
+        // Can't tell yet.
+        return false;
+    };
+    if (wouldBeFirstInlineContentInsideBlock())
         return false;
 
     return renderingParent.hasPrecedingInFlowChild;
@@ -751,18 +776,23 @@ static std::optional<DidRepaintAndMarkContainingBlock> repaintAndMarkContainingB
             backdropRenderer->repaint(RenderObject::ForceRepaint::Yes);
     };
 
-    auto repaintRoot = [&](auto& renderer) {
-        if (renderer.isBody()) {
-            renderer.view().repaintRootContents();
+    auto repaintRoot = [&](auto& destroyRoot) {
+        if (destroyRoot.isBody()) {
+            destroyRoot.view().repaintRootContents();
             return;
         }
-        // When repaint is propagated to our layer, we have to force it here on destroy as this layer will no be around to issue it _affter_ layout.
-        auto* rendererLayerObject = dynamicDowncast<RenderLayerModelObject>(renderer);
-        if (!rendererLayerObject || !rendererLayerObject->layer() || !rendererLayerObject->layer()->needsFullRepaint()) {
-            renderer.repaint();
-            return;
-        }
-        renderer.repaint(RenderObject::ForceRepaint::Yes);
+        auto shouldForceRepaint = [&] {
+            CheckedPtr destroyRootWithLayer = dynamicDowncast<RenderLayerModelObject>(destroyRoot);
+            if (!destroyRootWithLayer || !destroyRootWithLayer->hasLayer())
+                return false;
+
+            // When any subtree repaint is propagated to this destroy root layer, we have to force it here
+            // as this layer will not be around to issue it _after_ layout.
+            // We also need to force repaint on a non-inflow box as the parent layer with full-repaint status would not
+            // necessarily enclose this box.
+            return destroyRootWithLayer->layer()->needsFullRepaint() || destroyRootWithLayer->isOutOfFlowPositioned();
+        };
+        destroyRoot.repaint(shouldForceRepaint() ? RenderObject::ForceRepaint::Yes : RenderObject::ForceRepaint::No);
     };
 
     if (destroyRootRenderer) {
@@ -817,7 +847,7 @@ void RenderTreeUpdater::tearDownRenderers(Element& root, TeardownType teardownTy
         teardownStack.append(&element);
     };
 
-    auto pop = [&] (unsigned depth) {
+    auto pop = [&] (unsigned depth, NeedsRepaintAndLayout needsRepaintAndLayout) {
         while (teardownStack.size() > depth) {
             auto& element = *teardownStack.takeLast();
             auto styleable = Styleable::fromElement(element);
@@ -857,11 +887,18 @@ void RenderTreeUpdater::tearDownRenderers(Element& root, TeardownType teardownTy
                 // we cannot create a Styleable with a PseudoElement.
                 if (auto* renderListItem = dynamicDowncast<RenderListItem>(element.renderer())) {
                     if (renderListItem->markerRenderer())
-                        Styleable(element, Style::PseudoElementIdentifier { PseudoId::Marker }).cancelStyleOriginatedAnimations();
+                        Styleable(element, Style::PseudoElementIdentifier { PseudoElementType::Marker }).cancelStyleOriginatedAnimations();
                 }
             }
 
             if (auto* renderer = element.renderer()) {
+                if (needsRepaintAndLayout == NeedsRepaintAndLayout::Yes) {
+                    renderer->repaint();
+                    if (auto* parent = renderer->parent()) {
+                        parent->setChildNeedsLayout();
+                        parent->setNeedsPreferredWidthsUpdate();
+                    }
+                }
                 if (auto backdropRenderer = renderer->backdropRenderer())
                     builder.destroyAndCleanUpAnonymousWrappers(*backdropRenderer, { });
                 builder.destroyAndCleanUpAnonymousWrappers(*renderer, root.renderer());
@@ -879,7 +916,7 @@ void RenderTreeUpdater::tearDownRenderers(Element& root, TeardownType teardownTy
     auto didRepaintRoot = repaintAndMarkContainingBlockDirtyBeforeTearDown(root, descendants);
     auto needsDescendantRepaintAndLayout = !didRepaintRoot || *didRepaintRoot == DidRepaintAndMarkContainingBlock::Yes ? NeedsRepaintAndLayout::No : NeedsRepaintAndLayout::Yes;
     for (auto it = descendants.begin(), end = descendants.end(); it != end; ++it) {
-        pop(it.depth());
+        pop(it.depth(), needsDescendantRepaintAndLayout);
 
         if (auto* text = dynamicDowncast<Text>(*it)) {
             tearDownTextRenderer(*text, &root, builder, needsDescendantRepaintAndLayout);
@@ -889,7 +926,7 @@ void RenderTreeUpdater::tearDownRenderers(Element& root, TeardownType teardownTy
         push(downcast<Element>(*it));
     }
 
-    pop(0);
+    pop(0, needsDescendantRepaintAndLayout);
 
     tearDownLeftoverPaginationRenderersIfNeeded(root, builder);
 }

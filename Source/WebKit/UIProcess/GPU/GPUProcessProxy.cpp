@@ -210,6 +210,14 @@ GPUProcessProxy::GPUProcessProxy()
 #if PLATFORM(COCOA)
     m_isMetalDebugDeviceEnabledForTesting = s_enableMetalDebugDeviceInNewGPUProcessesForTesting;
     m_isMetalShaderValidationEnabledForTesting = s_enableMetalShaderValidationInNewGPUProcessesForTesting;
+    if (s_gpuProcessMediaCodecCapabilities) {
+#if ENABLE(VP9)
+        parameters.hasVP9HardwareDecoder = s_gpuProcessMediaCodecCapabilities->hasVP9HardwareDecoder;
+#endif
+#if ENABLE(AV1)
+        parameters.hasAV1HardwareDecoder = s_gpuProcessMediaCodecCapabilities->hasAV1HardwareDecoder;
+#endif
+    }
 #endif
 
     platformInitializeGPUProcessParameters(parameters);
@@ -497,14 +505,6 @@ void GPUProcessProxy::cancelGetDisplayMediaPrompt()
 }
 #endif
 
-#if PLATFORM(COCOA)
-void GPUProcessProxy::didDrawRemoteToPDF(PageIdentifier pageID, RefPtr<SharedBuffer>&& data, SnapshotIdentifier snapshotIdentifier)
-{
-    if (auto page = WebProcessProxy::webPage(pageID))
-        page->didDrawRemoteToPDF(WTFMove(data), snapshotIdentifier);
-}
-#endif
-
 void GPUProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& launchOptions)
 {
     launchOptions.processType = ProcessLauncher::ProcessType::GPU;
@@ -524,21 +524,11 @@ void GPUProcessProxy::processWillShutDown(IPC::Connection& connection)
         singleton() = nullptr;
 }
 
-#if ENABLE(VP9)
-std::optional<bool> GPUProcessProxy::s_hasVP9HardwareDecoder;
-#endif
-#if ENABLE(AV1)
-std::optional<bool> GPUProcessProxy::s_hasAV1HardwareDecoder;
-#endif
+std::optional<GPUProcessMediaCodecCapabilities> GPUProcessProxy::s_gpuProcessMediaCodecCapabilities;
 
 void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Connection::Handle&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
 {
-#if ENABLE(VP9)
-    parameters.hasVP9HardwareDecoder = s_hasVP9HardwareDecoder;
-#endif
-#if ENABLE(AV1)
-    parameters.hasAV1HardwareDecoder = s_hasAV1HardwareDecoder;
-#endif
+    parameters.mediaCodecCapabilities = s_gpuProcessMediaCodecCapabilities;
 
     if (RefPtr store = webProcessProxy.websiteDataStore())
         addSession(*store);
@@ -649,7 +639,7 @@ void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
         gpuProcessExited(ProcessTerminationReason::Crash);
         return;
     }
-    
+
 #if PLATFORM(COCOA)
     if (auto networkProcess = NetworkProcessProxy::defaultNetworkProcess())
         networkProcess->sendXPCEndpointToProcess(*this);
@@ -869,13 +859,13 @@ void GPUProcessProxy::voiceActivityDetected()
 
 void GPUProcessProxy::startMonitoringCaptureDeviceRotation(PageIdentifier pageID, const String& persistentId)
 {
-    if (auto page = WebProcessProxy::webPage(pageID))
+    if (RefPtr page = WebProcessProxy::webPage(pageID))
         page->startMonitoringCaptureDeviceRotation(persistentId);
 }
 
 void GPUProcessProxy::stopMonitoringCaptureDeviceRotation(PageIdentifier pageID, const String& persistentId)
 {
-    if (auto page = WebProcessProxy::webPage(pageID))
+    if (RefPtr page = WebProcessProxy::webPage(pageID))
         page->stopMonitoringCaptureDeviceRotation(persistentId);
 }
 
@@ -897,7 +887,7 @@ void GPUProcessProxy::microphoneMuteStatusChanged(bool isMuting)
 #if PLATFORM(IOS_FAMILY)
 void GPUProcessProxy::statusBarWasTapped(CompletionHandler<void()>&& completionHandler)
 {
-    if (auto page = WebProcessProxy::audioCapturingWebPage())
+    if (RefPtr page = WebProcessProxy::audioCapturingWebPage())
         page->statusBarWasTapped();
     // Find the web page capturing audio and put focus on it.
     completionHandler();
@@ -930,6 +920,16 @@ void GPUProcessProxy::unregisterMemoryAttributionID(const String& attributionID,
 }
 #endif
 #endif
+
+void GPUProcessProxy::sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier identifier, const WebCore::FloatSize& size, WebCore::FrameIdentifier rootFrameIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
+{
+    sendWithAsyncReply(Messages::GPUProcess::SinkCompletedSnapshotToBitmap(identifier, size, rootFrameIdentifier), WTFMove(completionHandler));
+}
+
+void GPUProcessProxy::releaseSnapshot(RemoteSnapshotIdentifier identifier)
+{
+    send(Messages::GPUProcess::ReleaseSnapshot(identifier), 0);
+}
 
 } // namespace WebKit
 

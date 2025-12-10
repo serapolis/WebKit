@@ -35,13 +35,15 @@
 #include "DigitalCredentialsRequestData.h"
 #include "DigitalCredentialsResponseData.h"
 #endif
-#include "Document.h"
-#include "DocumentInlines.h"
 #include "DocumentType.h"
+#include "DocumentView.h"
+#include "DocumentWindow.h"
 #include "ExceptionData.h"
 #include "FaceDetectorInterface.h"
 #include "FileList.h"
 #include "FloatRect.h"
+#include "FocusControllerTypes.h"
+#include "FocusOptions.h"
 #include "FrameLoader.h"
 #include "FrameTree.h"
 #include "Geolocation.h"
@@ -146,6 +148,16 @@ void Chrome::relayAccessibilityNotification(String&& notificationName, RetainPtr
 {
     return m_client->relayAccessibilityNotification(WTFMove(notificationName), WTFMove(notificationData));
 }
+
+void Chrome::relayAriaNotifyNotification(AriaNotifyData&& notificationData) const
+{
+    return m_client->relayAriaNotifyNotification(WTFMove(notificationData));
+}
+
+void Chrome::relayLiveRegionNotification(LiveRegionAnnouncementData&& notificationData) const
+{
+    return m_client->relayLiveRegionNotification(WTFMove(notificationData));
+}
 #endif
 
 PlatformPageClient Chrome::platformPageClient() const
@@ -203,9 +215,9 @@ void Chrome::takeFocus(FocusDirection direction)
     m_client->takeFocus(direction);
 }
 
-void Chrome::focusedElementChanged(Element* element)
+void Chrome::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions options, BroadcastFocusedElement broadcast)
 {
-    m_client->focusedElementChanged(element);
+    m_client->focusedElementChanged(element, frame, options, broadcast);
 }
 
 void Chrome::focusedFrameChanged(Frame* frame)
@@ -639,8 +651,10 @@ void Chrome::unregisterPopupOpeningObserver(PopupOpeningObserver& observer)
 void Chrome::notifyPopupOpeningObservers() const
 {
     auto observers = m_popupOpeningObservers;
-    for (auto& observer : observers)
-        observer->willOpenPopup();
+    for (auto& weakObserver : observers) {
+        if (RefPtr observer = weakObserver.get())
+            observer->willOpenPopup();
+    }
 }
 
 } // namespace WebCore

@@ -114,7 +114,7 @@ void LegacyInlineFlowBox::addToLine(LegacyInlineBox* child)
         bool hasMarkers = false;
         if (auto* textBox = dynamicDowncast<LegacyInlineTextBox>(*child))
             hasMarkers = textBox->hasMarkers();
-        if (childStyle->letterSpacing() < 0 || childStyle->hasTextShadow() || !childStyle->textEmphasisStyle().isNone() || childStyle->hasPositiveStrokeWidth() || hasMarkers || !childStyle->textUnderlineOffset().isAuto() || !childStyle->textDecorationThickness().isAuto() || !childStyle->textUnderlinePosition().isEmpty())
+        if (childStyle->usedLetterSpacing() < 0 || childStyle->hasTextShadow() || !childStyle->textEmphasisStyle().isNone() || childStyle->hasPositiveStrokeWidth() || hasMarkers || !childStyle->textUnderlineOffset().isAuto() || !childStyle->textDecorationThickness().isAuto() || !childStyle->textUnderlinePosition().isAuto())
             child->clearKnownToHaveNoOverflow();
     } else if (child->boxModelObject()->hasSelfPaintingLayer())
         child->clearKnownToHaveNoOverflow();
@@ -221,12 +221,12 @@ inline void LegacyInlineFlowBox::addTextBoxVisualOverflow(LegacyInlineTextBox& t
     // applied to the right, so this is not an issue with left overflow.
     rightGlyphOverflow -= std::min(0, (int)lineStyle.fontCascade().letterSpacing());
 
-    auto [textShadowLogicalTop, textShadowLogicalBottom] = Style::shadowBlockDirectionExtent(lineStyle.textShadow(), writingMode);
+    auto [textShadowLogicalTop, textShadowLogicalBottom] = Style::shadowBlockDirectionExtent(lineStyle.textShadow(), writingMode, lineStyle.usedZoomForLength());
 
     auto childOverflowLogicalTop = std::min<LayoutUnit>(textShadowLogicalTop + topGlyphOverflow, topGlyphOverflow);
     auto childOverflowLogicalBottom = std::max<LayoutUnit>(textShadowLogicalBottom + bottomGlyphOverflow, bottomGlyphOverflow);
 
-    auto [textShadowLogicalLeft, textShadowLogicalRight] = Style::shadowInlineDirectionExtent(lineStyle.textShadow(), writingMode);
+    auto [textShadowLogicalLeft, textShadowLogicalRight] = Style::shadowInlineDirectionExtent(lineStyle.textShadow(), writingMode, lineStyle.usedZoomForLength());
 
     auto childOverflowLogicalLeft = std::min<LayoutUnit>(textShadowLogicalLeft + leftGlyphOverflow, leftGlyphOverflow);
     auto childOverflowLogicalRight = std::max<LayoutUnit>(textShadowLogicalRight + rightGlyphOverflow, rightGlyphOverflow);

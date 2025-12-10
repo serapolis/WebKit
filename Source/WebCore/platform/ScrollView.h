@@ -84,6 +84,7 @@ public:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     USING_CAN_MAKE_WEAKPTR(Widget);
 
@@ -468,9 +469,11 @@ protected:
 #if PLATFORM(COCOA)
 public:
     WEBCORE_EXPORT NSView* documentView() const;
+    WEBCORE_EXPORT RetainPtr<NSView> protectedDocumentView() const;
 
 private:
     PlatformScrollView* scrollView() const;
+    RetainPtr<PlatformScrollView> protectedScrollView() const;
 #endif
 
 private:

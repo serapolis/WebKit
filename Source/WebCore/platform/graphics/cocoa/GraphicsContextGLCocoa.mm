@@ -111,7 +111,7 @@ static EGLDisplay initializeEGLDisplay(const GraphicsContextGLAttributes& attrs)
     }
 
 #if ASSERT_ENABLED
-    auto clientExtensions = unsafeSpan8(EGL_QueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
+    auto clientExtensions = unsafeSpan(EGL_QueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
     ASSERT(clientExtensions.data());
 #endif
 
@@ -159,7 +159,7 @@ static EGLDisplay initializeEGLDisplay(const GraphicsContextGLAttributes& attrs)
     LOG(WebGL, "ANGLE initialised Major: %d Minor: %d", majorVersion, minorVersion);
 
 #if ASSERT_ENABLED
-    auto displayExtensions = unsafeSpan8(EGL_QueryString(display, EGL_EXTENSIONS));
+    auto displayExtensions = unsafeSpan(EGL_QueryString(display, EGL_EXTENSIONS));
     ASSERT(WTF::contains(displayExtensions, "EGL_ANGLE_metal_shared_event_sync"_span));
 #endif
 
@@ -268,7 +268,7 @@ bool GraphicsContextGLCocoa::platformInitializeContext()
     eglContextAttributes.append(EGL_FALSE);
 
 #if HAVE(TASK_IDENTITY_TOKEN)
-    auto displayExtensions = unsafeSpan8(EGL_QueryString(m_displayObj, EGL_EXTENSIONS));
+    auto displayExtensions = unsafeSpan(EGL_QueryString(m_displayObj, EGL_EXTENSIONS));
     bool supportsOwnershipIdentity = WTF::contains(displayExtensions, "EGL_ANGLE_metal_create_context_ownership_identity"_span);
     if (m_resourceOwner && supportsOwnershipIdentity) {
         eglContextAttributes.append(EGL_CONTEXT_METAL_OWNERSHIP_IDENTITY_ANGLE);
@@ -300,7 +300,7 @@ bool GraphicsContextGLCocoa::platformInitializeExtensions()
 {
 #if PLATFORM(MAC)
     // For creating the EGL surface from an IOSurface.
-    if (!enableExtension("GL_EXT_texture_format_BGRA8888"_s))
+    if (!enableExtensionsImpl({ "GL_EXT_texture_format_BGRA8888"_s }))
         return false;
 #endif
 #if ENABLE(WEBXR)
@@ -685,19 +685,21 @@ bool GraphicsContextGLCocoa::enableRequiredWebXRExtensions()
 
 bool GraphicsContextGLCocoa::enableRequiredWebXRExtensionsImpl()
 {
-    return enableExtension("GL_ANGLE_framebuffer_multisample"_s)
-        && enableExtension("GL_ANGLE_framebuffer_blit"_s)
-        && enableExtension("GL_EXT_discard_framebuffer"_s)
-        && enableExtension("GL_EXT_sRGB"_s)
-        && enableExtension("GL_OES_EGL_image"_s)
-        && enableExtension("GL_OES_rgb8_rgba8"_s)
+    return enableExtensionsImpl({
+        "GL_ANGLE_framebuffer_multisample"_s,
+        "GL_ANGLE_framebuffer_blit"_s,
+        "GL_EXT_discard_framebuffer"_s,
+        "GL_EXT_sRGB"_s,
+        "GL_OES_EGL_image"_s,
+        "GL_OES_rgb8_rgba8"_s,
 #if !PLATFORM(IOS_FAMILY_SIMULATOR)
-        && enableExtension("GL_ANGLE_variable_rasterization_rate_metal"_s)
+        "GL_ANGLE_variable_rasterization_rate_metal"_s,
 #endif
 #if PLATFORM(VISION)
-        && enableExtension("GL_WEBKIT_explicit_resolve_target"_s)
+        "GL_WEBKIT_explicit_resolve_target"_s,
 #endif
-        && enableExtension("GL_NV_framebuffer_blit"_s);
+        "GL_NV_framebuffer_blit"_s,
+    });
 }
 #endif
 
@@ -833,7 +835,7 @@ void GraphicsContextGLCocoa::invalidateKnownTextureContent(GCGLuint texture)
         m_cv->invalidateKnownTextureContent(texture);
 }
 
-RefPtr<NativeImage> GraphicsContextGLCocoa::bufferAsNativeImage(SurfaceBuffer buffer)
+RefPtr<NativeImage> GraphicsContextGLCocoa::copyNativeImageYFlipped(SurfaceBuffer buffer)
 {
     RetainPtr<CGContextRef> cgContext;
     RefPtr<NativeImage> image;

@@ -29,6 +29,7 @@
 #include "SVGElementInlines.h"
 #include "SVGParsingError.h"
 #include "SVGPropertyOwnerRegistry.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -40,12 +41,13 @@ inline SVGCircleElement::SVGCircleElement(const QualifiedName& tagName, Document
 {
     ASSERT(hasTagName(SVGNames::circleTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::cxAttr, &SVGCircleElement::m_cx>();
         PropertyRegistry::registerProperty<SVGNames::cyAttr, &SVGCircleElement::m_cy>();
         PropertyRegistry::registerProperty<SVGNames::rAttr, &SVGCircleElement::m_r>();
-    });
+    }
 }
 
 Ref<SVGCircleElement> SVGCircleElement::create(const QualifiedName& tagName, Document& document)

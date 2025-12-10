@@ -121,6 +121,10 @@ public:
     const String& merchantCategoryCode() const { return m_merchantCategoryCode; }
 #endif
 
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    const std::optional<bool> isDelegatedRequest() const { return m_isDelegatedRequest; }
+#endif
+
     bool installmentConfigurationReturnsNil() const;
 
 private:
@@ -203,6 +207,10 @@ private:
 
 #if ENABLE(APPLE_PAY_MERCHANT_CATEGORY_CODE)
     String m_merchantCategoryCode;
+#endif
+
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    std::optional<bool> m_isDelegatedRequest;
 #endif
 };
 

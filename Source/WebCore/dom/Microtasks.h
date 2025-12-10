@@ -26,6 +26,7 @@
 #include <wtf/Forward.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakPtr.h>
 
 namespace JSC {
@@ -34,8 +35,30 @@ class VM;
 
 namespace WebCore {
 
+class MicrotaskCheckpointScope final {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(MicrotaskCheckpointScope);
+    WTF_MAKE_NONMOVABLE(MicrotaskCheckpointScope);
+public:
+    explicit MicrotaskCheckpointScope(EventLoop& eventLoop)
+    {
+        eventLoop.forEachAssociatedContext([this](auto& context) {
+            m_savedNestingLevels.set(context, context.timerNestingLevel());
+            context.setTimerNestingLevel(0);
+        });
+    }
+
+    ~MicrotaskCheckpointScope()
+    {
+        for (auto [context, savedNestingLevel] : m_savedNestingLevels)
+            Ref { context }->setTimerNestingLevel(savedNestingLevel);
+    }
+private:
+    WeakHashMap<ScriptExecutionContext, int> m_savedNestingLevels;
+};
+
 class WebCoreMicrotaskDispatcher : public JSC::MicrotaskDispatcher {
-    WTF_MAKE_TZONE_ALLOCATED(WebCoreMicrotaskDispatcher);
+    WTF_MAKE_COMPACT_TZONE_ALLOCATED(WebCoreMicrotaskDispatcher);
 public:
     WebCoreMicrotaskDispatcher(Type type, EventLoopTaskGroup& group)
         : JSC::MicrotaskDispatcher(type)
@@ -70,6 +93,7 @@ public:
     bool isPerformingCheckpoint() const { return m_performingMicrotaskCheckpoint; }
 
     static void runJSMicrotask(JSC::JSGlobalObject*, JSC::VM&, JSC::QueuedTask&);
+    static void runJSMicrotaskWithDebugger(JSC::JSGlobalObject*, JSC::VM&, JSC::QueuedTask&);
 
 private:
     JSC::VM& vm() const { return m_vm.get(); }

@@ -45,7 +45,9 @@
 #include "RemoteAudioSession.h"
 #include "RemoteLegacyCDMFactory.h"
 #include "RemoteMediaEngineConfigurationFactory.h"
+#include "RemoteMediaSessionManagerProxyMessages.h"
 #include "RemoteRemoteCommandListener.h"
+#include "RemoteSharedResourceCacheProxy.h"
 #include "RemoteWebLockRegistry.h"
 #include "RemoteWorkerType.h"
 #include "SpeechRecognitionRealtimeMediaSourceManager.h"
@@ -149,6 +151,7 @@
 #include <algorithm>
 #include <pal/Logging.h>
 #include <wtf/CallbackAggregator.h>
+#include <wtf/CoroutineUtilities.h>
 #include <wtf/DateMath.h>
 #include <wtf/Language.h>
 #include <wtf/ProcessPrivilege.h>
@@ -197,6 +200,10 @@
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspector.h>
+#endif
+
+#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+#include <JavaScriptCore/WasmDebugServer.h>
 #endif
 
 #if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
@@ -250,8 +257,20 @@
 #import <pal/cocoa/LockdownModeCocoa.h>
 #endif
 
+#if PLATFORM(COCOA)
+#import <pal/cocoa/EnhancedSecurityCocoa.h>
+#endif
+
+#if USE(LIBRICE)
+#include "RiceBackendProxy.h"
+#endif
+
 #if PLATFORM(MAC)
 #import <wtf/spi/darwin/SandboxSPI.h>
+#endif
+
+#if ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && USE(GBM)
+#include <WebCore/GraphicsContextGLTextureMapperGBM.h>
 #endif
 
 #undef WEBPROCESS_RELEASE_LOG
@@ -312,6 +331,9 @@ WebProcess::WebProcess()
     , m_viewUpdateDispatcher(*this)
 #endif
     , m_webInspectorInterruptDispatcher(*this)
+#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+    , m_wasmDebuggerDispatcher(*this)
+#endif
     , m_webLoaderStrategy(makeUniqueRefWithoutRefCountedCheck<WebLoaderStrategy>(*this))
 #if PLATFORM(COCOA) && USE(LIBWEBRTC) && ENABLE(WEB_CODECS)
     , m_remoteVideoCodecFactory(*this)
@@ -422,10 +444,13 @@ void WebProcess::initializeConnection(IPC::Connection* connection)
 
     protectedEventDispatcher()->initializeConnection(*connection);
 #if PLATFORM(IOS_FAMILY)
-    m_viewUpdateDispatcher.initializeConnection(*connection);
+    Ref { m_viewUpdateDispatcher }->initializeConnection(*connection);
 #endif // PLATFORM(IOS_FAMILY)
 
     protectedWebInspectorInterruptDispatcher()->initializeConnection(*connection);
+#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+    protectedWasmDebuggerDispatcher()->initializeConnection(*connection);
+#endif
 
     for (auto& supplement : m_supplements.values())
         supplement->initializeConnection(connection);
@@ -545,7 +570,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
             WTF::TextStream activityStateStream(WTF::TextStream::LineMode::SingleLine);
             activityStateStream << page->activityState();
 
-            RELEASE_LOG(ActivityState, "WebPage %p - load_time: %" PRId64 ", visible: %d, throttleable: %d , suspended: %d , websam_state: %" PUBLIC_LOG_STRING ", activity_state: %" PUBLIC_LOG_STRING ", url: %" PRIVATE_LOG_STRING, page.get(), loadCommitTime, page->isVisible(), page->isThrottleable(), page->isSuspended(), MemoryPressureHandler::processStateDescription().characters(), activityStateStream.release().utf8().data(), page->mainWebFrame().url().string().utf8().data());
+            RELEASE_LOG(ActivityState, "WebPage %p - load_time: %" PRId64 ", visible: %d, throttleable: %d , suspended: %d , websam_state: %" PUBLIC_LOG_STRING ", activity_state: %" PUBLIC_LOG_STRING ", url: %" PRIVATE_LOG_STRING, page.ptr(), loadCommitTime, page->isVisible(), page->isThrottleable(), page->isSuspended(), MemoryPressureHandler::processStateDescription().characters(), activityStateStream.release().utf8().data(), page->mainWebFrame().url().string().utf8().data());
         }
     });
 #endif
@@ -656,6 +681,10 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
     PAL::setLockdownModeEnabledForCurrentProcess(isLockdownModeEnabled());
 #endif
 
+#if PLATFORM(COCOA)
+    PAL::setEnhancedSecurityEnabledForCurrentProcess(enhancedSecurityEnabled());
+#endif
+
 #if ENABLE(SERVICE_CONTROLS)
     setEnabledServices(parameters.hasImageServices, parameters.hasSelectionServices, parameters.hasRichContentServices);
 #endif
@@ -702,6 +731,18 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 
 #if ENABLE(INITIALIZE_ACCESSIBILITY_ON_DEMAND)
     m_shouldInitializeAccessibility = parameters.shouldInitializeAccessibility;
+#endif
+
+#if ENABLE(REMOTE_INSPECTOR) && ENABLE(WEBASSEMBLY)
+    if (JSC::Options::enableWasmDebugger()) [[unlikely]] {
+        if (JSC::VM* vm = WebCore::commonVMOrNull()) {
+            bool success = JSC::Wasm::DebugServer::singleton().startRWI(vm, [](const String& response) {
+                return WebKit::WebProcess::singleton().send(Messages::WebProcessProxy::SendWasmDebuggerResponse(response), 0);
+            });
+            if (!success)
+                WEBPROCESS_RELEASE_LOG_ERROR(Inspector, "Failed to start WasmDebugServer in RWI mode");
+        }
+    }
 #endif
 
     WEBPROCESS_RELEASE_LOG(Process, "initializeWebProcess: Presenting processPID=%d", legacyPresentingApplicationPID());
@@ -779,6 +820,19 @@ void WebProcess::updateIsBroadcastChannelEnabled()
         }
     }
 }
+
+#if USE(AUDIO_SESSION)
+void WebProcess::remoteAudioSessionConfigurationChanged(const RemoteAudioSessionConfiguration& configuration)
+{
+    for (auto& page : m_pageMap.values()) {
+        RefPtr manager = page->mediaSessionManagerIfExists();
+        if (!manager)
+            continue;
+
+        send(Messages::RemoteMediaSessionManagerProxy::RemoteAudioConfigurationChanged(configuration), page->identifier().toUInt64());
+    }
+}
+#endif
 
 void WebProcess::setHasSuspendedPageProxy(bool hasSuspendedPageProxy)
 {
@@ -954,7 +1008,7 @@ WebPage* WebProcess::focusedWebPage() const
 {    
     for (auto& page : m_pageMap.values()) {
         if (page->windowAndWebPageAreFocused())
-            return page.get();
+            return page.ptr();
     }
     return 0;
 }
@@ -971,15 +1025,16 @@ WebPage* WebProcess::webPage(PageIdentifier pageID) const
 
 void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 {
-    // It is necessary to check for page existence here since during a window.open() (or targeted
-    // link) the WebPage gets created both in the synchronous handler and through the normal way. 
-    auto result = m_pageMap.add(pageID, nullptr);
     m_hasEverHadAnyWebPages = true;
-    if (result.isNewEntry) {
-        ASSERT(!result.iterator->value);
-        auto page = WebPage::create(pageID, WTFMove(parameters));
-        result.iterator->value = page.copyRef();
 
+    auto addResult = m_pageMap.ensure(pageID, [&] {
+        return WebPage::create(pageID, WTFMove(parameters));
+    });
+    Ref page { addResult.iterator->value };
+
+    // It is necessary to check for page existence here since during a window.open() (or targeted
+    // link) the WebPage gets created both in the synchronous handler and through the normal way.
+    if (addResult.isNewEntry) {
 #if ENABLE(GPU_PROCESS)
         if (RefPtr gpuProcessConnection = m_gpuProcessConnection)
             page->gpuProcessConnectionDidBecomeAvailable(*gpuProcessConnection);
@@ -995,13 +1050,17 @@ void WebProcess::createWebPage(PageIdentifier pageID, WebPageCreationParameters&
         RealTimeThreads::singleton().setEnabled(hasVisibleWebPage());
 #endif
     } else
-        RefPtr { result.iterator->value }->reinitializeWebPage(WTFMove(parameters));
+        page->reinitializeWebPage(WTFMove(parameters));
 
     if (m_hasPendingAccessibilityUnsuspension) {
         m_hasPendingAccessibilityUnsuspension = false;
         accessibilityRelayProcessSuspended(false);
     }
-    ASSERT(result.iterator->value);
+}
+
+Awaitable<unsigned> WebProcess::countWebPagesForTesting()
+{
+    co_return m_pageMap.size();
 }
 
 void WebProcess::removeWebPage(PageIdentifier pageID)
@@ -1093,7 +1152,7 @@ void WebProcess::didClose(IPC::Connection& connection)
 
 WebFrame* WebProcess::webFrame(std::optional<FrameIdentifier> frameID) const
 {
-    return frameID ? m_frameMap.get(*frameID).get() : nullptr;
+    return frameID ? m_frameMap.get(*frameID) : nullptr;
 }
 
 void WebProcess::addWebFrame(FrameIdentifier frameID, WebFrame* frame)
@@ -1390,7 +1449,7 @@ void WebProcess::networkProcessConnectionClosed(NetworkProcessConnection* connec
     ASSERT_UNUSED(connection, m_networkProcessConnection == connection);
 
     for (auto key : copyToVector(m_storageAreaMaps.keys())) {
-        if (RefPtr map = m_storageAreaMaps.get(key).get())
+        if (RefPtr map = m_storageAreaMaps.get(key))
             map->disconnect();
     }
 
@@ -1445,7 +1504,7 @@ void WebProcess::networkProcessConnectionClosed(NetworkProcessConnection* connec
     }
     for (auto& weakSession : sessions) {
         if (RefPtr webtransportSession = weakSession.get())
-            webtransportSession->networkProcessCrashed();
+            webtransportSession->didFail(std::nullopt, String(emptyString()));
     }
 }
 
@@ -1489,13 +1548,13 @@ GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
         if (gpuConnection->ignoreInvalidMessageForTesting())
             gpuConnection->setIgnoreInvalidMessageForTesting();
 #endif
-        m_gpuProcessConnection = GPUProcessConnection::create(WTFMove(gpuConnection));
+        Ref gpuProcessConnection = GPUProcessConnection::create(WTFMove(gpuConnection));
+        m_gpuProcessConnection = gpuProcessConnection.ptr();
         protectedParentProcessConnection()->send(Messages::WebProcessProxy::CreateGPUProcessConnection(m_gpuProcessConnection->identifier(),  WTFMove(connectionIdentifiers->client)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
-        for (auto& page : m_pageMap.values()) {
-            // If page is null, then it is currently being constructed.
-            if (page)
-                page->gpuProcessConnectionDidBecomeAvailable(Ref { *m_gpuProcessConnection });
-        }
+        for (auto& page : m_pageMap.values())
+            page->gpuProcessConnectionDidBecomeAvailable(gpuProcessConnection);
+        if (m_sharedResourceCache)
+            Ref { *m_sharedResourceCache }->gpuProcessConnectionDidBecomeAvailable(gpuProcessConnection);
     }
     return *m_gpuProcessConnection;
 }
@@ -1516,10 +1575,8 @@ void WebProcess::gpuProcessConnectionClosed()
     ASSERT(m_gpuProcessConnection);
     m_gpuProcessConnection = nullptr;
 
-    for (auto& page : m_pageMap.values()) {
-        if (page)
-            page->gpuProcessConnectionWasDestroyed();
-    }
+    for (auto& page : m_pageMap.values())
+        page->gpuProcessConnectionWasDestroyed();
 
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
     if (m_audioMediaStreamTrackRendererInternalUnitManager)
@@ -1556,6 +1613,15 @@ AudioMediaStreamTrackRendererInternalUnitManager& WebProcess::audioMediaStreamTr
 }
 #endif
 
+RemoteSharedResourceCacheProxy& WebProcess::gpuProcessSharedResourceCache()
+{
+    if (!m_sharedResourceCache) {
+        m_sharedResourceCache = RemoteSharedResourceCacheProxy::create();
+        if (m_gpuProcessConnection)
+            Ref { *m_sharedResourceCache }->gpuProcessConnectionDidBecomeAvailable(Ref { *m_gpuProcessConnection });
+    }
+    return *m_sharedResourceCache;
+}
 #endif // ENABLE(GPU_PROCESS)
 
 #if ENABLE(MODEL_PROCESS)
@@ -1568,11 +1634,8 @@ ModelProcessConnection& WebProcess::ensureModelProcessConnection()
     if (!m_modelProcessConnection) {
         m_modelProcessConnection = ModelProcessConnection::create(Ref { *parentProcessConnection() });
 
-        for (auto& page : m_pageMap.values()) {
-            // If page is null, then it is currently being constructed.
-            if (page)
-                page->modelProcessConnectionDidBecomeAvailable(Ref { *m_modelProcessConnection });
-        }
+        for (auto& page : m_pageMap.values())
+            page->modelProcessConnectionDidBecomeAvailable(Ref { *m_modelProcessConnection });
     }
 
     return *m_modelProcessConnection;
@@ -1820,7 +1883,7 @@ void WebProcess::accessibilityRelayProcessSuspended(bool suspended)
     }
 
     // Take the first webpage. We only need to have the process on the other side relay this for the WebProcess.
-    AXRelayProcessSuspendedNotification(*m_pageMap.begin()->value, AXRelayProcessSuspendedNotification::AutomaticallySend::No).sendProcessSuspendMessage(suspended);
+    AXRelayProcessSuspendedNotification(m_pageMap.begin()->value, AXRelayProcessSuspendedNotification::AutomaticallySend::No).sendProcessSuspendMessage(suspended);
 }
 
 void WebProcess::markAllLayersVolatile(CompletionHandler<void()>&& completionHandler)
@@ -1999,7 +2062,7 @@ void WebProcess::unregisterStorageAreaMap(StorageAreaMap& storageAreaMap)
 {
     auto identifier = storageAreaMap.identifier();
     ASSERT(m_storageAreaMaps.contains(identifier));
-    ASSERT(m_storageAreaMaps.get(identifier).get() == &storageAreaMap);
+    ASSERT(m_storageAreaMaps.get(identifier) == &storageAreaMap);
     m_storageAreaMaps.remove(identifier);
 }
 
@@ -2448,7 +2511,7 @@ void WebProcess::setUseGPUProcessForMedia(bool useGPUProcessForMedia)
 
 #if USE(AUDIO_SESSION)
     if (useGPUProcessForMedia)
-        AudioSession::setSharedSession(RemoteAudioSession::create());
+        AudioSession::setSharedSession(RemoteAudioSession::create(*this));
     else
         AudioSession::setSharedSession(AudioSession::create());
 #endif
@@ -2532,7 +2595,15 @@ void WebProcess::setUseGPUProcessForWebGL(bool useGPUProcessForWebGL)
 
 bool WebProcess::shouldUseRemoteRenderingForWebGL() const
 {
+#if USE(COORDINATED_GRAPHICS)
+#if USE(GBM)
+    return m_useGPUProcessForWebGL && WebCore::GraphicsContextGLTextureMapperGBM::checkRequirements();
+#else
+    return false;
+#endif
+#else
     return m_useGPUProcessForWebGL;
+#endif
 }
 #endif // ENABLE(WEBGL)
 
@@ -2604,6 +2675,28 @@ void WebProcess::removeWebTransportSession(WebTransportSessionIdentifier identif
     m_webTransportSessions.remove(identifier);
 }
 
+#if USE(LIBRICE)
+RefPtr<RiceBackendProxy> WebProcess::gstreamerIceBackend(RiceBackendIdentifier identifier)
+{
+    ASSERT(RunLoop::isMain());
+    return m_gstreamerIceBackends.get(identifier).get();
+}
+
+void WebProcess::addRiceBackend(RiceBackendIdentifier identifier, RiceBackendProxy& backend)
+{
+    ASSERT(RunLoop::isMain());
+    ASSERT(!m_gstreamerIceBackends.contains(identifier));
+    m_gstreamerIceBackends.set(identifier, backend);
+}
+
+void WebProcess::removeRiceBackend(RiceBackendIdentifier identifier)
+{
+    ASSERT(RunLoop::isMain());
+    ASSERT(m_gstreamerIceBackends.contains(identifier));
+    m_gstreamerIceBackends.remove(identifier);
+}
+#endif // USE(LIBRICE)
+
 void WebProcess::updateCachedCookiesEnabled()
 {
     for (auto& document : Document::allDocuments())
@@ -2630,7 +2723,7 @@ void WebProcess::enableMediaPlayback()
 #endif
 
 #if ENABLE(ROUTING_ARBITRATION)
-    m_routingArbitrator = makeUnique<AudioSessionRoutingArbitrator>(*this);
+    lazyInitialize(m_routingArbitrator, makeUniqueWithoutRefCountedCheck<AudioSessionRoutingArbitrator>(*this));
 #endif
 }
 

@@ -197,6 +197,7 @@ class ConfigureBuild(buildstep.BuildStep, AddToLogMixin):
         self.setProperty("fullPlatform", self.fullPlatform)
         self.setProperty("configuration", self.configuration)
         self.setProperty("architecture", self.architecture)
+        self.setProperty("archForUpload", '-'.join(self.architecture.split(' ')))
         self.setProperty("buildOnly", self.buildOnly)
         self.setProperty("additionalArguments", self.additionalArguments)
         self.setProperty("device_model", self.device_model)
@@ -286,7 +287,7 @@ class CheckOutSpecificRevision(shell.ShellCommand):
         return not self.doStepIf(step)
 
     def run(self):
-        self.command = ['git', 'checkout', self.getProperty('user_provided_git_hash')]
+        self.command = ['git', 'checkout', '--progress', self.getProperty('user_provided_git_hash')]
         return super().run()
 
 
@@ -439,7 +440,7 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
         if self.getProperty('platform') in self.APPLE_PLATFORMS and CURRENT_HOSTNAME in BUILD_WEBKIT_HOSTNAMES + TESTING_ENVIRONMENT_HOSTNAMES:
             return [
                 GenerateS3URL(
-                    f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                    f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                     extension='txt',
                     content_type='text/plain',
                     additions=f'{self.build.number}'
@@ -457,7 +458,7 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
 
         triggers = self.getProperty('triggers', None)
         full_platform = self.getProperty('fullPlatform')
-        architecture = self.getProperty('architecture')
+        arch_for_upload = self.getProperty('archForUpload')
         configuration = self.getProperty('configuration')
 
         if triggers:
@@ -465,7 +466,7 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
             steps_to_add += [ArchiveBuiltProduct()]
             if CURRENT_HOSTNAME in BUILD_WEBKIT_HOSTNAMES + TESTING_ENVIRONMENT_HOSTNAMES:
                 steps_to_add.extend([
-                    GenerateS3URL(f"{full_platform}-{architecture}-{configuration}"),
+                    GenerateS3URL(f"{full_platform}-{arch_for_upload}-{configuration}"),
                     UploadFileToS3(f"WebKitBuild/{configuration}.zip", links={self.name: 'Archive'}),
                 ])
             else:
@@ -477,7 +478,7 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
                 steps_to_add += [ArchiveMinifiedBuiltProduct()]
                 if CURRENT_HOSTNAME in BUILD_WEBKIT_HOSTNAMES + TESTING_ENVIRONMENT_HOSTNAMES:
                     steps_to_add.extend([
-                        GenerateS3URL(f"{full_platform}-{architecture}-{configuration}", minified=True),
+                        GenerateS3URL(f"{full_platform}-{arch_for_upload}-{configuration}", minified=True),
                         UploadFileToS3(f"WebKitBuild/minified-{configuration}.zip", links={self.name: 'Minified Archive'}),
                     ])
                 else:
@@ -499,9 +500,9 @@ class CompileLLINTCLoop(CompileWebKit):
     build_command = ["perl", "Tools/Scripts/build-jsc", "--cloop"]
 
 
-class CompileJSCOnly32(CompileWebKit):
+class Compile32bitJSC(CompileWebKit):
     name = 'compile-jsc-32bit'
-    build_command = ["linux32", "perl", "Tools/Scripts/build-jsc", "--32-bit", "--cmakeargs", "-DUSE_LIBBACKTRACE=OFF -DDEVELOPER_MODE=ON -DENABLE_OFFLINE_ASM_ALT_ENTRY=1 -DCMAKE_CXX_FLAGS='-fuse-ld=gold -Wl,--no-map-whole-files -Wl,--no-keep-memory -Wl,--no-keep-files-mapped -Wl,--no-mmap-output-file -fno-omit-frame-pointer' -DCMAKE_C_FLAGS='-fuse-ld=gold -Wl,--no-map-whole-files -Wl,--no-keep-memory -Wl,--no-keep-files-mapped -Wl,--no-mmap-output-file -fno-omit-frame-pointer' -DUSE_LD_LLD=OFF"]
+    build_command = ["perl", "Tools/Scripts/build-jsc", "--32-bit"]
 
 
 class CompileJSCOnly(CompileWebKit):
@@ -612,9 +613,6 @@ class TestMiniBrowserBundle(shell.ShellCommand, ShellMixin):
     descriptionDone = ["tested minibrowser bundle"]
     haltOnFailure = False
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, timeout=3 * 60 * 60, **kwargs)
-
     @defer.inlineCallbacks
     def run(self):
         filter_command = ' '.join(self.command) + ' 2>&1 | python3 Tools/Scripts/filter-test-logs minibrowser'
@@ -624,7 +622,7 @@ class TestMiniBrowserBundle(shell.ShellCommand, ShellMixin):
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 extension='txt',
                 content_type='text/plain',
                 additions=f'{self.build.number}',
@@ -654,7 +652,7 @@ class ExtractBuiltProduct(shell.ShellCommand):
 class UploadBuiltProduct(transfer.FileUpload):
     name = 'upload-built-product'
     workersrc = WithProperties("WebKitBuild/%(configuration)s.zip")
-    masterdest = WithProperties("archives/%(fullPlatform)s-%(architecture)s-%(configuration)s/%(archive_revision)s.zip")
+    masterdest = WithProperties("archives/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/%(archive_revision)s.zip")
     haltOnFailure = True
 
     def __init__(self, **kwargs):
@@ -668,14 +666,14 @@ class UploadBuiltProduct(transfer.FileUpload):
 class UploadMinifiedBuiltProduct(UploadBuiltProduct):
     name = 'upload-minified-built-product'
     workersrc = WithProperties("WebKitBuild/minified-%(configuration)s.zip")
-    masterdest = WithProperties("archives/%(fullPlatform)s-%(architecture)s-%(configuration)s/minified-%(archive_revision)s.zip")
+    masterdest = WithProperties("archives/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/minified-%(archive_revision)s.zip")
 
 
 class DownloadBuiltProduct(shell.ShellCommand):
     command = [
         "python3", "Tools/CISupport/download-built-product",
         WithProperties("--platform=%(platform)s"), WithProperties("--%(configuration)s"),
-        WithProperties(S3URL + S3_BUCKET + "/%(fullPlatform)s-%(architecture)s-%(configuration)s/%(archive_revision)s.zip"),
+        WithProperties(S3URL + S3_BUCKET + "/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/%(archive_revision)s.zip"),
     ]
     name = "download-built-product"
     description = ["downloading built product"]
@@ -697,7 +695,7 @@ class DownloadBuiltProduct(shell.ShellCommand):
 
 
 class DownloadBuiltProductFromMaster(transfer.FileDownload):
-    mastersrc = WithProperties('archives/%(fullPlatform)s-%(architecture)s-%(configuration)s/%(archive_revision)s.zip')
+    mastersrc = WithProperties('archives/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/%(archive_revision)s.zip')
     workerdest = WithProperties('WebKitBuild/%(configuration)s.zip')
     name = 'download-built-product-from-master'
     description = ['downloading built product from buildbot master']
@@ -779,7 +777,7 @@ class RunJavaScriptCoreTests(TestWithFailureCount, CustomFlagsMixin, ShellMixin)
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 extension='txt',
                 content_type='text/plain',
                 additions=f'{self.build.number}',
@@ -826,9 +824,6 @@ class RunTest262Tests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
     command = ["perl", "Tools/Scripts/test262-runner", "--verbose", WithProperties("--%(configuration)s")]
     test_summary_re = re.compile(r'^\! NEW FAIL')
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, timeout=2 * 60 * 60, **kwargs)
-
     def run(self):
         filter_command = ' '.join(self.command) + ' 2>&1 | python3 Tools/Scripts/filter-test-logs test262'
         self.command = self.shell_command(filter_command)
@@ -840,7 +835,7 @@ class RunTest262Tests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 extension='txt',
                 content_type='text/plain',
                 additions=f'{self.build.number}',
@@ -864,6 +859,7 @@ class RunTest262Tests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
 
 
 class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
+    DO_REPORT = True
     name = "layout-test"
     description = ["layout-tests running"]
     descriptionDone = ["layout-tests"]
@@ -877,7 +873,6 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
                "--build-number", WithProperties("%(buildnumber)s"),
                "--buildbot-worker", WithProperties("%(workername)s"),
                "--buildbot-master", DNS_NAME,
-               "--report", RESULTS_WEBKIT_URL,
                "--exit-after-n-crashes-or-timeouts", "50",
                "--exit-after-n-failures", "500",
                WithProperties("--%(configuration)s")]
@@ -909,6 +904,8 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
         self.appendCustomTestingFlags(platform, self.getProperty('device_model'))
         additionalArguments = self.getProperty('additionalArguments')
 
+        if self.DO_REPORT:
+            self.command += ["--report", RESULTS_WEBKIT_URL]
         self.command += ["--results-directory", self.resultDirectory]
         self.command += ['--debug-rwt-logging']
 
@@ -917,10 +914,12 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
 
         if additionalArguments:
             self.command += additionalArguments
-            # Double the timeout for site isolation queues.
-            # FIXME: We should remove the need for these timeouts altogether. (webkit.org/b/290867)
-            if '--site-isolation' in additionalArguments:
-                self.timeout = 10 * 60 * 60
+
+        # Up the timeout limit for site isolation queues to 300
+        # FIXME: We should remove the need for these timeouts altogether. (webkit.org/b/303404)
+        if additionalArguments and '--site-isolation' in additionalArguments:
+            idx = self.command.index('--exit-after-n-crashes-or-timeouts')
+            self.command[idx + 1] = '300'
 
         filter_command = ' '.join(self.command) + ' 2>&1 | python3 Tools/Scripts/filter-test-logs layout'
         self.command = self.shell_command(filter_command)
@@ -957,7 +956,7 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 additions=f"{self.build.number}{'-wk1' if self.getProperty('use-dump-render-tree', False) else ''}",
                 extension='txt',
                 content_type='text/plain',
@@ -1007,6 +1006,7 @@ class RunWebKitTests(shell.Test, CustomFlagsMixin, ShellMixin):
 
 
 class RunDashboardTests(RunWebKitTests):
+    DO_REPORT = False
     name = "dashboard-tests"
     description = ["dashboard-tests running"]
     descriptionDone = ["dashboard-tests"]
@@ -1018,6 +1018,7 @@ class RunDashboardTests(RunWebKitTests):
 
 
 class RunWorldLeaksTests(RunWebKitTests):
+    DO_REPORT = False
     name = "world-leaks-tests"
     description = ["world-leaks-tests running"]
     descriptionDone = ["world-leaks-tests"]
@@ -1038,7 +1039,7 @@ class RunWorldLeaksTests(RunWebKitTests):
 
 class RunAPITests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
     name = "run-api-tests"
-    VALID_ADDITIONAL_ARGUMENTS_LIST = ["--remote-layer-tree", "--use-gpu-process"]
+    VALID_ADDITIONAL_ARGUMENTS_LIST = ["--remote-layer-tree", "--use-gpu-process", "--child-processes", "--site-isolation", "--wpe-legacy-api"]
     description = ["api tests running"]
     descriptionDone = ["api-tests"]
     jsonFileName = "api_test_results.json"
@@ -1067,15 +1068,34 @@ class RunAPITests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
         kwargs['timeout'] = 3 * 60 * 60
         super().__init__(*args, **kwargs)
 
+    def _is_valid_additional_argument(self, argument):
+        """Check if the argument is valid, supporting both exact matches and patterns."""
+        if argument in self.VALID_ADDITIONAL_ARGUMENTS_LIST:
+            return True
+        if '=' in argument:
+            try:
+                value = argument.split('=', 1)[1]
+                int(value)
+                return True
+            except (IndexError, ValueError):
+                return False
+        return False
+
     def run(self):
         self.env[RESULTS_SERVER_API_KEY] = os.getenv(RESULTS_SERVER_API_KEY)
         self.log_observer = ParseByLineLogObserver(self.parseOutputLine)
         self.addLogObserver('stdio', self.log_observer)
         self.failedTestCount = 0
-        self.appendCustomTestingFlags(self.getProperty('platform'), self.getProperty('device_model'))
+        platform = self.getProperty('platform')
+        if platform in ['gtk', 'wpe']:
+            self.command = ['python3', f'Tools/Scripts/run-{platform}-tests',
+                            f'--{self.getProperty("configuration")}',
+                            f'--json-output={self.jsonFileName}']
+        else:
+            self.appendCustomTestingFlags(platform, self.getProperty('device_model'))
         additionalArguments = self.getProperty("additionalArguments")
         for additionalArgument in additionalArguments or []:
-            if additionalArgument in self.VALID_ADDITIONAL_ARGUMENTS_LIST:
+            if self._is_valid_additional_argument(additionalArgument):
                 self.command += [additionalArgument]
         self.command = self.shell_command(' '.join(self.command) + ' > logs.txt 2>&1 ; ret=$? ; grep "Ran " logs.txt ; exit $ret')
 
@@ -1083,7 +1103,7 @@ class RunAPITests(TestWithFailureCount, CustomFlagsMixin, ShellMixin):
 
         self.build.addStepsAfterCurrentStep([
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 extension='txt',
                 additions=f'{self.build.number}',
                 content_type='text/plain',
@@ -1322,77 +1342,6 @@ class RunMVTTests(shell.Test):
         return super().getResultSummary()
 
 
-class RunGLibAPITests(shell.Test):
-    name = "API-tests"
-    description = ["API tests running"]
-    descriptionDone = ["API tests"]
-
-    @defer.inlineCallbacks
-    def run(self):
-        additionalArguments = self.getProperty("additionalArguments")
-        if additionalArguments:
-            self.command += additionalArguments
-
-        self.log_observer = logobserver.BufferLogObserver()
-        self.addLogObserver('stdio', self.log_observer)
-
-        rc = yield super().run()
-
-        logText = self.log_observer.getStdout()
-
-        failedTests = 0
-        crashedTests = 0
-        timedOutTests = 0
-        messages = []
-        self.statusLine = []
-
-        foundItems = re.findall(r"Unexpected failures \((\d+)\)", logText)
-        if foundItems:
-            failedTests = int(foundItems[0])
-            messages.append("%d failures" % failedTests)
-
-        foundItems = re.findall(r"Unexpected crashes \((\d+)\)", logText)
-        if foundItems:
-            crashedTests = int(foundItems[0])
-            messages.append("%d crashes" % crashedTests)
-
-        foundItems = re.findall(r"Unexpected timeouts \((\d+)\)", logText)
-        if foundItems:
-            timedOutTests = int(foundItems[0])
-            messages.append("%d timeouts" % timedOutTests)
-
-        foundItems = re.findall(r"Unexpected passes \((\d+)\)", logText)
-        if foundItems:
-            newPassTests = int(foundItems[0])
-            messages.append("%d new passes" % newPassTests)
-
-        self.totalFailedTests = failedTests + crashedTests + timedOutTests
-        if messages:
-            self.statusLine = ["API tests: %s" % ", ".join(messages)]
-
-        if self.totalFailedTests > 0:
-            defer.returnValue(FAILURE)
-        else:
-            defer.returnValue(SUCCESS if rc == 0 else FAILURE)
-
-    def getText(self, cmd, results):
-        return self.getText2(cmd, results)
-
-    def getText2(self, cmd, results):
-        if results != SUCCESS and self.totalFailedTests > 0:
-            return self.statusLine
-
-        return [self.name]
-
-
-class RunGtkAPITests(RunGLibAPITests):
-    command = ["python3", "Tools/Scripts/run-gtk-tests", WithProperties("--%(configuration)s")]
-
-
-class RunWPEAPITests(RunGLibAPITests):
-    command = ["python3", "Tools/Scripts/run-wpe-tests", WithProperties("--%(configuration)s")]
-
-
 class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
     name = "webdriver-test"
     description = ["webdriver-tests running"]
@@ -1432,7 +1381,7 @@ class RunWebDriverTests(shell.Test, CustomFlagsMixin, ShellMixin):
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 additions=f'{self.build.number}',
                 extension='txt',
                 content_type='text/plain',
@@ -1539,19 +1488,26 @@ class RunBenchmarkTests(shell.Test):
                "--browser-version", WithProperties("%(archive_revision)s"),
                "--timestamp-from-repo", "."]
 
+    def __init__(self, *args, **kwargs):
+        kwargs['timeout'] = 2000
+        super().__init__(*args, **kwargs)
+
     def run(self):
-        platform = self.getProperty("platform")
-        if platform == "gtk":
-            self.command += ["--browser", "minibrowser-gtk"]
+        self.command += ['--build-log-url', f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}']
         return super().run()
 
-    def getText(self, cmd, results):
-        return self.getText2(cmd, results)
+    def evaluateCommand(self, cmd):
+        self.totalUnexpectedFailures = cmd.rc
+        if self.totalUnexpectedFailures != 0:
+            self.commandFailed = True
+            return FAILURE
+        return SUCCESS
 
-    def getText2(self, cmd, results):
-        if results != SUCCESS:
-            return ["%d benchmark tests failed" % cmd.rc]
-        return [self.name]
+    def getResultSummary(self):
+        if self.results != SUCCESS and self.totalUnexpectedFailures > 0:
+            s = "s" if self.totalUnexpectedFailures > 1 else ""
+            return {'step': f"Benchmark Tests: {self.totalUnexpectedFailures} unexpected failure{s}"}
+        return super().getResultSummary()
 
 
 class ArchiveTestResults(shell.ShellCommand):
@@ -1759,7 +1715,7 @@ class ScanBuild(steps.ShellSequence, ShellMixin):
 
         steps_to_add = [
             GenerateS3URL(
-                f"{self.getProperty('fullPlatform')}-{self.getProperty('architecture')}-{self.getProperty('configuration')}-{self.name}",
+                f"{self.getProperty('fullPlatform')}-{self.getProperty('archForUpload')}-{self.getProperty('configuration')}-{self.name}",
                 extension='txt',
                 content_type='text/plain',
                 additions=f'{self.build.number}'
@@ -2010,9 +1966,9 @@ class TransferToS3(master.MasterShellCommand):
     name = "transfer-to-s3"
     description = ["transferring to s3"]
     descriptionDone = ["transferred to s3"]
-    archive = WithProperties("archives/%(fullPlatform)s-%(architecture)s-%(configuration)s/%(archive_revision)s.zip")
-    minifiedArchive = WithProperties("archives/%(fullPlatform)s-%(architecture)s-%(configuration)s/minified-%(archive_revision)s.zip")
-    identifier = WithProperties("%(fullPlatform)s-%(architecture)s-%(configuration)s")
+    archive = WithProperties("archives/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/%(archive_revision)s.zip")
+    minifiedArchive = WithProperties("archives/%(fullPlatform)s-%(archForUpload)s-%(configuration)s/minified-%(archive_revision)s.zip")
+    identifier = WithProperties("%(fullPlatform)s-%(archForUpload)s-%(configuration)s")
     revision = WithProperties("%(archive_revision)s")
     command = ["python3", "../Shared/transfer-archive-to-s3", "--revision", revision, "--identifier", identifier, "--archive", archive]
     haltOnFailure = True
@@ -2306,3 +2262,10 @@ class RebootWithUpdatedCrossTargetImage(shell.ShellCommand):
         if rc == SUCCESS:
             self.build.buildFinished(['Rebooting with updated image, retrying build'], RETRY)
         defer.returnValue(rc)
+
+
+class SetO3OptimizationLevel(shell.ShellCommand):
+    command = ["Tools/Scripts/set-webkit-configuration", "--force-optimization-level=O3"]
+    name = "set-o3-optimization-level"
+    description = ["set O3 optimization level"]
+    descriptionDone = ["set O3 optimization level"]

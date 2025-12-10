@@ -623,7 +623,7 @@ ALWAYS_INLINE T Lexer<T>::peek(int offset) const
 {
     ASSERT(offset > 0 && offset < 5);
     const T* code = m_code + offset;
-    return (code < m_codeEnd) ? *code : T { };
+    return (code < m_codeEnd) ? *code : 0;
 }
 
 struct ParsedUnicodeEscapeValue {
@@ -752,7 +752,7 @@ static bool isNonLatin1IdentStart(char32_t c)
 template<typename CharacterType>
 static ALWAYS_INLINE bool isIdentStart(CharacterType c)
 {
-    static_assert(std::is_same_v<CharacterType, Latin1Character> || std::is_same_v<CharacterType, char32_t>, "Call isSingleCharacterIdentStart for UChars that don't need to check for surrogate pairs");
+    static_assert(std::is_same_v<CharacterType, Latin1Character> || std::is_same_v<CharacterType, char32_t>, "For char16_t, call isSingleCharacterIdentStart, but beware it does not handle surrogate pairs");
     if (!isLatin1(c))
         return isNonLatin1IdentStart(c);
     return typesOfLatin1Characters[static_cast<Latin1Character>(c)] == CharacterLatin1IdentifierStart;
@@ -785,7 +785,7 @@ static NEVER_INLINE bool isNonLatin1IdentPart(char32_t c)
 template<typename CharacterType>
 static ALWAYS_INLINE bool isIdentPart(CharacterType c)
 {
-    static_assert(std::is_same_v<CharacterType, Latin1Character> || std::is_same_v<CharacterType, char32_t>, "Call isSingleCharacterIdentPart for UChars that don't need to check for surrogate pairs");
+    static_assert(std::is_same_v<CharacterType, Latin1Character> || std::is_same_v<CharacterType, char32_t>, "For char16_t, call isSingleCharacterIdentPart, but beware it does not handle surrogate pairs");
     if (!isLatin1(c))
         return isNonLatin1IdentPart(c);
 
@@ -1065,7 +1065,7 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<char16_t>
     
     if (shouldCreateIdentifier) {
         if (isAll8Bit)
-            ident = makeIdentifierLCharFromUChar(std::span { identifierStart, currentSourcePtr() });
+            ident = makeLatin1Identifier(std::span { identifierStart, currentSourcePtr() });
         else
             ident = makeIdentifier(std::span { identifierStart, currentSourcePtr() });
         tokenData->ident = ident;
@@ -1208,7 +1208,7 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
 
     const T* stringStart = currentSourcePtr();
 
-    using UnsignedType = SIMD::SameSizeUnsignedInteger<T>;
+    using UnsignedType = SameSizeUnsignedInteger<T>;
     auto quoteMask = SIMD::splat<UnsignedType>(stringQuoteCharacter);
     constexpr auto escapeMask = SIMD::splat<UnsignedType>('\\');
     constexpr auto controlMask = SIMD::splat<UnsignedType>(0xE);
@@ -2968,7 +2968,7 @@ inSingleLineComment:
     {
         auto endPosition = currentPosition();
 
-        using UnsignedType = SIMD::SameSizeUnsignedInteger<T>;
+        using UnsignedType = SameSizeUnsignedInteger<T>;
         constexpr auto lineFeedMask = SIMD::splat<UnsignedType>('\n');
         constexpr auto carriageReturnMask = SIMD::splat<UnsignedType>('\r');
         constexpr auto u2028Mask = SIMD::splat<UnsignedType>(static_cast<UnsignedType>(0x2028));

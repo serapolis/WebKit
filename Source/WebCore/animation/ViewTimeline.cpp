@@ -40,7 +40,10 @@
 #include "RenderSVGModelObject.h"
 #include "ScrollAnchoringController.h"
 #include "ScrollingConstraints.h"
+#include "StylableInlines.h"
 #include "StyleLengthWrapper+DeprecatedCSSValueConversion.h"
+#include "StylePrimitiveKeyword+Logging.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include "StyleScrollPadding.h"
 #include "StyleSingleAnimationRange.h"
@@ -376,17 +379,17 @@ void ViewTimeline::cacheCurrentTime()
         float insetEnd = 0;
 
         if (m_insets.start().isAuto())
-            insetStart = Style::evaluate(scrollPadding(PaddingEdge::Start), scrollContainerSize, 1.0f /* FIXME FIND ZOOM */);
+            insetStart = Style::evaluate<float>(scrollPadding(PaddingEdge::Start), scrollContainerSize, Style::ZoomNeeded { });
         else
-            insetStart = Style::evaluate(m_insets.start(), scrollContainerSize, 1.0f /* FIXME FIND ZOOM */);
+            insetStart = Style::evaluate<float>(m_insets.start(), scrollContainerSize, Style::ZoomNeeded { });
 
         if (m_insets.end().isAuto())
-            insetEnd = Style::evaluate(scrollPadding(PaddingEdge::End), scrollContainerSize, 1.0f /* FIXME FIND ZOOM */);
+            insetEnd = Style::evaluate<float>(scrollPadding(PaddingEdge::End), scrollContainerSize, Style::ZoomNeeded { });
         else
-            insetEnd = Style::evaluate(m_insets.end(), scrollContainerSize, 1.0f /* FIXME FIND ZOOM */);
+            insetEnd = Style::evaluate<float>(m_insets.end(), scrollContainerSize, Style::ZoomNeeded { });
 
         StickinessAdjustmentData stickyData;
-        if (auto stickyContainer = dynamicDowncast<RenderBoxModelObject>(this->stickyContainer())) {
+        if (auto stickyContainer = dynamicDowncast<RenderBoxModelObject>(this->stickyContainer().get())) {
             FloatRect constrainingRect = stickyContainer->constrainingRectForStickyPosition();
             StickyPositionViewportConstraints constraints;
             stickyContainer->computeStickyPositionConstraints(constraints, constrainingRect);
@@ -411,10 +414,8 @@ void ViewTimeline::cacheCurrentTime()
         || previousCurrentTimeData.insetEnd != m_cachedCurrentTimeData.insetEnd
         || previousCurrentTimeData.stickinessData != m_cachedCurrentTimeData.stickinessData;
 
-    if (metricsChanged) {
-        for (auto& animation : m_animations)
-            animation->progressBasedTimelineSourceDidChangeMetrics();
-    }
+    if (metricsChanged)
+        sourceMetricsDidChange();
 }
 
 AnimationTimeline::ShouldUpdateAnimationsAndSendEvents ViewTimeline::documentWillUpdateAnimationsAndSendEvents()
@@ -430,14 +431,14 @@ Style::SingleAnimationRange ViewTimeline::defaultRange() const
     return Style::SingleAnimationRange::defaultForViewTimeline();
 }
 
-Element* ViewTimeline::bindingsSource() const
+RefPtr<Element> ViewTimeline::bindingsSource() const
 {
     if (auto subject = m_subject.styleable())
         subject->element.protectedDocument()->updateStyleIfNeeded();
     return ScrollTimeline::bindingsSource();
 }
 
-Element* ViewTimeline::source() const
+RefPtr<Element> ViewTimeline::source() const
 {
     if (CheckedPtr sourceRender = sourceScrollerRenderer())
         return sourceRender->element();
@@ -459,7 +460,7 @@ const RenderBox* ViewTimeline::sourceScrollerRenderer() const
     return subjectRenderer->enclosingScrollableContainer();
 }
 
-const RenderElement* ViewTimeline::stickyContainer() const
+CheckedPtr<const RenderElement> ViewTimeline::stickyContainer() const
 {
     auto subject = m_subject.styleable();
     if (!subject)
@@ -468,16 +469,17 @@ const RenderElement* ViewTimeline::stickyContainer() const
     CheckedPtr renderer = subject->renderer();
 
     auto scrollerRenderer = sourceScrollerRenderer();
-    while (renderer && renderer != scrollerRenderer) {
+    while (renderer && renderer.get() != scrollerRenderer) {
         if (renderer->isStickilyPositioned())
-            return renderer.get();
+            return renderer;
         renderer = renderer->containingBlock();
     }
     return nullptr;
 }
 
-ScrollTimeline::Data ViewTimeline::computeTimelineData() const
+ScrollTimeline::Data ViewTimeline::computeTimelineData(UseCachedCurrentTime) const
 {
+    // FIXME: account for UseCachedCurrentTime parameter.
     if (!m_cachedCurrentTimeData.scrollOffset && !m_cachedCurrentTimeData.scrollContainerSize)
         return { };
 
@@ -583,7 +585,7 @@ std::pair<double, double> ViewTimeline::offsetIntervalForAttachmentRange(const S
     auto offsetForSingleTimelineRange = [&](const auto& rangeToConvert) {
         auto [conversionRangeStart, conversionRangeEnd] = intervalForTimelineRangeName(data, rangeToConvert.name());
         auto conversionRange = conversionRangeEnd - conversionRangeStart;
-        auto convertedValue = Style::evaluate(rangeToConvert.offset(), conversionRange, 1.0f /* FIXME FIND ZOOM */);
+        auto convertedValue = Style::evaluate<float>(rangeToConvert.offset(), conversionRange, Style::ZoomNeeded { });
         auto position = conversionRangeStart + convertedValue;
         return (position - data.rangeStart) / timelineRange;
     };
@@ -604,7 +606,7 @@ std::pair<WebAnimationTime, WebAnimationTime> ViewTimeline::intervalForAttachmen
 
     auto computeTime = [&](const auto& rangeToConvert) {
         auto mappedOffset = mapOffsetToTimelineRange(data, rangeToConvert.name(), [&](const float& subjectRange) {
-            return Style::evaluate(rangeToConvert.offset(), subjectRange, 1.0f /* FIXME FIND ZOOM */);
+            return Style::evaluate<float>(rangeToConvert.offset(), subjectRange, Style::ZoomNeeded { });
         });
         return WebAnimationTime::fromPercentage(mappedOffset * 100);
     };

@@ -76,6 +76,7 @@
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
 #define USE_HARFBUZZ 1
+#define USE_FONT_VARIANT_VIA_FEATURES 1
 #endif
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
@@ -433,4 +434,13 @@
     || (PLATFORM(WATCHOS) && __WATCH_OS_VERSION_MIN_REQUIRED < 110400) \
     || (PLATFORM(APPLETV) && __TV_OS_VERSION_MIN_REQUIRED < 180400))
 #define USE_NSURL_ERROR_FAILING_URL_STRING_KEY 1
+#endif
+
+#if !defined(USE_COMPRESSED_HEAP)
+/* Change run-jsc-stress-tests too. */
+#define USE_COMPRESSED_HEAP 0
+#endif
+
+#if defined(__cplusplus)
+constexpr bool useCompressedHeap = USE_COMPRESSED_HEAP;
 #endif

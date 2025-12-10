@@ -27,6 +27,7 @@
 #include "RangeBasedLineBuilder.h"
 
 #include "InlineFormattingContext.h"
+#include "RenderStyleInlines.h"
 
 namespace WebCore {
 namespace Layout {
@@ -56,7 +57,7 @@ LineLayoutResult RangeBasedLineBuilder::layoutInlineContent(const LineInput& lin
         }
 
         auto lineRect = lineInput.initialLogicalRect;
-        auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), { }, lineRect.width(), { }, inlineBoxRuns, true);
+        auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), { }, lineRect.width(), { }, true);
         return LineLayoutResult { lineInput.needsLayoutRange
             , WTFMove(inlineBoxRuns)
             , { }
@@ -102,12 +103,12 @@ LineLayoutResult RangeBasedLineBuilder::layoutInlineContent(const LineInput& lin
 
         if (isFirstFormattedLineCandidate) {
             ASSERT(!previousLine);
-            lineLayoutResult.inlineAndOpaqueContent.insert(0, { leadingInlineItem, leadingInlineItem.firstLineStyle(), { } });
+            lineLayoutResult.runs.insert(0, { leadingInlineItem, leadingInlineItem.firstLineStyle(), { } });
             lineLayoutResult.inlineItemRange.start = lineInput.needsLayoutRange.start;
             return;
         }
         // Subsequent lines need leading spanning inline box run.
-        lineLayoutResult.inlineAndOpaqueContent.insert(0, { leadingInlineItem, { }, { } });
+        lineLayoutResult.runs.insert(0, { leadingInlineItem, { }, { } });
     };
     insertLeadingInlineBoxRun();
 
@@ -115,7 +116,7 @@ LineLayoutResult RangeBasedLineBuilder::layoutInlineContent(const LineInput& lin
         if (lineLayoutResult.inlineItemRange.end != needsLayoutRange.end)
             return;
         auto& trailingInlineItem = m_inlineItemList.back();
-        lineLayoutResult.inlineAndOpaqueContent.append({ trailingInlineItem, isFirstFormattedLineCandidate ? trailingInlineItem.firstLineStyle() : trailingInlineItem.style(), lineLayoutResult.contentGeometry.logicalWidth });
+        lineLayoutResult.runs.append({ trailingInlineItem, isFirstFormattedLineCandidate ? trailingInlineItem.firstLineStyle() : trailingInlineItem.style(), lineLayoutResult.contentGeometry.logicalWidth });
         lineLayoutResult.inlineItemRange.end = lineInput.needsLayoutRange.end;
     };
     appendTrailingInlineBoxRunIfNeeded();
@@ -123,9 +124,12 @@ LineLayoutResult RangeBasedLineBuilder::layoutInlineContent(const LineInput& lin
     return lineLayoutResult;
 }
 
-bool RangeBasedLineBuilder::isEligibleForRangeInlineLayout(const InlineFormattingContext& inlineFormattingContext, const InlineContentCache::InlineItems& inlineItems, const PlacedFloats& placedFloats)
+bool RangeBasedLineBuilder::isEligibleForRangeInlineLayout(const InlineFormattingContext& inlineFormattingContext, InlineItemRange needsLayoutRange, const InlineContentCache::InlineItems& inlineItems, const PlacedFloats& placedFloats)
 {
     if (inlineItems.isEmpty())
+        return false;
+
+    if (needsLayoutRange.start || needsLayoutRange.end.index != inlineItems.size())
         return false;
 
     // Range based line builder only supports the following content <inline box>eligible for text only layout</inline box>
@@ -167,7 +171,7 @@ bool RangeBasedLineBuilder::isEligibleForRangeInlineLayout(const InlineFormattin
         auto& inlineBoxStyle = inlineItemList.first().layoutBox().style();
         if (inlineBoxStyle.textAlign() != rootStyle.textAlign())
             return false;
-        if (!TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(rootStyle) || !TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineBoxStyle))
+        if (!TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineFormattingContext.root()) || !TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineItemList.first().layoutBox()))
             return false;
     }
 

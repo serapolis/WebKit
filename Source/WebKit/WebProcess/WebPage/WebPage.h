@@ -28,6 +28,7 @@
 #include "APIObject.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
+#include "RemoteSnapshotIdentifier.h"
 #include "SandboxExtension.h"
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <WebCore/BoxExtents.h>
@@ -59,13 +60,13 @@
 #include <WebCore/ShareData.h>
 #include <WebCore/ShareableBitmap.h>
 #include <WebCore/SimpleRange.h>
-#include <WebCore/SnapshotIdentifier.h>
 #include <WebCore/SubstituteData.h>
 #include <WebCore/UserContentTypes.h>
 #include <WebCore/UserScriptTypes.h>
 #include <WebCore/WebCoreKeyboardUIMode.h>
 #include <memory>
 #include <pal/HysteresisActivity.h>
+#include <wtf/CallbackAggregator.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/MonotonicTime.h>
@@ -182,6 +183,7 @@ class FontChanges;
 class Frame;
 class FrameView;
 class FrameSelection;
+class FrameTreeSyncData;
 class GraphicsContext;
 class HTMLElement;
 class HTMLImageElement;
@@ -199,7 +201,7 @@ class KeyboardEvent;
 class LegacyWebArchive;
 class LocalFrame;
 class LocalFrameView;
-class MediaPlaybackTargetContext;
+class MediaPlaybackTarget;
 class MediaSessionCoordinator;
 class MediaSessionManagerInterface;
 class Page;
@@ -223,6 +225,7 @@ class TextCheckingRequest;
 class VisiblePosition;
 
 enum class ActivityState : uint16_t;
+enum class AdjustViewSize : bool;
 enum class COEPDisposition : bool;
 enum class CaretAnimatorType : uint8_t;
 enum class CreateNewGroupForHighlight : bool;
@@ -278,6 +281,7 @@ enum class PaginationMode : uint8_t;
 
 struct AXDebugInfo;
 struct AppHighlight;
+struct AriaNotifyData;
 struct AttributedString;
 struct BackForwardItemIdentifierType;
 struct CharacterRange;
@@ -291,7 +295,9 @@ struct DictationContextType;
 struct ElementContext;
 struct ExceptionData;
 struct ExceptionDetails;
+struct FocusOptions;
 struct FontAttributes;
+struct FrameTreeSyncSerializationData;
 struct GlobalFrameIdentifier;
 struct GlobalWindowIdentifier;
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -302,14 +308,16 @@ class HandleUserInputEventResult;
 #endif
 struct InteractionRegion;
 struct KeypressCommand;
+struct LiveRegionAnnouncementData;
 struct MarkupExclusionRule;
 struct MediaDeviceHashSalts;
+struct MediaPlayerClientIdentifierType;
 struct MediaUsageInfo;
 struct MessageWithMessagePorts;
 struct NavigationIdentifierType;
 struct NowPlayingInfo;
 struct PlatformMediaSessionRemoteCommandArgument;
-struct ProcessSyncData;
+struct DocumentSyncSerializationData;
 struct PromisedAttachmentInfo;
 struct RemoteUserInputEventData;
 struct RequestStorageAccessResult;
@@ -340,6 +348,7 @@ struct OpenID4VPRequest;
 
 using BackForwardItemIdentifier = ProcessQualified<ObjectIdentifier<BackForwardItemIdentifierType>>;
 using DictationContext = ObjectIdentifier<DictationContextType>;
+using HTMLMediaElementIdentifier = ObjectIdentifier<MediaPlayerClientIdentifierType>;
 using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
 using NavigationIdentifier = ObjectIdentifier<NavigationIdentifierType, uint64_t>;
@@ -349,6 +358,9 @@ using ScrollOffset = IntPoint;
 using UserMediaRequestIdentifier = ObjectIdentifier<UserMediaRequestIdentifierType>;
 
 namespace TextExtraction {
+struct ExtractedText;
+struct FilterRuleData;
+struct FilterRule;
 struct InteractionDescription;
 struct Interaction;
 struct Item;
@@ -400,6 +412,7 @@ class PluginView;
 class RemoteLayerTreeTransaction;
 class RemoteMediaSessionCoordinator;
 class RemoteRenderingBackendProxy;
+class RemoteSnapshotRecorderProxy;
 class RemoteWebInspectorUI;
 #if ENABLE(REVEAL)
 class RevealItem;
@@ -433,7 +446,7 @@ class WebFrame;
 class WebFullScreenManager;
 class WebGestureEvent;
 class WebImage;
-class WebInspector;
+class WebInspectorBackend;
 class WebInspectorBackendClient;
 class WebInspectorUI;
 class WebKeyboardEvent;
@@ -441,7 +454,7 @@ class WebMouseEvent;
 class WebNotificationClient;
 class WebOpenPanelResultListener;
 class WebPageGroupProxy;
-class WebPageInspectorTargetController;
+class WebPageInspectorTarget;
 class WebPageOverlay;
 class WebPageTesting;
 class WebPaymentCoordinator;
@@ -471,7 +484,7 @@ enum class TextInteractionSource : uint8_t;
 enum class TextRecognitionUpdateResult : uint8_t;
 enum class VisitedLinkTableIdentifierType;
 enum class WebEventModifier : uint8_t;
-enum class WebEventType : uint8_t;
+enum class WebEventType : uint32_t;
 
 struct ContentWorldData;
 struct ContentWorldIdentifierType;
@@ -500,11 +513,15 @@ struct InsertTextOptions;
 struct InteractionInformationAtPosition;
 struct InteractionInformationRequest;
 struct LoadParameters;
+struct MainFrameData;
 struct NodeHitTestResult;
 struct PDFPluginIdentifierType;
 struct PlatformFontInfo;
 struct PrintInfo;
 struct ProvisionalFrameCreationParameters;
+#if PLATFORM(GTK) || PLATFORM(WPE)
+struct RenderProcessInfo;
+#endif
 struct RunJavaScriptParameters;
 struct StorageNamespaceIdentifierType;
 struct TapIdentifierType;
@@ -531,7 +548,7 @@ struct WebsitePoliciesData;
 template<typename T> class MonotonicObjectIdentifier;
 
 using ActivityStateChangeID = uint64_t;
-using ContentWorldIdentifier = ObjectIdentifier<ContentWorldIdentifierType>;
+using ContentWorldIdentifier = WebCore::ProcessQualified<ObjectIdentifier<ContentWorldIdentifierType>>;
 using GeolocationIdentifier = ObjectIdentifier<GeolocationIdentifierType>;
 using ImageBufferBackendHandle = Variant<
     WebCore::ShareableBitmapHandle
@@ -572,6 +589,7 @@ public:
     void deref() const final;
 
     void reinitializeWebPage(WebPageCreationParameters&&);
+    void platformReinitializeAccessibilityToken();
 
     void close();
 
@@ -593,6 +611,7 @@ public:
 
 #if ENABLE(ASYNC_SCROLLING)
     WebCore::ScrollingCoordinator* scrollingCoordinator() const;
+    RefPtr<WebCore::ScrollingCoordinator> protectedScrollingCoordinator() const;
 #endif
 
     WebPageGroupProxy* pageGroup() const { return m_pageGroup.get(); }
@@ -625,6 +644,7 @@ public:
 
 #if PLATFORM(COCOA)
     void willCommitLayerTree(RemoteLayerTreeTransaction&, WebCore::FrameIdentifier);
+    void willCommitMainFrameData(MainFrameData&, const TransactionID&);
     void didFlushLayerTreeAtTime(MonotonicTime, bool flushSucceeded);
 #endif
 
@@ -647,8 +667,8 @@ public:
 
     enum class LazyCreationPolicy { UseExistingOnly, CreateIfNeeded };
 
-    WebInspector* inspector(LazyCreationPolicy = LazyCreationPolicy::CreateIfNeeded);
-    RefPtr<WebInspector> protectedInspector();
+    WebInspectorBackend* inspector(LazyCreationPolicy = LazyCreationPolicy::CreateIfNeeded);
+    RefPtr<WebInspectorBackend> protectedInspector();
     WebInspectorUI* inspectorUI();
     RemoteWebInspectorUI* remoteInspectorUI();
     bool isInspectorPage() { return !!m_inspectorUI || !!m_remoteInspectorUI; }
@@ -779,14 +799,15 @@ public:
 
     void replaceStringMatchesFromInjectedBundle(const Vector<uint32_t>& matchIndices, const String& replacementText, bool selectionOnly);
 
-    void setTextIndicator(const WebCore::TextIndicatorData&);
-    void updateTextIndicator(const WebCore::TextIndicatorData&);
+    void setTextIndicator(RefPtr<WebCore::TextIndicator>&&);
+    void updateTextIndicator(RefPtr<WebCore::TextIndicator>&&);
 
     WebFrame& mainWebFrame() const { return m_mainFrame; }
 
-    WebCore::Frame* mainFrame() const; // May return nullptr.
-    WebCore::FrameView* mainFrameView() const; // May return nullptr.
-    WebCore::LocalFrameView* localMainFrameView() const; // May return nullptr.
+    WebCore::Frame* mainFrame() const;
+    WebCore::FrameView* mainFrameView() const;
+    WebCore::LocalFrameView* localMainFrameView() const;
+    CheckedPtr<WebCore::LocalFrameView> checkedLocalMainFrameView() const;
     RefPtr<WebCore::LocalFrame> localMainFrame() const;
     RefPtr<WebCore::Document> localTopDocument() const;
 
@@ -795,10 +816,12 @@ public:
     Awaitable<std::optional<FrameTreeNodeData>> getFrameTree();
     void didFinishLoadInAnotherProcess(WebCore::FrameIdentifier);
     void frameWasRemovedInAnotherProcess(WebCore::FrameIdentifier);
-    void updateFrameTreeSyncData(WebCore::FrameIdentifier, Ref<WebCore::FrameTreeSyncData>&&);
 
-    void processSyncDataChangedInAnotherProcess(const WebCore::ProcessSyncData&);
-    void topDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData>&&);
+    void topDocumentSyncDataChangedInAnotherProcess(const WebCore::DocumentSyncSerializationData&);
+    void allTopDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData>&&);
+
+    void frameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier, const WebCore::FrameTreeSyncSerializationData&);
+    void allFrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier, Ref<WebCore::FrameTreeSyncData>&&);
 
     std::optional<WebCore::SimpleRange> currentSelectionAsRange();
 
@@ -971,6 +994,8 @@ public:
     WebCore::IntRect rootViewToAccessibilityScreen(const WebCore::IntRect&);
 #if PLATFORM(IOS_FAMILY)
     void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&);
+    void relayAriaNotifyNotification(WebCore::AriaNotifyData&&);
+    void relayLiveRegionNotification(WebCore::LiveRegionAnnouncementData&&);
 #endif
 
     RefPtr<WebImage> scaledSnapshotWithOptions(const WebCore::IntRect&, double additionalScaleFactor, SnapshotOptions);
@@ -1106,7 +1131,7 @@ public:
     void autofillLoginCredentials(const String&, const String&);
     void setFocusedElementValue(const WebCore::ElementContext&, const String&);
     void setFocusedElementSelectedIndex(const WebCore::ElementContext&, uint32_t index, bool allowMultipleSelection);
-    void setIsShowingInputViewForFocusedElement(bool showingInputView) { m_isShowingInputViewForFocusedElement = showingInputView; }
+    void setIsShowingInputViewForFocusedElement(bool);
     bool isShowingInputViewForFocusedElement() const { return m_isShowingInputViewForFocusedElement; }
     void updateSelectionAppearance();
     void getSelectionContext(CompletionHandler<void(const String&, const String&, const String&)>&&);
@@ -1182,7 +1207,7 @@ public:
 #if ENABLE(CONTEXT_MENUS)
     WebContextMenu& contextMenu();
     Ref<WebContextMenu> protectedContextMenu();
-    RefPtr<WebContextMenu> contextMenuAtPointInWindow(WebCore::FrameIdentifier, const WebCore::IntPoint&);
+    RefPtr<WebContextMenu> contextMenuAtPointInWindow(WebCore::FrameIdentifier, const WebCore::DoublePoint&);
 #endif
 
     static bool canHandleRequest(const WebCore::ResourceRequest&);
@@ -1238,6 +1263,7 @@ public:
     void registerUIProcessAccessibilityTokens(std::span<const uint8_t> elementToken, std::span<const uint8_t> windowToken);
     void registerRemoteFrameAccessibilityTokens(pid_t, std::span<const uint8_t>, WebCore::FrameIdentifier);
     WKAccessibilityWebPageObject* accessibilityRemoteObject();
+    RetainPtr<WKAccessibilityWebPageObject> protectedAccessibilityRemoteObject();
     WebCore::IntPoint accessibilityRemoteFrameOffset();
     void createMockAccessibilityElement(pid_t);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -1355,10 +1381,8 @@ public:
     void computePagesForPrinting(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(const Vector<WebCore::IntRect>&, double, const WebCore::FloatBoxExtent&)>&&);
     void computePagesForPrintingDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(const Vector<WebCore::IntRect>&, double, const WebCore::FloatBoxExtent&)>&& completionHandler) { computePagesForPrinting(frameID, printInfo, WTFMove(completionHandler)); }
     void computePagesForPrintingImpl(WebCore::FrameIdentifier, const PrintInfo&, Vector<WebCore::IntRect>& pageRects, double& totalScaleFactor, WebCore::FloatBoxExtent& computedMargin);
-
 #if PLATFORM(COCOA)
-    void drawToPDF(WebCore::FrameIdentifier, const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground,  CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
-    void drawRemoteToPDF(WebCore::FrameIdentifier, const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground, WebCore::SnapshotIdentifier);
+    void drawToPDF(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground,  CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
     void drawRectToImage(WebCore::FrameIdentifier, const PrintInfo&, const WebCore::IntRect&, const WebCore::IntSize&, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
     void drawRectToImageDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, const WebCore::IntRect& rect, const WebCore::IntSize& imageSize, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler) { drawRectToImage(frameID, printInfo, rect, imageSize, WTFMove(completionHandler)); }
     void drawPagesToPDF(WebCore::FrameIdentifier, const PrintInfo&, uint32_t first, uint32_t count, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
@@ -1366,18 +1390,33 @@ public:
     void drawPagesToPDFImpl(WebCore::FrameIdentifier, const PrintInfo&, uint32_t first, uint32_t count, RefPtr<WebCore::SharedBuffer>& pdfPageData);
 
     void drawPrintContextPagesToGraphicsContext(WebCore::GraphicsContext&, const WebCore::FloatRect& pageRect, uint32_t first, uint32_t count);
+
+    void drawPrintingRectToSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, const PrintInfo&, const WebCore::IntRect&, const WebCore::IntSize&, CompletionHandler<void(bool)>&&);
+    void drawPrintingRectToSnapshotDuringDOMPrintOperation(RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, const WebCore::IntRect& rect, const WebCore::IntSize& imageSize, CompletionHandler<void(bool)>&& completionHandler) { drawPrintingRectToSnapshot(snapshotIdentifier, frameID, printInfo, rect, imageSize, WTFMove(completionHandler)); }
+    void drawPrintingPagesToSnapshot(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, const PrintInfo&, uint32_t first, uint32_t count, CompletionHandler<void(std::optional<WebCore::FloatSize>)>&&);
+    void drawPrintingPagesToSnapshotDuringDOMPrintOperation(RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, uint32_t first, uint32_t count, CompletionHandler<void(std::optional<WebCore::FloatSize>)>&& completionHandler) { drawPrintingPagesToSnapshot(snapshotIdentifier, frameID, printInfo, first, count, WTFMove(completionHandler)); }
 #endif
 
 #if PLATFORM(IOS_FAMILY)
     void computePagesForPrintingiOS(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(uint64_t)>&&);
     void drawToPDFiOS(WebCore::FrameIdentifier, const PrintInfo&, uint64_t, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
     void drawToImage(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+
+    void drawPrintingPagesToSnapshotiOS(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, const PrintInfo&, uint64_t, CompletionHandler<void(std::optional<WebCore::FloatSize>)>&&);
+    void drawPrintingToSnapshotiOS(RemoteSnapshotIdentifier, WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(std::optional<WebCore::FloatSize>)>&&);
 #endif
 
 #if PLATFORM(GTK)
     void drawPagesForPrinting(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(std::optional<WebCore::SharedMemoryHandle>&&, WebCore::ResourceError&&)>&&);
     void drawPagesForPrintingDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<WebCore::SharedMemoryHandle>&&, WebCore::ResourceError&&)>&& completionHandler) { drawPagesForPrinting(frameID, printInfo, WTFMove(completionHandler)); }
 #endif
+
+    // Starts the process of drawing the whole page to a snapshot.
+    // The completion is either error or rect of the content. If the nullopt rect was passed in, the snapshot rect is resolved from the content.
+    void drawToSnapshot(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground, RemoteSnapshotIdentifier, CompletionHandler<void(std::optional<WebCore::IntSize>)>&&);
+
+    // Submessage for a frame delivered during web page snapshot draw.
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect&, RemoteSnapshotIdentifier, CompletionHandler<void(bool)>&&);
 
     void addResourceRequest(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&, const WebCore::DocumentLoader*, WebCore::LocalFrame*);
     void removeResourceRequest(WebCore::ResourceLoaderIdentifier, WebCore::LocalFrame*);
@@ -1561,7 +1600,6 @@ public:
     bool shouldDispatchFakeMouseMoveEvents() const { return m_shouldDispatchFakeMouseMoveEvents; }
 
     void postMessage(const String& messageName, API::Object* messageBody);
-    void postMessageWithAsyncReply(const String& messageName, API::Object* messageBody, CompletionHandler<void(API::Object*)>&&);
     void postSynchronousMessageForTesting(const String& messageName, API::Object* messageBody, RefPtr<API::Object>& returnData);
     void postMessageIgnoringFullySynchronousMode(const String& messageName, API::Object* messageBody);
 
@@ -1588,9 +1626,9 @@ public:
     bool isControlledByAutomation() const;
     void setControlledByAutomation(bool);
 
-    void connectInspector(const String& targetId, Inspector::FrontendChannel::ConnectionType);
-    void disconnectInspector(const String& targetId);
-    void sendMessageToTargetBackend(const String& targetId, const String& message);
+    void connectInspector(Inspector::FrontendChannel::ConnectionType);
+    void disconnectInspector();
+    void sendMessageToTargetBackend(const String& message);
 
     void insertNewlineInQuotedContent();
 
@@ -1613,7 +1651,6 @@ public:
 #endif
 
     void didGetLoadDecisionForIcon(bool decision, CallbackID, CompletionHandler<void(const IPC::SharedBufferReference&)>&&);
-    void setUseIconLoadingClient(bool);
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(DRAG_SUPPORT)
     void didConcludeEditDrag();
@@ -1621,6 +1658,10 @@ public:
 #endif
 
     void didFinishLoadingImageForElement(WebCore::HTMLImageElement&);
+
+#if ENABLE(MODEL_PROCESS)
+    void setHasModelElement(bool);
+#endif
 
     WebURLSchemeHandlerProxy* urlSchemeHandlerForScheme(StringView);
     void stopAllURLSchemeTasks();
@@ -1646,6 +1687,12 @@ public:
 
 #if ENABLE(WEB_PAGE_SPATIAL_BACKDROP)
     void spatialBackdropSourceChanged();
+#endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    void allowImmersiveElement(const WebCore::Element&, CompletionHandler<void(bool)>&&);
+    void presentImmersiveElement(const WebCore::Element&, const WebCore::LayerHostingContextIdentifier, CompletionHandler<void(bool)>&&);
+    void dismissImmersiveElement(const WebCore::Element&, CompletionHandler<void()>&&);
 #endif
 
     void flushPendingEditorStateUpdate();
@@ -1706,6 +1753,7 @@ public:
 
 #if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
     WebExtensionControllerProxy* webExtensionControllerProxy() const { return m_webExtensionController.get(); }
+    RefPtr<WebExtensionControllerProxy> protectedWebExtensionControllerProxy() const;
 #endif
 
     WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection() const { return m_userInterfaceLayoutDirection; }
@@ -1828,7 +1876,7 @@ public:
 #endif
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
-    void showMediaControlsContextMenu(WebCore::FloatRect&&, Vector<WebCore::MediaControlsContextMenuItem>&&, CompletionHandler<void(WebCore::MediaControlsContextMenuItem::ID)>&&);
+    void showMediaControlsContextMenu(WebCore::FloatRect&&, Vector<WebCore::MediaControlsContextMenuItem>&&, WebCore::HTMLMediaElementIdentifier, CompletionHandler<void(WebCore::MediaControlsContextMenuItem::ID)>&&);
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
 #if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
@@ -1935,6 +1983,9 @@ public:
     void startDeferringScrollEvents();
     void flushDeferredScrollEvents();
 
+    void startDeferringIntersectionObservations();
+    void flushDeferredIntersectionObservations();
+
     void flushDeferredDidReceiveMouseEvent();
 
     void generateTestReport(String&& message, String&& group);
@@ -1997,7 +2048,7 @@ public:
 #endif
 
 #if PLATFORM(COCOA)
-    void createTextIndicatorForElementWithID(const String& elementID, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&&);
+    void createTextIndicatorForElementWithID(const String& elementID, CompletionHandler<void(RefPtr<WebCore::TextIndicator>&&)>&&);
 #endif
 
     void startObservingNowPlayingMetadata();
@@ -2018,11 +2069,10 @@ public:
 
     void setObscuredContentInsets(const WebCore::FloatBoxExtent&);
 
-    void updateOpener(WebCore::FrameIdentifier, WebCore::FrameIdentifier);
+    void updateOpener(WebCore::FrameIdentifier, std::optional<WebCore::FrameIdentifier>);
+    void setFramePrinting(WebCore::FrameIdentifier, bool printing, WebCore::FloatSize pageSize, WebCore::FloatSize originalPageSize, float maximumShrinkRatio, WebCore::AdjustViewSize shouldAdjustViewSize);
 
     WebHistoryItemClient& historyItemClient() const { return m_historyItemClient.get(); }
-
-    const String& overrideReferrerForAllRequests() const { return m_overrideReferrerForAllRequests; }
 
     bool isAlwaysOnLoggingAllowed() const;
 
@@ -2070,6 +2120,13 @@ public:
 
     RefPtr<WebCore::ShareableBitmap> shareableBitmapSnapshotForNode(WebCore::Node&);
 
+    void paintRemoteFrameContents(WebCore::FrameIdentifier, const WebCore::IntRect&, WebCore::GraphicsContext&);
+
+#if ENABLE(VIDEO)
+    void showCaptionDisplaySettingsPreview(WebCore::HTMLMediaElementIdentifier);
+    void hideCaptionDisplaySettingsPreview(WebCore::HTMLMediaElementIdentifier);
+#endif
+
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
 
@@ -2082,7 +2139,6 @@ private:
     uint64_t messageSenderDestinationID() const override;
 
     void platformInitialize(const WebPageCreationParameters&);
-    void platformReinitialize();
     void platformDetach();
     void getPlatformEditorState(WebCore::LocalFrame&, EditorState&) const;
     bool requiresPostLayoutDataForEditorState(const WebCore::LocalFrame&) const;
@@ -2284,7 +2340,6 @@ private:
     void getRenderTreeExternalRepresentation(CompletionHandler<void(const String&)>&&);
     void getSelectionOrContentsAsString(CompletionHandler<void(const String&)>&&);
     void getSourceForFrame(WebCore::FrameIdentifier, CompletionHandler<void(const String&)>&&);
-    void getWebArchiveOfFrame(std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
 #if PLATFORM(COCOA)
     void getWebArchiveData(CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void getWebArchivesForFrames(const Vector<WebCore::FrameIdentifier>& frameIdentifiers, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Ref<WebCore::LegacyWebArchive>>&&)>&&);
@@ -2365,9 +2420,8 @@ private:
     void hideFindUI();
     void countStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(uint32_t)>&&);
     void replaceMatches(const Vector<uint32_t>& matchIndices, const String& replacementText, bool selectionOnly, CompletionHandler<void(uint64_t)>&&);
-    void findRectsForStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(Vector<WebCore::FloatRect>&&)>&&);
 
-    void findTextRangesForStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(Vector<WebFoundTextRange>&&)>&&);
+    void findTextRangesForStringMatches(const String&, OptionSet<FindOptions>, uint32_t maxMatchCount, CompletionHandler<void(HashMap<WebCore::FrameIdentifier, Vector<WebFoundTextRange>>&&)>&&);
     void replaceFoundTextRangeWithString(const WebFoundTextRange&, const String&);
     void decorateTextRangeWithStyle(const WebFoundTextRange&, WebKit::FindDecorationStyle);
     void scrollTextRangeToVisible(const WebFoundTextRange&);
@@ -2482,6 +2536,7 @@ private:
 
     void setUserInterfaceLayoutDirection(uint32_t);
 
+    void simulateDeviceMotionChange(double xAcceleration, double yAcceleration, double zAcceleration, double xAccelerationIncludingGravity, double yAccelerationIncludingGravity, double zAccelerationIncludingGravity, double xRotationRate, double yRotationRate, double zRotationRate);
     void simulateDeviceOrientationChange(double alpha, double beta, double gamma);
 
 #if USE(SYSTEM_PREVIEW)
@@ -2510,10 +2565,8 @@ private:
     RefPtr<WebImage> snapshotAtSize(const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, WebCore::LocalFrame&, WebCore::LocalFrameView&);
     RefPtr<WebImage> snapshotNode(WebCore::Node&, SnapshotOptions, unsigned maximumPixelCount = std::numeric_limits<unsigned>::max());
 
-#if PLATFORM(COCOA)
     void drawMainFrameToPDF(WebCore::LocalFrame&, WebCore::GraphicsContext&, WebCore::IntRect& snapshotRect, bool allowTransparentBackground);
     void pdfSnapshotAtSize(WebCore::LocalFrame&, WebCore::GraphicsContext&, const WebCore::IntRect& snapshotRect, SnapshotOptions);
-#endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     RefPtr<WebCore::HTMLAttachmentElement> attachmentElementWithIdentifier(const String& identifier) const;
@@ -2532,6 +2585,8 @@ private:
 #if PLATFORM(GTK) || PLATFORM(WPE)
     void sendMessageToWebProcessExtension(UserMessage&&);
     void sendMessageToWebProcessExtensionWithReply(UserMessage&&, CompletionHandler<void(UserMessage&&)>&&);
+
+    void getRenderProcessInfo(CompletionHandler<void(RenderProcessInfo&&)>&&);
 #endif
 
 #if PLATFORM(WPE) && USE(GBM) && ENABLE(WPE_PLATFORM)
@@ -2552,7 +2607,8 @@ private:
 
     void dispatchLoadEventToFrameOwnerElement(WebCore::FrameIdentifier);
 
-    void frameWasFocusedInAnotherProcess(WebCore::FrameIdentifier);
+    void elementWasFocusedInAnotherProcess(WebCore::FrameIdentifier, WebCore::FocusOptions);
+    void frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier>&&);
 
 #if ENABLE(WRITING_TOOLS)
     void willBeginWritingToolsSession(const std::optional<WebCore::WritingTools::Session>&, CompletionHandler<void(const Vector<WebCore::WritingTools::Context>&)>&&);
@@ -2584,7 +2640,7 @@ private:
     void intelligenceTextAnimationsDidComplete();
 #endif
 
-    void remotePostMessage(WebCore::FrameIdentifier source, const String& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts&);
+    void remotePostMessage(WebCore::FrameIdentifier source, const WebCore::SecurityOriginData& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts&);
     void renderTreeAsTextForTesting(WebCore::FrameIdentifier, uint64_t baseIndent, OptionSet<WebCore::RenderAsTextFlag>, CompletionHandler<void(String&&)>&&);
     void layerTreeAsTextForTesting(WebCore::FrameIdentifier, uint64_t baseIndent, OptionSet<WebCore::LayerTreeAsTextOptions>, CompletionHandler<void(String&&)>&&);
     void frameTextForTesting(WebCore::FrameIdentifier, CompletionHandler<void(String&&)>&&);
@@ -2600,6 +2656,9 @@ private:
     void requestTextExtraction(WebCore::TextExtraction::Request&&, CompletionHandler<void(WebCore::TextExtraction::Item&&)>&&);
     void handleTextExtractionInteraction(WebCore::TextExtraction::Interaction&&, CompletionHandler<void(bool, String&&)>&&);
     void describeTextExtractionInteraction(WebCore::TextExtraction::Interaction&&, CompletionHandler<void(WebCore::TextExtraction::InteractionDescription&&)>&&);
+    void takeSnapshotOfExtractedText(WebCore::TextExtraction::ExtractedText&&, CompletionHandler<void(RefPtr<WebCore::TextIndicator>&&)>&&);
+    void updateTextExtractionFilterRules(Vector<WebCore::TextExtraction::FilterRuleData>&&);
+    void applyTextExtractionFilter(const String& input, std::optional<WebCore::NodeIdentifier>&& containerNode, CompletionHandler<void(const String&)>&&);
 
 #if HAVE(SANDBOX_STATE_FLAGS)
     static void setHasLaunchedWebContentProcess();
@@ -2626,6 +2685,8 @@ private:
 #endif
 
     void frameNameWasChangedInAnotherProcess(WebCore::FrameIdentifier, const String& frameName);
+
+    WebPageInspectorTarget& ensureInspectorTarget();
 
     struct Internals;
     const UniqueRef<Internals> m_internals;
@@ -2755,10 +2816,10 @@ private:
 
     const UniqueRef<WebFoundTextRangeController> m_foundTextRangeController;
 
-    RefPtr<WebInspector> m_inspector;
+    RefPtr<WebInspectorBackend> m_inspector;
     RefPtr<WebInspectorUI> m_inspectorUI;
     RefPtr<RemoteWebInspectorUI> m_remoteInspectorUI;
-    const UniqueRef<WebPageInspectorTargetController> m_inspectorTargetController;
+    std::unique_ptr<WebPageInspectorTarget> m_inspectorTarget;
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     RefPtr<PlaybackSessionManager> m_playbackSessionManager;
@@ -2810,7 +2871,7 @@ private:
     const UniqueRef<MediaKeySystemPermissionRequestManager> m_mediaKeySystemPermissionRequestManager;
 #endif
 
-    std::unique_ptr<WebCore::PrintContext> m_printContext;
+    RefPtr<WebCore::PrintContext> m_printContext;
     bool m_inActivePrintContextAccessScope { false };
     bool m_shouldEndPrintingImmediately { false };
 
@@ -3070,7 +3131,14 @@ private:
     AtomString m_overriddenMediaType;
     String m_processDisplayName;
     WebCore::AllowsContentJavaScript m_allowsContentJavaScriptFromMostRecentNavigation { WebCore::AllowsContentJavaScript::Yes };
-
+#if ENABLE(GPU_PROCESS)
+    struct RemoteSnapshotState {
+        RemoteSnapshotIdentifier identifier;
+        UniqueRef<RemoteSnapshotRecorderProxy> recorder;
+        Ref<MainRunLoopSuccessCallbackAggregator> callback;
+    };
+    std::optional<RemoteSnapshotState> m_remoteSnapshotState;
+#endif
 #if PLATFORM(GTK)
     WebCore::Color m_accentColor;
 #endif
@@ -3116,7 +3184,6 @@ private:
     bool m_textManipulationIncludesSubframes { false };
 
     Vector<String> m_corsDisablingPatterns;
-    const String m_overrideReferrerForAllRequests;
 
     std::unique_ptr<WebCore::CachedPage> m_cachedPage;
 
@@ -3149,7 +3216,7 @@ private:
     const Ref<WebHistoryItemClient> m_historyItemClient;
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    WeakHashSet<WebCore::HTMLImageElement, WebCore::WeakPtrImplWithEventTargetData> m_elementsToExcludeFromRemoveBackground;
+    WeakHashSet<WebCore::Element, WebCore::WeakPtrImplWithEventTargetData> m_elementsToExcludeFromRemoveBackground;
 #endif
 
 #if ENABLE(EXTENSION_CAPABILITIES)
@@ -3160,7 +3227,9 @@ private:
     const UniqueRef<TextAnimationController> m_textAnimationController;
 #endif
 
-    std::unique_ptr<WebCore::NowPlayingMetadataObserver> m_nowPlayingMetadataObserver;
+    Vector<WebCore::TextExtraction::FilterRule> m_textExtractionFilterRules;
+
+    RefPtr<WebCore::NowPlayingMetadataObserver> m_nowPlayingMetadataObserver;
     std::unique_ptr<FrameInfoData> m_mainFrameNavigationInitiator;
 
     mutable RefPtr<Logger> m_logger;

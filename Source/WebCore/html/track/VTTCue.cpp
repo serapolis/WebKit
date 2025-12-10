@@ -39,6 +39,7 @@
 #include "CSSValuePool.h"
 #include "CommonAtomStrings.h"
 #include "DocumentFragment.h"
+#include "DocumentPage.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "HTMLDivElement.h"
@@ -248,11 +249,6 @@ void VTTCueBox::applyCSSProperties()
     // unless if it is the child of a region, then it is to be relatively positioned.
     setInlineStyleProperty(CSSPropertyPosition, CSSValueAbsolute);
 
-    // The font shorthand property on the (root) list of WebVTT Node Objects
-    // must be set to 5vh sans-serif. [CSS-VALUES]
-    // NOTE: We use 'cqh' rather than 'vh' as the video element is not a proper viewport.
-    setInlineStyleProperty(CSSPropertyFontSize, cue->fontSize(), CSSUnitType::CSS_CQMIN, cue->fontSizeIsImportant() ? IsImportant::Yes : IsImportant::No);
-
     if (!cue->snapToLines()) {
         setInlineStyleProperty(CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
         setInlineStyleProperty(CSSPropertyTextWrapMode, CSSValueNowrap);
@@ -276,9 +272,9 @@ Ref<VTTCue> VTTCue::create(Document& document, double start, double end, String&
     return cue;
 }
 
-Ref<VTTCue> VTTCue::create(Document& document, const WebVTTCueData& data)
+Ref<VTTCue> VTTCue::create(Document& document, Ref<WebVTTCueData>&& data)
 {
-    auto cue = adoptRef(*new VTTCue(document, data));
+    auto cue = adoptRef(*new VTTCue(document, WTFMove(data)));
     cue->suspendIfNeeded();
     return cue;
 }
@@ -298,15 +294,15 @@ VTTCue::VTTCue(Document& document, const MediaTime& start, const MediaTime& end,
 {
 }
 
-VTTCue::VTTCue(Document& document, const WebVTTCueData& cueData)
+VTTCue::VTTCue(Document& document, Ref<WebVTTCueData>&& cueData)
     : VTTCue(document, MediaTime::zeroTime(), MediaTime::zeroTime(), { })
 {
-    m_originalStartTime = cueData.originalStartTime();
-    setText(cueData.content());
-    setStartTime(cueData.startTime());
-    setEndTime(cueData.endTime());
-    setId(cueData.id());
-    setCueSettings(cueData.settings());
+    m_originalStartTime = cueData->originalStartTime();
+    setText(cueData->content());
+    setStartTime(cueData->startTime());
+    setEndTime(cueData->endTime());
+    setId(AtomString { cueData->id() });
+    setCueSettings(cueData->settings());
 }
 
 VTTCue::~VTTCue()

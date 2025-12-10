@@ -36,8 +36,12 @@ class MediaSessionManagerGLib
     , private NowPlayingManagerClient {
     WTF_MAKE_TZONE_ALLOCATED(MediaSessionManagerGLib);
 public:
-    MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
+    static Ref<MediaSessionManagerGLib> create(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
     ~MediaSessionManagerGLib();
+
+    // NowPlayingManagerClient.
+    void ref() const final { PlatformMediaSessionManager::ref(); }
+    void deref() const final { PlatformMediaSessionManager::deref(); }
 
     void beginInterruption(PlatformMediaSession::InterruptionType) final;
 
@@ -60,6 +64,8 @@ public:
     bool areDBusNotificationsEnabled() const { return m_dbusNotificationsEnabled; }
 
 protected:
+    MediaSessionManagerGLib(GRefPtr<GDBusNodeInfo>&&, PageIdentifier);
+
     void scheduleSessionStatusUpdate() final;
     void updateNowPlayingInfo();
 
@@ -67,7 +73,7 @@ protected:
     void addSession(PlatformMediaSessionInterface&) final;
     void setCurrentSession(PlatformMediaSessionInterface&) final;
 
-    bool sessionWillBeginPlayback(PlatformMediaSessionInterface&) override;
+    void sessionWillBeginPlayback(PlatformMediaSessionInterface&, CompletionHandler<void(bool)>&&) override;
     void sessionWillEndPlayback(PlatformMediaSessionInterface&, DelayCallingUpdateNowPlaying) override;
     void sessionStateChanged(PlatformMediaSessionInterface&) override;
     void sessionDidEndRemoteScrubbing(PlatformMediaSessionInterface&) final;

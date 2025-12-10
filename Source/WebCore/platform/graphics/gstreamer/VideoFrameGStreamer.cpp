@@ -30,6 +30,7 @@
 #include "GStreamerCommon.h"
 #include "GStreamerVideoFrameConverter.h"
 #include "GraphicsContext.h"
+#include "ImageBuffer.h"
 #include "ImageGStreamer.h"
 #include "ImageOrientation.h"
 #include "PixelBuffer.h"
@@ -384,13 +385,13 @@ RefPtr<VideoFrameGStreamer> VideoFrameGStreamer::createFromPixelBuffer(Ref<Pixel
     auto width = size.width();
     auto height = size.height();
 
-    auto formatName = unsafeSpan(gst_video_format_to_string(format));
-    GST_TRACE("Creating %s VideoFrame from pixel buffer", formatName.data());
+    auto formatName = CStringView::unsafeFromUTF8(gst_video_format_to_string(format));
+    GST_TRACE("Creating %s VideoFrame from pixel buffer", formatName.utf8());
 
     int frameRateNumerator, frameRateDenominator;
     gst_util_double_to_fraction(frameRate, &frameRateNumerator, &frameRateDenominator);
 
-    auto caps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.data(), "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, nullptr));
+    auto caps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.utf8(), "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, nullptr));
     if (frameRate)
         gst_caps_set_simple(caps.get(), "framerate", GST_TYPE_FRACTION, frameRateNumerator, frameRateDenominator, nullptr);
 
@@ -407,7 +408,7 @@ RefPtr<VideoFrameGStreamer> VideoFrameGStreamer::createFromPixelBuffer(Ref<Pixel
         width = destinationSize.width();
         height = destinationSize.height();
         GST_TRACE("Resizing frame from %dx%d to %dx%d", size.width(), size.height(), width, height);
-        auto outputCaps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.data(), "width", G_TYPE_INT, width,
+        auto outputCaps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.utf8(), "width", G_TYPE_INT, width,
             "height", G_TYPE_INT, height, nullptr));
         if (frameRate)
             gst_caps_set_simple(outputCaps.get(), "framerate", GST_TYPE_FRACTION, frameRateNumerator, frameRateDenominator, nullptr);
@@ -468,6 +469,8 @@ VideoFrameGStreamer::VideoFrameGStreamer(const GRefPtr<GstSample>& sample, const
     initializeCharacteristics(options.presentationTime, isMirrored, videoRotationFromMeta);
 }
 
+VideoFrameGStreamer::~VideoFrameGStreamer() = default;
+
 void VideoFrameGStreamer::setFrameRate(double frameRate)
 {
     auto caps = adoptGRef(gst_caps_copy(gst_sample_get_caps(m_sample.get())));
@@ -508,14 +511,14 @@ void VideoFrameGStreamer::setMetadataAndContentHint(std::optional<VideoFrameTime
     gst_sample_set_buffer(m_sample.get(), modifiedBuffer.get());
 }
 
-static void copyPlane(uint8_t* destination, const uint8_t* source, uint64_t sourceStride, const ComputedPlaneLayout& spanPlaneLayout)
+static void copyPlane(std::span<uint8_t>& destination, const std::span<uint8_t>& source, uint64_t sourceStride, const ComputedPlaneLayout& spanPlaneLayout)
 {
     uint64_t sourceOffset = spanPlaneLayout.sourceTop * sourceStride;
     sourceOffset += spanPlaneLayout.sourceLeftBytes;
     uint64_t destinationOffset = spanPlaneLayout.destinationOffset;
     uint64_t rowBytes = spanPlaneLayout.sourceWidthBytes;
     for (size_t rowIndex = 0; rowIndex < spanPlaneLayout.sourceHeight; ++rowIndex) {
-        std::memcpy(destination + destinationOffset, source + sourceOffset, rowBytes);
+        memcpySpan(destination.subspan(destinationOffset, rowBytes), source.subspan(sourceOffset, rowBytes));
         sourceOffset += sourceStride;
         destinationOffset += spanPlaneLayout.destinationStride;
     }
@@ -549,13 +552,13 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
         auto widthUV = inputFrame.componentWidth(GST_VIDEO_COMP_U);
         PlaneLayout planeLayoutUV { spanPlaneLayoutUV.destinationOffset, spanPlaneLayoutUV.destinationStride ? spanPlaneLayoutUV.destinationStride : widthUV };
 
-        auto planeY = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_Y));
+        auto planeY = inputFrame.planeData(GST_VIDEO_COMP_Y);
         auto bytesPerRowY = inputFrame.componentStride(GST_VIDEO_COMP_Y);
-        copyPlane(destination.data(), planeY, bytesPerRowY, spanPlaneLayoutY);
+        copyPlane(destination, planeY, bytesPerRowY, spanPlaneLayoutY);
 
-        auto planeUV = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_U));
+        auto planeUV = inputFrame.planeData(GST_VIDEO_COMP_U);
         auto bytesPerRowUV = inputFrame.componentStride(GST_VIDEO_COMP_U);
-        copyPlane(destination.data(), planeUV, bytesPerRowUV, spanPlaneLayoutUV);
+        copyPlane(destination, planeUV, bytesPerRowUV, spanPlaneLayoutUV);
 
         Vector<PlaneLayout> planeLayouts;
         planeLayouts.append(planeLayoutY);
@@ -568,9 +571,9 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
         auto spanPlaneLayoutY = computedPlaneLayout[GST_VIDEO_COMP_Y];
         auto widthY = inputFrame.componentWidth(GST_VIDEO_COMP_Y);
         PlaneLayout planeLayoutY { spanPlaneLayoutY.destinationOffset, spanPlaneLayoutY.destinationStride ? spanPlaneLayoutY.destinationStride : widthY };
-        auto planeY = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_Y));
-        auto bytesPerRowY = inputFrame.planeStride(GST_VIDEO_COMP_Y);
-        copyPlane(destination.data(), planeY, bytesPerRowY, spanPlaneLayoutY);
+        auto planeY = inputFrame.planeData(GST_VIDEO_COMP_Y);
+        auto bytesPerRowY = inputFrame.width() % 2 ? inputFrame.planeStride(GST_VIDEO_COMP_Y) : inputFrame.width();
+        copyPlane(destination, planeY, bytesPerRowY, spanPlaneLayoutY);
 
         auto spanPlaneLayoutU = computedPlaneLayout[GST_VIDEO_COMP_U];
         auto widthUV = inputFrame.componentWidth(GST_VIDEO_COMP_U);
@@ -579,13 +582,13 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
         auto spanPlaneLayoutV = computedPlaneLayout[GST_VIDEO_COMP_V];
         PlaneLayout planeLayoutV { spanPlaneLayoutV.destinationOffset, spanPlaneLayoutV.destinationStride ? spanPlaneLayoutV.destinationStride : widthUV / 2 };
 
-        auto planeU = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_U));
+        auto planeU = inputFrame.planeData(GST_VIDEO_COMP_U);
         auto bytesPerRowU = inputFrame.planeStride(GST_VIDEO_COMP_U);
-        copyPlane(destination.data(), planeU, bytesPerRowU, spanPlaneLayoutU);
+        copyPlane(destination, planeU, bytesPerRowU, spanPlaneLayoutU);
 
-        auto planeV = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_V));
+        auto planeV = inputFrame.planeData(GST_VIDEO_COMP_V);
         auto bytesPerRowV = inputFrame.planeStride(GST_VIDEO_COMP_V);
-        copyPlane(destination.data(), planeV, bytesPerRowV, spanPlaneLayoutV);
+        copyPlane(destination, planeV, bytesPerRowV, spanPlaneLayoutV);
 
         Vector<PlaneLayout> planeLayouts;
         planeLayouts.append(planeLayoutY);
@@ -596,9 +599,9 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
             auto spanPlaneLayoutA = computedPlaneLayout[GST_VIDEO_COMP_A];
             auto widthA = inputFrame.componentWidth(GST_VIDEO_COMP_A);
             PlaneLayout planeLayoutA { spanPlaneLayoutA.destinationOffset, spanPlaneLayoutA.destinationStride ? spanPlaneLayoutA.destinationStride : widthA };
-            auto planeA = reinterpret_cast<uint8_t*>(inputFrame.planeData(GST_VIDEO_COMP_A));
-            auto bytesPerRowA = inputFrame.componentStride(GST_VIDEO_COMP_A);
-            copyPlane(destination.data(), planeA, bytesPerRowA, spanPlaneLayoutA);
+            auto planeA = inputFrame.planeData(GST_VIDEO_COMP_A);
+            auto bytesPerRowA = inputFrame.width() % 2 ? inputFrame.planeStride(GST_VIDEO_COMP_A) : inputFrame.width();
+            copyPlane(destination, planeA, bytesPerRowA, spanPlaneLayoutA);
             planeLayouts.append(planeLayoutA);
         }
 
@@ -611,9 +614,9 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
         if (!computedPlaneLayout.isEmpty())
             planeLayout = computedPlaneLayout[0];
         GstMappedBuffer mappedBuffer(inputBuffer, GST_MAP_READ);
-        auto plane = mappedBuffer.data();
+        auto plane = mappedBuffer.mutableSpan<uint8_t>();
         auto bytesPerRow = inputFrame.componentStride(0);
-        copyPlane(destination.data(), plane, bytesPerRow, planeLayout);
+        copyPlane(destination, plane, bytesPerRow, planeLayout);
         Vector<PlaneLayout> planeLayouts;
         planeLayouts.append({ planeLayout.destinationOffset, planeLayout.destinationStride ? planeLayout.destinationStride : 4 * inputFrame.width() });
         callback(WTFMove(planeLayouts));
@@ -624,21 +627,13 @@ void VideoFrame::copyTo(std::span<uint8_t> destination, VideoPixelFormat pixelFo
     callback({ });
 }
 
-void VideoFrame::draw(GraphicsContext& context, const FloatRect& destination, ImageOrientation destinationImageOrientation, bool shouldDiscardAlpha)
+RefPtr<NativeImage> VideoFrameGStreamer::copyNativeImage() const
 {
     auto& gstFrame = downcast<VideoFrameGStreamer>(*this);
     auto image = convertSampleToImage(gstFrame.sample(), gstFrame.info());
     if (!image)
-        return;
-
-    auto imageRect = image->rect();
-    auto source = destinationImageOrientation.usesWidthAsHeight() ? FloatRect(imageRect.location(), imageRect.size().transposedSize()) : imageRect;
-    auto compositeOperator = !shouldDiscardAlpha && image->hasAlpha() ? CompositeOperator::SourceOver : CompositeOperator::Copy;
-    auto platformImage = image->image();
-    auto bitmapImage = BitmapImage::create(WTFMove(platformImage));
-    if (!bitmapImage)
-        return;
-    context.drawImage(*bitmapImage.get(), destination, source, { compositeOperator, destinationImageOrientation });
+        return nullptr;
+    return NativeImage::create(image->image());
 }
 
 GRefPtr<GstSample> VideoFrameGStreamer::resizedSample(const IntSize& destinationSize)
@@ -658,8 +653,8 @@ GRefPtr<GstSample> VideoFrameGStreamer::convert(GstVideoFormat format, const Int
 
     auto width = destinationSize.width();
     auto height = destinationSize.height();
-    auto formatName = unsafeSpan(gst_video_format_to_string(format));
-    auto outputCaps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.data(), "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, "framerate", GST_TYPE_FRACTION, frameRateNumerator, frameRateDenominator, nullptr));
+    auto formatName = CStringView::unsafeFromUTF8(gst_video_format_to_string(format));
+    auto outputCaps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, formatName.utf8(), "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, "framerate", GST_TYPE_FRACTION, frameRateNumerator, frameRateDenominator, nullptr));
 
     if (gst_caps_is_equal(caps, outputCaps.get()))
         return GRefPtr<GstSample>(m_sample);

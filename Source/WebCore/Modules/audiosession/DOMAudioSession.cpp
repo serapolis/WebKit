@@ -30,13 +30,12 @@
 
 #include "AudioSession.h"
 #include "ContextDestructionObserverInlines.h"
-#include "Document.h"
+#include "DocumentPage.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
 #include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
-#include "Page.h"
 #include "PermissionsPolicy.h"
 #include "PlatformMediaSessionManager.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -104,7 +103,7 @@ ExceptionOr<void> DOMAudioSession::setType(Type type)
     AudioSession::singleton().setCategoryOverride(categoryOverride);
 
     if (categoryOverride == AudioSessionCategory::None) {
-        if (RefPtr manager = page->mediaSessionManager())
+        if (RefPtr manager = page->mediaSessionManagerIfExists())
             manager->updateAudioSessionCategoryIfNecessary();
     }
 

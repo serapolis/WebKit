@@ -49,8 +49,13 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderLayerFilters);
 
+Ref<RenderLayerFilters> RenderLayerFilters::create(RenderLayer& layer)
+{
+    return adoptRef(*new RenderLayerFilters(layer));
+}
+
 RenderLayerFilters::RenderLayerFilters(RenderLayer& layer)
-    : m_layer(layer)
+    : m_layer(&layer)
 {
 }
 
@@ -76,11 +81,15 @@ bool RenderLayerFilters::hasSourceImage() const
 
 void RenderLayerFilters::notifyFinished(CachedResource&, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
 {
+    CheckedPtr layer = m_layer;
+    if (!layer)
+        return;
+
     // FIXME: This really shouldn't have to invalidate layer composition,
     // but tests like css3/filters/effect-reference-delete.html fail if that doesn't happen.
-    if (auto* enclosingElement = m_layer->enclosingElement())
+    if (auto* enclosingElement = layer->enclosingElement())
         enclosingElement->invalidateStyleAndLayerComposition();
-    m_layer->renderer().repaint();
+    layer->renderer().repaint();
 }
 
 void RenderLayerFilters::updateReferenceFilterClients(const Style::Filter& filter)
@@ -100,13 +109,16 @@ void RenderLayerFilters::updateReferenceFilterClients(const Style::Filter& filte
             m_externalSVGReferences.append(cachedSVGDocument);
         } else {
             // Reference is internal; add layer as a client so we can trigger filter repaint on SVG attribute change.
-            RefPtr filterElement = m_layer->renderer().document().getElementById(referenceOperation->fragment());
+            CheckedPtr layer = m_layer;
+            if (!layer)
+                continue;
+            RefPtr filterElement = layer->renderer().document().getElementById(referenceOperation->fragment());
             if (!filterElement)
                 continue;
             CheckedPtr renderer = dynamicDowncast<LegacyRenderSVGResourceFilter>(filterElement->renderer());
             if (!renderer)
                 continue;
-            renderer->addClientRenderLayer(m_layer);
+            renderer->addClientRenderLayer(*layer);
             m_internalSVGReferences.append(WTFMove(filterElement));
         }
     }
@@ -119,9 +131,11 @@ void RenderLayerFilters::removeReferenceFilterClients()
 
     m_externalSVGReferences.clear();
 
-    for (auto& filterElement : m_internalSVGReferences) {
-        if (CheckedPtr renderer = filterElement->renderer())
-            downcast<LegacyRenderSVGResourceContainer>(*renderer).removeClientRenderLayer(m_layer);
+    if (CheckedPtr layer = m_layer) {
+        for (auto& filterElement : m_internalSVGReferences) {
+            if (CheckedPtr renderer = filterElement->renderer())
+                downcast<LegacyRenderSVGResourceContainer>(*renderer).removeClientRenderLayer(*layer);
+        }
     }
     m_internalSVGReferences.clear();
 }
@@ -147,6 +161,8 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
     auto expandedDirtyRect = dirtyRect;
     auto targetBoundingBox = intersection(filterBoxRect, dirtyRect);
 
+    auto preferredFilterRenderingModes = renderer.page().preferredFilterRenderingModes(context);
+
     auto outsets = calculateOutsets(renderer, targetBoundingBox);
     if (!outsets.isZero()) {
         LayoutBoxExtent flippedOutsets { outsets.bottom(), outsets.left(), outsets.top(), outsets.right() };
@@ -163,10 +179,14 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
     if (targetBoundingBox.isEmpty())
         return nullptr;
 
-    if (!m_filter || m_targetBoundingBox != targetBoundingBox) {
+    if (!m_filter || m_targetBoundingBox != targetBoundingBox || m_preferredFilterRenderingModes != preferredFilterRenderingModes) {
         m_targetBoundingBox = targetBoundingBox;
         // FIXME: This rebuilds the entire effects chain even if the filter style didn't change.
-        m_filter = CSSFilterRenderer::create(renderer, renderer.style().filter(), m_preferredFilterRenderingModes, m_filterScale, m_targetBoundingBox, context);
+        m_filter = CSSFilterRenderer::create(renderer, renderer.style().filter(), {
+            .referenceBox = m_targetBoundingBox, // FIXME: It's wrong for the dirty rect to feed into the reference box: webkit.org/b/279290.
+            .filterRegion = m_targetBoundingBox,
+            .scale = m_filterScale,
+        }, preferredFilterRenderingModes, context);
     }
 
     if (!m_filter)
@@ -186,8 +206,9 @@ GraphicsContext* RenderLayerFilters::beginFilterEffect(RenderElement& renderer, 
 
     // For CSSFilterRenderer, sourceImageRect = filterRegion.
     bool hasUpdatedBackingStore = false;
-    if (m_filterRegion != filterRegion) {
+    if (m_filterRegion != filterRegion || m_preferredFilterRenderingModes != preferredFilterRenderingModes) {
         m_filterRegion = filterRegion;
+        m_preferredFilterRenderingModes = preferredFilterRenderingModes;
         hasUpdatedBackingStore = true;
     }
 

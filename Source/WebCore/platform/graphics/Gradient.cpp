@@ -31,9 +31,12 @@
 #include <wtf/HashFunctions.h>
 #include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Gradient);
 
 Ref<Gradient> Gradient::create(Data&& data, ColorInterpolationMethod colorInterpolationMethod, GradientSpreadMethod spreadMethod, GradientColorStops&& stops, bool isTransient)
 {
@@ -51,8 +54,8 @@ Gradient::Gradient(Data&& data, ColorInterpolationMethod colorInterpolationMetho
 
 Gradient::~Gradient()
 {
-    for (auto& observer : m_observers)
-        observer.willDestroyGradient(*this);
+    for (CheckedRef observer : m_observers)
+        observer->willDestroyGradient(*this);
 }
 
 void Gradient::adjustParametersForTiledDrawing(FloatSize& size, FloatRect& srcRect, const FloatSize& spacing)

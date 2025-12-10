@@ -76,6 +76,10 @@
 #include "IPCTester.h"
 #endif
 
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+#include <wtf/LazyUniqueRef.h>
+#endif
+
 namespace WTF {
 enum class Critical : bool;
 enum class Synchronous : bool;
@@ -107,6 +111,7 @@ class RemoteRenderingBackend;
 class RemoteSampleBufferDisplayLayerManager;
 class RemoteSharedResourceCache;
 class UserMediaCaptureManagerProxy;
+class VideoReceiverEndpointManager;
 struct GPUProcessConnectionParameters;
 struct MediaOverridesForTesting;
 struct RemoteAudioSessionConfiguration;
@@ -116,6 +121,7 @@ class RemoteWCLayerTreeHost;
 #endif
 
 #if ENABLE(VIDEO)
+class RemoteAudioVideoRendererProxyManager;
 class RemoteMediaPlayerManagerProxy;
 class RemoteMediaResourceManager;
 class RemoteVideoFrameObjectHeap;
@@ -128,13 +134,14 @@ class RemoteGraphicsContextGL;
 class GPUConnectionToWebProcess
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<GPUConnectionToWebProcess, WTF::DestructionThread::Main>
     , public WebCore::NowPlayingManagerClient
-    , IPC::Connection::Client {
+    , public IPC::Connection::Client {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GPUConnectionToWebProcess);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(GPUConnectionToWebProcess);
 public:
     static Ref<GPUConnectionToWebProcess> create(GPUProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
     virtual ~GPUConnectionToWebProcess();
 
+    // IPC::Connection::Client, WebCore::NowPlayingManagerClient.
     void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
     void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
 
@@ -161,6 +168,8 @@ public:
     Ref<RemoteSharedResourceCache> sharedResourceCache();
 
 #if ENABLE(VIDEO)
+    RemoteAudioVideoRendererProxyManager& remoteAudioVideoRendererProxyManager();
+    Ref<RemoteAudioVideoRendererProxyManager> protectedRemoteAudioVideoRendererProxyManager();
     RemoteMediaResourceManager& remoteMediaResourceManager();
     Ref<RemoteMediaResourceManager> protectedRemoteMediaResourceManager();
 #endif
@@ -218,6 +227,9 @@ public:
     RemoteMediaPlayerManagerProxy& remoteMediaPlayerManagerProxy() { return m_remoteMediaPlayerManagerProxy.get(); }
     Ref<RemoteMediaPlayerManagerProxy> protectedRemoteMediaPlayerManagerProxy();
 #endif
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    VideoReceiverEndpointManager& videoReceiverEndpointManager();
+#endif
 #if USE(AUDIO_SESSION)
     RemoteAudioSessionProxyManager& audioSessionManager();
 #endif
@@ -263,6 +275,10 @@ public:
 #if ENABLE(EXTENSION_CAPABILITIES)
     String mediaEnvironment(WebCore::PageIdentifier);
     void setMediaEnvironment(WebCore::PageIdentifier, const String&);
+#endif
+
+#if ENABLE(IPC_TESTING_API)
+    void takeInvalidMessageStringForTesting(CompletionHandler<void(String&&)>&&);
 #endif
 
     bool isAlwaysOnLoggingAllowed() const;
@@ -373,8 +389,12 @@ private:
 #endif
     RefPtr<RemoteSharedResourceCache> m_sharedResourceCache;
 #if ENABLE(VIDEO)
+    const std::unique_ptr<RemoteAudioVideoRendererProxyManager> m_remoteAudioVideoRendererProxyManager;
     RefPtr<RemoteMediaResourceManager> m_remoteMediaResourceManager WTF_GUARDED_BY_CAPABILITY(mainThread);
     Ref<RemoteMediaPlayerManagerProxy> m_remoteMediaPlayerManagerProxy;
+#endif
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    const LazyUniqueRef<GPUConnectionToWebProcess, VideoReceiverEndpointManager> m_videoReceiverEndpointManager;
 #endif
     PAL::SessionID m_sessionID;
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
@@ -453,7 +473,7 @@ private:
 #endif
 
 #if ENABLE(ROUTING_ARBITRATION) && HAVE(AVAUDIO_ROUTING_ARBITER)
-    std::unique_ptr<LocalAudioSessionRoutingArbitrator> m_routingArbitrator;
+    const std::unique_ptr<LocalAudioSessionRoutingArbitrator> m_routingArbitrator;
 #endif
 #if ENABLE(IPC_TESTING_API)
     const Ref<IPCTester> m_ipcTester;

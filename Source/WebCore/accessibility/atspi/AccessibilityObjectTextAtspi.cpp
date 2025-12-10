@@ -787,31 +787,31 @@ AccessibilityObjectAtspi::TextAttributes AccessibilityObjectAtspi::textAttribute
         addAttributeIfNeeded("family-name"_s, style.fontCascade().firstFamily());
         addAttributeIfNeeded("size"_s, makeString(std::round(style.computedFontSize() * 72 / WebCore::fontDPI()), "pt"_s));
         addAttributeIfNeeded("weight"_s, makeString(static_cast<float>(style.fontCascade().weight())));
-        addAttributeIfNeeded("style"_s, style.fontCascade().italic() ? "italic"_s : "normal"_s);
+        addAttributeIfNeeded("style"_s, style.fontCascade().fontStyleSlope() ? "italic"_s : "normal"_s);
         addAttributeIfNeeded("strikethrough"_s, style.textDecorationLine().hasLineThrough() ? "true"_s : "false"_s);
         addAttributeIfNeeded("underline"_s, style.textDecorationLine().hasUnderline() ? "single"_s : "none"_s);
         addAttributeIfNeeded("invisible"_s, style.visibility() == Visibility::Hidden ? "true"_s : "false"_s);
         addAttributeIfNeeded("editable"_s, m_coreObject->canSetValueAttribute() ? "true"_s : "false"_s);
         addAttributeIfNeeded("direction"_s, style.writingMode().isBidiLTR() ? "ltr"_s : "rtl"_s);
-        addAttributeIfNeeded("indent"_s, makeString(Style::evaluate(style.textIndent().length, m_coreObject->size().width(), 1.0f /* FIXME FIND ZOOM */)));
+        addAttributeIfNeeded("indent"_s, makeString(Style::evaluate<float>(style.textIndent().length, m_coreObject->size().width(), style.usedZoomForLength())));
 
         switch (style.textAlign()) {
-        case TextAlignMode::Start:
-        case TextAlignMode::End:
+        case Style::TextAlign::Start:
+        case Style::TextAlign::End:
             break;
-        case TextAlignMode::Left:
-        case TextAlignMode::WebKitLeft:
+        case Style::TextAlign::Left:
+        case Style::TextAlign::WebKitLeft:
             addAttributeIfNeeded("justification"_s, "left"_s);
             break;
-        case TextAlignMode::Right:
-        case TextAlignMode::WebKitRight:
+        case Style::TextAlign::Right:
+        case Style::TextAlign::WebKitRight:
             addAttributeIfNeeded("justification"_s, "right"_s);
             break;
-        case TextAlignMode::Center:
-        case TextAlignMode::WebKitCenter:
+        case Style::TextAlign::Center:
+        case Style::TextAlign::WebKitCenter:
             addAttributeIfNeeded("justification"_s, "center"_s);
             break;
-        case TextAlignMode::Justify:
+        case Style::TextAlign::Justify:
             addAttributeIfNeeded("justification"_s, "fill"_s);
             break;
         }

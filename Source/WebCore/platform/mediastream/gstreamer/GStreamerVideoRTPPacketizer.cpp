@@ -49,7 +49,7 @@ RefPtr<GStreamerVideoRTPPacketizer> GStreamerVideoRTPPacketizer::create(RefPtr<U
     GST_DEBUG("Creating packetizer for codec: %" GST_PTR_FORMAT " and encoding parameters %" GST_PTR_FORMAT, codecParameters.get(), encodingParameters.get());
     String encoding;
     if (auto encodingName = gstStructureGetString(codecParameters.get(), "encoding-name"_s))
-        encoding = encodingName.convertToASCIILowercase();
+        encoding = String(encodingName.span()).convertToASCIILowercase();
     else {
         GST_ERROR("encoding-name not found");
         return nullptr;
@@ -77,7 +77,7 @@ RefPtr<GStreamerVideoRTPPacketizer> GStreamerVideoRTPPacketizer::create(RefPtr<U
         VPCodecConfigurationRecord record;
         record.codecName = "vp09"_s;
         if (auto vp9Profile = gstStructureGetString(codecParameters.get(), "profile-id"_s)) {
-            if (auto profile = parseInteger<uint8_t>(vp9Profile))
+            if (auto profile = parseInteger<uint8_t>(vp9Profile.span()))
                 record.profile = *profile;
         }
         codec = createVPCodecParametersString(record);
@@ -87,7 +87,7 @@ RefPtr<GStreamerVideoRTPPacketizer> GStreamerVideoRTPPacketizer::create(RefPtr<U
 
         auto profileLevelID = gstStructureGetString(codecParameters.get(), "profile-level-id"_s);
         if (!profileLevelID.isEmpty()) {
-            codec = makeString("avc1."_s, profileLevelID);
+            codec = makeString("avc1."_s, profileLevelID.span());
             gst_structure_remove_field(codecParameters.get(), "profile-level-id");
         } else {
             auto profileValue = gstStructureGetString(codecParameters.get(), "profile"_s);
@@ -134,7 +134,7 @@ RefPtr<GStreamerVideoRTPPacketizer> GStreamerVideoRTPPacketizer::create(RefPtr<U
         payloadType = gstStructureGet<int>(encodingParameters.get(), "payload"_s);
 
     GRefPtr<GstElement> encoder = gst_element_factory_make("webkitvideoencoder", nullptr);
-    if (!videoEncoderSetCodec(WEBKIT_VIDEO_ENCODER(encoder.get()), WTFMove(codec), { })) {
+    if (!videoEncoderSetCodec(WEBKIT_VIDEO_ENCODER(encoder.get()), { WTFMove(codec), false }, { })) {
         GST_ERROR("Unable to set encoder format");
         return nullptr;
     }

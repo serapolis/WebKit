@@ -197,22 +197,22 @@ const Vector<CaptureDevice>& GStreamerCaptureDeviceManager::speakerDevices()
 std::optional<GStreamerCaptureDevice> GStreamerCaptureDeviceManager::captureDeviceFromGstDevice(GRefPtr<GstDevice>&& device)
 {
     GUniquePtr<GstStructure> properties(gst_device_get_properties(device.get()));
-    auto deviceClassString = gstStructureGetString(properties.get(), "device.class"_s);
-    if (deviceClassString == "monitor"_s)
+    auto deviceClassFromProperties = gstStructureGetString(properties.get(), "device.class"_s);
+    if (deviceClassFromProperties == "monitor"_s)
         return { };
 
     auto types = deviceTypes();
-    GUniquePtr<char> deviceClassChar(gst_device_get_device_class(device.get()));
-    auto deviceClass = String::fromLatin1(deviceClassChar.get());
+    GUniquePtr<char> classFromDeviceChar(gst_device_get_device_class(device.get()));
+    auto classFromDevice = CStringView::unsafeFromUTF8(classFromDeviceChar.get());
     CaptureDevice::DeviceType type;
-    if (deviceClass.startsWith("Audio"_s)) {
-        if (types.contains(CaptureDevice::DeviceType::Microphone) && deviceClass.endsWith("Source"_s))
+    if (startsWith(classFromDevice.span(), "Audio"_s)) {
+        if (types.contains(CaptureDevice::DeviceType::Microphone) && endsWith(classFromDevice.span(), "Source"_s))
             type = CaptureDevice::DeviceType::Microphone;
-        else if (types.contains(CaptureDevice::DeviceType::Speaker) && deviceClass.endsWith("Sink"_s))
+        else if (types.contains(CaptureDevice::DeviceType::Speaker) && endsWith(classFromDevice.span(), "Sink"_s))
             type = CaptureDevice::DeviceType::Speaker;
         else
             return { };
-    } else if (types.contains(CaptureDevice::DeviceType::Camera) && deviceClass.startsWith("Video"_s))
+    } else if (types.contains(CaptureDevice::DeviceType::Camera) && startsWith(classFromDevice.span(), "Video"_s))
         type = CaptureDevice::DeviceType::Camera;
     else
         return { };
@@ -224,11 +224,15 @@ std::optional<GStreamerCaptureDevice> GStreamerCaptureDeviceManager::captureDevi
     auto label = makeString(isDefault ? "default: "_s : ""_s, deviceName.span());
 
     auto nodeName = gstStructureGetString(properties.get(), "node.name"_s);
-    auto identifier = makeString(nodeName.isEmpty() ? deviceName.span() : nodeName);
+    String identifier;
+    if (nodeName.isEmpty())
+        identifier = makeString(deviceName.span(), ", "_s, classFromDevice.span(), ", "_s, deviceClassFromProperties.span());
+    else
+        identifier = makeString(nodeName.span(), ", "_s, classFromDevice.span(), ", "_s, deviceClassFromProperties.span());
 
     bool isMock = false;
     if (auto persistentId = gstStructureGetString(properties.get(), "persistent-id"_s)) {
-        identifier = makeString(persistentId);
+        identifier = persistentId.span();
         isMock = true;
     }
 

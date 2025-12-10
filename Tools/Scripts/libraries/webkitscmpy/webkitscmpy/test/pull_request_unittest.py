@@ -70,6 +70,38 @@ Reviewed by Tim Contributor.
 </pre>''',
         )
 
+    def test_create_body_commit_identifiers(self):
+        self.assertEqual(
+            PullRequest.create_body(None, [Commit(
+                hash='11aa76f9fc380e9fe06157154f32b304e8dc4749',
+                message='[scoping] Bug to fix\nCherry-picked from 301069@main.\nAlso related to 297297.521@safari-7622-branch.\n\nReviewed by Tim Contributor.\n',
+            )]), '''#### 11aa76f9fc380e9fe06157154f32b304e8dc4749
+<pre>
+[scoping] Bug to fix
+Cherry-picked from <a href="https://commits.webkit.org/301069@main">301069@main</a>.
+Also related to <a href="https://commits.webkit.org/297297.521@safari-7622-branch">297297.521@safari-7622-branch</a>.
+
+Reviewed by Tim Contributor.
+</pre>''',
+        )
+
+    def test_create_body_commit_identifiers_in_urls(self):
+        self.assertEqual(
+            PullRequest.create_body(None, [Commit(
+                hash='11aa76f9fc380e9fe06157154f32b304e8dc4749',
+                message='[scoping] Bug to fix\n291838@main did not fix the issue.\n\nReviewed by Tim Contributor.\n\n    Canonical link: https://commits.webkit.org/296933@main\nCanonical link: https://commits.webkit.org/289651.600@safari-7621-branch\n',
+            )]), '''#### 11aa76f9fc380e9fe06157154f32b304e8dc4749
+<pre>
+[scoping] Bug to fix
+<a href="https://commits.webkit.org/291838@main">291838@main</a> did not fix the issue.
+
+Reviewed by Tim Contributor.
+
+    Canonical link: <a href="https://commits.webkit.org/296933@main">https://commits.webkit.org/296933@main</a>
+Canonical link: <a href="https://commits.webkit.org/289651.600@safari-7621-branch">https://commits.webkit.org/289651.600@safari-7621-branch</a>
+</pre>''',
+        )
+
     def test_create_body_single_no_link(self):
         self.assertEqual(
             PullRequest.create_body(None, [Commit(
@@ -534,6 +566,42 @@ No pre-PR checks to run""")
                 "Updating pull-request for 'eng/pr-branch'...",
             ],
         )
+
+    def test_github_update_no_update_title(self):
+        """Test that --no-update-title preserves the original PR title"""
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            pr = local.Git(self.path).remote().pull_requests.get(1)
+            original_title = pr.title
+            self.assertEqual(original_title, '[Testing] Creating commits')
+
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(
+                    0,
+                    program.main(
+                        args=('pull-request', '-v', '--no-history', '--no-update-title'),
+                        path=self.path,
+                    ),
+                )
+
+            pr = local.Git(self.path).remote().pull_requests.get(1)
+            self.assertEqual(pr.title, original_title)  # Should not be "[Testing] Amending commits"
+            self.assertEqual(
+                captured.stdout.getvalue(),
+                "Updated 'PR 1 | [Testing] Creating commits'!\n"
+                "https://github.example.com/WebKit/WebKit/pull/1\n",
+            )
 
     def test_github_sticky_remote(self):
         with mocks.remote.GitHub(remote='github.example.com/WebKit/WebKit-security') as remote, mocks.local.Git(

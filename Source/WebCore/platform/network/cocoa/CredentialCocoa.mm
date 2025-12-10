@@ -67,9 +67,9 @@ Credential::Credential(const Credential& original, CredentialPersistence persist
         return;
 
     if (RetainPtr<NSString> user = originalNSURLCredential.get().user)
-        m_nsCredential = adoptNS([[NSURLCredential alloc] initWithUser:user.get() password:originalNSURLCredential.get().password persistence:toNSURLCredentialPersistence(persistence)]);
+        m_nsCredential = adoptNS([[NSURLCredential alloc] initWithUser:user.get() password:retainPtr(originalNSURLCredential.get().password).get() persistence:toNSURLCredentialPersistence(persistence)]);
     else if (RetainPtr<SecIdentityRef> identity = originalNSURLCredential.get().identity)
-        m_nsCredential = adoptNS([[NSURLCredential alloc] initWithIdentity:identity.get() certificates:originalNSURLCredential.get().certificates persistence:toNSURLCredentialPersistence(persistence)]);
+        m_nsCredential = adoptNS([[NSURLCredential alloc] initWithIdentity:identity.get() certificates:retainPtr(originalNSURLCredential.get().certificates).get() persistence:toNSURLCredentialPersistence(persistence)]);
     else {
         // It is not possible to set the persistence of server trust credentials.
         ASSERT_NOT_REACHED();
@@ -96,6 +96,11 @@ NSURLCredential *Credential::nsCredential() const
     return m_nsCredential.get();
 }
 
+RetainPtr<NSURLCredential> Credential::protectedNSCredential() const
+{
+    return nsCredential();
+}
+
 bool Credential::isEmpty() const
 {
     if (m_nsCredential)
@@ -104,12 +109,17 @@ bool Credential::isEmpty() const
     return CredentialBase::isEmpty();
 }
 
+bool Credential::encodingRequiresPlatformData() const
+{
+    return m_nsCredential && encodingRequiresPlatformData(RetainPtr { m_nsCredential }.get());
+}
+
 bool Credential::platformCompare(const Credential& a, const Credential& b)
 {
     if (!a.m_nsCredential && !b.m_nsCredential)
         return true;
 
-    return [a.nsCredential() isEqual:b.nsCredential()];
+    return [a.protectedNSCredential() isEqual:b.protectedNSCredential().get()];
 }
 
 bool Credential::encodingRequiresPlatformData(NSURLCredential *credential)

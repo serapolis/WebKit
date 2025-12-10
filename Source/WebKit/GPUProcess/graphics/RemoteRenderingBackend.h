@@ -31,6 +31,7 @@
 #include "Connection.h"
 #include "IPCEvent.h"
 #include "ImageBufferBackendHandle.h"
+#include "ImageBufferSetIdentifier.h"
 #include "MarkSurfacesAsVolatileRequestIdentifier.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
@@ -38,11 +39,12 @@
 #include "RemoteDisplayListRecorderIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextIdentifier.h"
-#include "RemoteImageBufferSetIdentifier.h"
 #include "RemoteRenderingBackendIdentifier.h"
 #include "RemoteResourceCache.h"
 #include "RemoteSerializedImageBufferIdentifier.h"
 #include "RemoteSharedResourceCache.h"
+#include "RemoteSnapshotIdentifier.h"
+#include "RemoteSnapshotRecorderIdentifier.h"
 #include "RenderingUpdateID.h"
 #include "ScopedActiveMessageReceiveQueue.h"
 #include "ScopedRenderingResourcesRequest.h"
@@ -51,6 +53,7 @@
 #include "StreamMessageReceiver.h"
 #include "StreamServerConnection.h"
 #include <WebCore/Font.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/PixelFormat.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/RenderingResourceIdentifier.h>
@@ -87,6 +90,7 @@ class GPUConnectionToWebProcess;
 class RemoteDisplayListRecorder;
 class RemoteImageBuffer;
 class RemoteImageBufferSet;
+class RemoteSnapshotRecorder;
 struct BufferIdentifierSet;
 struct ImageBufferSetPrepareBufferForDisplayInputData;
 struct ImageBufferSetPrepareBufferForDisplayOutputData;
@@ -153,11 +157,10 @@ private:
     void createDisplayListRecorder(RemoteDisplayListRecorderIdentifier);
     void sinkDisplayListRecorderIntoDisplayList(RemoteDisplayListRecorderIdentifier, RemoteDisplayListIdentifier);
     void releaseDisplayList(RemoteDisplayListIdentifier);
-#if PLATFORM(COCOA)
-    void didDrawRemoteToPDF(WebCore::PageIdentifier, WebCore::RenderingResourceIdentifier, WebCore::SnapshotIdentifier);
-#endif
     void destroyGetPixelBufferSharedMemory();
+    void nativeImageBitmap(WebCore::RenderingResourceIdentifier imageIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>)>&&);
     void cacheNativeImage(WebCore::ShareableBitmap::Handle&&, WebCore::RenderingResourceIdentifier);
+    void cacheNativeImageFromSharedNativeImage(WebCore::RenderingResourceIdentifier);
     void releaseNativeImage(WebCore::RenderingResourceIdentifier);
     void cacheGradient(Ref<WebCore::Gradient>&&, RemoteGradientIdentifier);
     void releaseGradient(RemoteGradientIdentifier);
@@ -168,11 +171,10 @@ private:
     void cacheFontCustomPlatformData(WebCore::FontCustomPlatformSerializedData&&);
     void releaseFontCustomPlatformData(WebCore::RenderingResourceIdentifier);
     void releaseMemory();
-    void releaseNativeImages();
     void finalizeRenderingUpdate(RenderingUpdateID);
-    void markSurfacesVolatile(MarkSurfacesAsVolatileRequestIdentifier, const Vector<std::pair<RemoteImageBufferSetIdentifier, OptionSet<BufferInSetType>>>&, bool forcePurge);
-    void createImageBufferSet(WebKit::RemoteImageBufferSetIdentifier, RemoteGraphicsContextIdentifier);
-    void releaseImageBufferSet(WebKit::RemoteImageBufferSetIdentifier);
+    void markSurfacesVolatile(MarkSurfacesAsVolatileRequestIdentifier, const Vector<std::pair<ImageBufferSetIdentifier, OptionSet<BufferInSetType>>>&, bool forcePurge);
+    void createImageBufferSet(WebKit::ImageBufferSetIdentifier, RemoteGraphicsContextIdentifier);
+    void releaseImageBufferSet(WebKit::ImageBufferSetIdentifier);
 
 #if USE(GRAPHICS_LAYER_WC)
     void flush(IPC::Semaphore&&);
@@ -181,16 +183,18 @@ private:
 #if PLATFORM(COCOA)
     void prepareImageBufferSetsForDisplay(Vector<ImageBufferSetPrepareBufferForDisplayInputData> swapBuffersInput);
     void prepareImageBufferSetsForDisplaySync(Vector<ImageBufferSetPrepareBufferForDisplayInputData> swapBuffersInput, CompletionHandler<void(Vector<SwapBuffersDisplayRequirement>&&)>&&);
-
 #endif
 
-    void createRemoteBarcodeDetector(ShapeDetectionIdentifier, const WebCore::ShapeDetection::BarcodeDetectorOptions&);
-    void releaseRemoteBarcodeDetector(ShapeDetectionIdentifier);
-    void getRemoteBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<WebCore::ShapeDetection::BarcodeFormat>&&)>&&);
-    void createRemoteFaceDetector(ShapeDetectionIdentifier, const WebCore::ShapeDetection::FaceDetectorOptions&);
-    void releaseRemoteFaceDetector(ShapeDetectionIdentifier);
-    void createRemoteTextDetector(ShapeDetectionIdentifier);
-    void releaseRemoteTextDetector(ShapeDetectionIdentifier);
+    void createSnapshotRecorder(RemoteSnapshotRecorderIdentifier, RemoteSnapshotIdentifier);
+    void sinkSnapshotRecorderIntoSnapshotFrame(RemoteSnapshotRecorderIdentifier, WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
+
+    void createBarcodeDetector(ShapeDetectionIdentifier, const WebCore::ShapeDetection::BarcodeDetectorOptions&);
+    void releaseBarcodeDetector(ShapeDetectionIdentifier);
+    void supportedBarcodeDetectorBarcodeFormats(CompletionHandler<void(Vector<WebCore::ShapeDetection::BarcodeFormat>&&)>&&);
+    void createFaceDetector(ShapeDetectionIdentifier, const WebCore::ShapeDetection::FaceDetectorOptions&);
+    void releaseFaceDetector(ShapeDetectionIdentifier);
+    void createTextDetector(ShapeDetectionIdentifier);
+    void releaseTextDetector(ShapeDetectionIdentifier);
 
     bool shouldUseLockdownFontParser() const;
 
@@ -206,9 +210,11 @@ private:
     RefPtr<WebCore::SharedMemory> m_getPixelBufferSharedMemory;
 
     HashMap<WebCore::RenderingResourceIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteImageBuffer>> m_remoteImageBuffers WTF_GUARDED_BY_CAPABILITY(workQueue());
-    HashMap<RemoteImageBufferSetIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferSet>> m_remoteImageBufferSets WTF_GUARDED_BY_CAPABILITY(workQueue());
+
+    HashMap<ImageBufferSetIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferSet>> m_remoteImageBufferSets WTF_GUARDED_BY_CAPABILITY(workQueue());
     const Ref<ShapeDetection::ObjectHeap> m_shapeDetectionObjectHeap;
     HashMap<RemoteDisplayListRecorderIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteDisplayListRecorder>> m_remoteDisplayListRecorders WTF_GUARDED_BY_CAPABILITY(workQueue());
+    HashMap<RemoteSnapshotRecorderIdentifier, IPC::ScopedActiveMessageReceiveQueue<RemoteSnapshotRecorder>> m_remoteSnapshotRecorders WTF_GUARDED_BY_CAPABILITY(workQueue());
 };
 
 bool isSmallLayerBacking(const WebCore::ImageBufferParameters&);

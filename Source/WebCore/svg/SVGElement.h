@@ -70,7 +70,13 @@ public:
     bool isOutermostSVGSVGElement() const;
 
     SVGSVGElement* ownerSVGElement() const;
-    SVGElement* viewportElement() const;
+
+    enum class ViewportElementType : uint8_t {
+        Any, // Returns first SVGSVGElement, SVGImageElement, or symbol
+        SVGSVGOnly // Returns only SVGSVGElement
+    };
+
+    SVGElement* viewportElement(ViewportElementType = ViewportElementType::Any) const;
 
     String title() const override;
     virtual bool supportsMarkers() const { return false; }
@@ -85,6 +91,7 @@ public:
     void clearHasPendingResources() { setEventTargetFlag(EventTargetFlag::HasPendingResources, false); }
     virtual void buildPendingResource() { }
 
+    virtual bool isSVGAnimationElement() const { return false; }
     virtual bool isSVGTextPositioningElement() const { return false; }
     virtual bool isSVGGraphicsElement() const { return false; }
     virtual bool isSVGGeometryElement() const { return false; }
@@ -125,7 +132,7 @@ public:
 
 
     SVGElement* correspondingElement() const;
-    RefPtr<SVGUseElement> correspondingUseElement() const;
+    SVGUseElement* correspondingUseElement() const;
 
     void setCorrespondingElement(SVGElement*);
 

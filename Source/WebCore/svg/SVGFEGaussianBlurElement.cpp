@@ -22,8 +22,8 @@
 #include "config.h"
 #include "SVGFEGaussianBlurElement.h"
 
-#include "DocumentInlines.h"
 #include "FEGaussianBlur.h"
+#include "NodeDocument.h"
 #include "NodeName.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGFilterRenderer.h"
@@ -42,12 +42,13 @@ inline SVGFEGaussianBlurElement::SVGFEGaussianBlurElement(const QualifiedName& t
 {
     ASSERT(hasTagName(SVGNames::feGaussianBlurTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFEGaussianBlurElement::m_in1>();
         PropertyRegistry::registerProperty<SVGNames::stdDeviationAttr, &SVGFEGaussianBlurElement::m_stdDeviationX, &SVGFEGaussianBlurElement::m_stdDeviationY>();
         PropertyRegistry::registerProperty<SVGNames::edgeModeAttr, EdgeModeType, &SVGFEGaussianBlurElement::m_edgeMode>();
-    });
+    }
 }
 
 Ref<SVGFEGaussianBlurElement> SVGFEGaussianBlurElement::create(const QualifiedName& tagName, Document& document)
@@ -75,7 +76,7 @@ void SVGFEGaussianBlurElement::attributeChanged(const QualifiedName& name, const
         Ref { m_in1 }->setBaseValInternal(newValue);
         break;
     case AttributeNames::edgeModeAttr: {
-        auto propertyValue = SVGPropertyTraits<EdgeModeType>::fromString(newValue);
+        auto propertyValue = SVGPropertyTraits<EdgeModeType>::fromString(*this, newValue);
         if (propertyValue != EdgeModeType::Unknown)
             Ref { m_edgeMode }->setBaseValInternal<EdgeModeType>(propertyValue);
         else

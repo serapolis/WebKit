@@ -26,6 +26,7 @@
 #include "config.h"
 #include "TableFormattingState.h"
 
+#include "LayoutBoxInlines.h"
 #include "RenderStyleInlines.h"
 #include "RenderObject.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
@@ -42,8 +43,8 @@ static UniqueRef<TableGrid> ensureTableGrid(const ElementBox& tableBox)
     auto tableGrid = makeUniqueRef<TableGrid>();
     auto& tableStyle = tableBox.style();
     auto shouldApplyBorderSpacing = tableStyle.borderCollapse() == BorderCollapse::Separate;
-    tableGrid->setHorizontalSpacing(LayoutUnit { shouldApplyBorderSpacing ? Style::evaluate(tableStyle.borderHorizontalSpacing(), 1.0f /* FIXME FIND ZOOM */) : 0 });
-    tableGrid->setVerticalSpacing(LayoutUnit { shouldApplyBorderSpacing ? Style::evaluate(tableStyle.borderVerticalSpacing(), 1.0f /* FIXME FIND ZOOM */) : 0 });
+    tableGrid->setHorizontalSpacing(LayoutUnit { shouldApplyBorderSpacing ? tableStyle.borderHorizontalSpacing().resolveZoom(tableStyle.usedZoomForLength()) : 0 });
+    tableGrid->setVerticalSpacing(LayoutUnit { shouldApplyBorderSpacing ? tableStyle.borderVerticalSpacing().resolveZoom(tableStyle.usedZoomForLength()) : 0 });
 
     auto* firstChild = tableBox.firstChild();
     if (!firstChild) {

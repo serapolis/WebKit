@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,7 +42,9 @@
 #import <WebCore/Color.h>
 #import <WebCore/LayerHostingContextIdentifier.h>
 #import <WebCore/Model.h>
+#import <WebCore/ModelPlayerGraphicsLayerConfiguration.h>
 #import <WebCore/ResourceError.h>
+#import <WebCore/WebActionDisablingCALayerDelegate.h>
 #import <WebKitAdditions/REModel.h>
 #import <WebKitAdditions/REModelLoader.h>
 #import <WebKitAdditions/REPtr.h>
@@ -348,6 +351,7 @@ void ModelProcessModelPlayerProxy::createLayer()
     [m_layer setValue:@YES forKeyPath:@"separatedOptions.updates.material"];
     [m_layer setValue:@YES forKeyPath:@"separatedOptions.updates.texture"];
 
+    [m_layer setDelegate:[WebActionDisablingCALayerDelegate shared]];
     [m_layer setPlayer:WeakPtr { this }];
 
     LayerHostingContextOptions contextOptions;
@@ -429,7 +433,7 @@ static void computeScaledExtentsAndCenter(simd_float2 boundsOfLayerInMeters, sim
     }
 }
 
-static RESRT computeSRT(CALayer *layer, simd_float3 originalBoundingBoxExtents, simd_float3 originalBoundingBoxCenter, float boundingRadius, bool isPortal, CGFloat pointsPerMeter, WebCore::StageModeOperation operation, simd_quatf currentModelRotation)
+static RESRT computeSRT(CALayer *layer, simd_float3 originalBoundingBoxExtents, simd_float3 originalBoundingBoxCenter, float boundingRadius, bool isPortal, CGFloat pointsPerMeter, WebCore::StageModeOperation operation, simd_quatf currentModelRotation, bool useRealWorldTransform)
 {
     auto boundsOfLayerInMeters = makeMeterSizeFromPointSize(layer.bounds.size, pointsPerMeter);
     simd_float3 boundingBoxExtents = originalBoundingBoxExtents;
@@ -437,7 +441,11 @@ static RESRT computeSRT(CALayer *layer, simd_float3 originalBoundingBoxExtents, 
     computeScaledExtentsAndCenter(boundsOfLayerInMeters, boundingBoxExtents, boundingBoxCenter);
 
     RESRT srt;
-    if (operation == WebCore::StageModeOperation::None) {
+    if (useRealWorldTransform) {
+        srt.scale = simd_make_float3(1.0f, 1.0f, 1.0f);
+        srt.rotation = currentModelRotation;
+        srt.translation = simd_make_float3(0.0f, 0.0, 0.0f);
+    } else if (operation == WebCore::StageModeOperation::None) {
         simd_float3 scale = simd_make_float3(boundingBoxExtents.x / originalBoundingBoxExtents.x, boundingBoxExtents.y / originalBoundingBoxExtents.y, boundingBoxExtents.z / originalBoundingBoxExtents.z);
         if (std::isnan(scale.x) || std::isnan(scale.y) || std::isnan(scale.z))
             scale = simd_make_float3(0.0f, 0.0f, 0.0f);
@@ -514,7 +522,11 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
     // FIXME: Use the value of the 'object-fit' property here to compute an appropriate SRT.
     float boundingRadius = [m_modelRKEntity boundingRadius];
     simd_quatf currentModelRotation = setDefaultRotation ? simd_quaternion(0, simd_make_float3(1, 0, 0)) : m_transformSRT.rotation;
-    RESRT newSRT = computeSRT(m_layer.get(), m_originalBoundingBoxExtents, m_originalBoundingBoxCenter, boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), m_stageModeOperation, currentModelRotation);
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    RESRT newSRT = computeSRT(m_layer.get(), m_originalBoundingBoxExtents, m_originalBoundingBoxCenter, boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), m_stageModeOperation, currentModelRotation, m_immersivePresentation);
+#else
+    RESRT newSRT = computeSRT(m_layer.get(), m_originalBoundingBoxExtents, m_originalBoundingBoxCenter, boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), m_stageModeOperation, currentModelRotation, false);
+#endif
     m_transformSRT = newSRT;
 
     notifyModelPlayerOfEntityTransformChange();
@@ -651,7 +663,12 @@ void ModelProcessModelPlayerProxy::didFinishLoading(WebCore::REModelLoader& load
         m_animationStateToRestore = std::nullopt;
     }
 
-    applyEnvironmentMapDataAndRelease();
+    applyEnvironmentMapDataAndRelease([weakThis = WeakPtr { *this }] () mutable {
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    if (RefPtr protectedThis = weakThis.get())
+        protectedThis->triggerModelLoadedCallbacks(true);
+#endif
+    });
 
     send(Messages::ModelProcessModelPlayer::DidFinishLoading(WebCore::FloatPoint3D(m_originalBoundingBoxCenter.x, m_originalBoundingBoxCenter.y, m_originalBoundingBoxCenter.z), WebCore::FloatPoint3D(m_originalBoundingBoxExtents.x, m_originalBoundingBoxExtents.y, m_originalBoundingBoxExtents.z)));
 }
@@ -664,6 +681,10 @@ void ModelProcessModelPlayerProxy::didFailLoading(WebCore::REModelLoader& loader
     m_loader = nullptr;
 
     RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy failed to load model id=%" PRIu64 " error=\"%@\"", this, m_id.toUInt64(), error.nsError().localizedDescription);
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    triggerModelLoadedCallbacks(false);
+#endif
 
     send(Messages::ModelProcessModelPlayer::DidFailLoading());
 }
@@ -691,6 +712,14 @@ void ModelProcessModelPlayerProxy::load(WebCore::Model& model, WebCore::LayoutSi
 void ModelProcessModelPlayerProxy::sizeDidChange(WebCore::LayoutSize layoutSize)
 {
     RELEASE_LOG_INFO(ModelElement, "%p - ModelProcessModelPlayerProxy::sizeDidChange w=%lf h=%lf id=%" PRIu64, this, layoutSize.width().toDouble(), layoutSize.height().toDouble(), m_id.toUInt64());
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    m_layoutSize = layoutSize;
+
+    if (m_immersivePresentation)
+        return;
+#endif
+
     auto width = layoutSize.width().toDouble();
     auto height = layoutSize.height().toDouble();
     if (!m_transformNeedsUpdateAfterNextLayout && m_stageModeOperation != WebCore::StageModeOperation::None && m_modelRKEntity && m_layer)
@@ -698,9 +727,8 @@ void ModelProcessModelPlayerProxy::sizeDidChange(WebCore::LayoutSize layoutSize)
     [m_layer setFrame:CGRectMake(0, 0, width, height)];
 }
 
-PlatformLayer* ModelProcessModelPlayerProxy::layer()
+void ModelProcessModelPlayerProxy::configureGraphicsLayer(WebCore::GraphicsLayer&, WebCore::ModelPlayerGraphicsLayerConfiguration&&)
 {
-    return nullptr;
 }
 
 std::optional<WebCore::LayerHostingContextIdentifier> ModelProcessModelPlayerProxy::layerHostingContextIdentifier()
@@ -805,7 +833,7 @@ void ModelProcessModelPlayerProxy::setIsMuted(bool isMuted, CompletionHandler<vo
     completionHandler(false);
 }
 
-Vector<RetainPtr<id>> ModelProcessModelPlayerProxy::accessibilityChildren()
+WebCore::ModelPlayerAccessibilityChildren ModelProcessModelPlayerProxy::accessibilityChildren()
 {
     return { };
 }
@@ -859,7 +887,7 @@ void ModelProcessModelPlayerProxy::setEnvironmentMap(Ref<WebCore::SharedBuffer>&
 {
     m_transientEnvironmentMapData = WTFMove(data);
     if (m_modelRKEntity)
-        applyEnvironmentMapDataAndRelease();
+        applyEnvironmentMapDataAndRelease([] { });
 }
 
 void ModelProcessModelPlayerProxy::beginStageModeTransform(const WebCore::TransformationMatrix& transform)
@@ -904,24 +932,24 @@ void ModelProcessModelPlayerProxy::animateModelToFitPortal(CompletionHandler<voi
 #if HAVE(MODEL_MEMORY_ATTRIBUTION)
 static void setIBLAssetOwnership(const String& attributionTaskID, REAssetRef iblAsset)
 {
-    const char* attributionIDString = attributionTaskID.utf8().data();
+    auto attributionIDString = attributionTaskID.utf8();
 
     if (REPtr<REAssetRef> skyboxTexture = REIBLAssetGetSkyboxTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing skyboxTexture to task ID: %s", attributionIDString);
-        REAssetSetMemoryAttributionTarget(skyboxTexture.get(), attributionIDString);
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing skyboxTexture to task ID: %s", attributionIDString.data());
+        REAssetSetMemoryAttributionTarget(skyboxTexture.get(), attributionIDString.data());
     }
     if (REPtr<REAssetRef> diffuseTexture = REIBLAssetGetDiffuseTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing diffuseTexture to task ID: %s", attributionIDString);
-        REAssetSetMemoryAttributionTarget(diffuseTexture.get(), attributionIDString);
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing diffuseTexture to task ID: %s", attributionIDString.data());
+        REAssetSetMemoryAttributionTarget(diffuseTexture.get(), attributionIDString.data());
     }
     if (REPtr<REAssetRef> specularTexture = REIBLAssetGetSpecularTexture(iblAsset)) {
-        RELEASE_LOG_DEBUG(ModelElement, "Attributing specularTexture to task ID: %s", attributionIDString);
-        REAssetSetMemoryAttributionTarget(specularTexture.get(), attributionIDString);
+        RELEASE_LOG_DEBUG(ModelElement, "Attributing specularTexture to task ID: %s", attributionIDString.data());
+        REAssetSetMemoryAttributionTarget(specularTexture.get(), attributionIDString.data());
     }
 }
 #endif
 
-void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease()
+void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease(CompletionHandler<void()>&& completion)
 {
     if (m_transientEnvironmentMapData) {
         if (m_transientEnvironmentMapData->size() > 0) {
@@ -933,7 +961,8 @@ void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease()
 #if HAVE(MODEL_MEMORY_ATTRIBUTION)
                 setIBLAssetOwnership(*(protectedThis->m_attributionTaskID), coreEnvironmentResourceAsset);
 #endif
-            }).get() withCompletion:makeBlockPtr([weakThis = WeakPtr { *this }] (BOOL succeeded) {
+            }).get() withCompletion:makeBlockPtr([weakThis = WeakPtr { *this }, completion = WTFMove(completion)] (BOOL succeeded) mutable {
+                completion();
                 RefPtr protectedThis = weakThis.get();
                 if (!protectedThis)
                     return;
@@ -945,11 +974,14 @@ void ModelProcessModelPlayerProxy::applyEnvironmentMapDataAndRelease()
             }).get()];
         } else {
             applyDefaultIBL();
+            completion();
             send(Messages::ModelProcessModelPlayer::DidFinishEnvironmentMapLoading(true));
         }
         m_transientEnvironmentMapData = nullptr;
-    } else
+    } else {
         applyDefaultIBL();
+        completion();
+    }
 }
 
 void ModelProcessModelPlayerProxy::setHasPortal(bool hasPortal)
@@ -1015,6 +1047,64 @@ void ModelProcessModelPlayerProxy::applyDefaultIBL()
 {
     [m_modelRKEntity applyDefaultIBL];
 }
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+
+void ModelProcessModelPlayerProxy::ensureImmersivePresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&& completion)
+{
+    setImmersivePresentation(true);
+    ensureModelLoaded([weakThis = WeakPtr { *this }, completion = WTFMove(completion)] (bool loaded) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return completion(std::nullopt);
+
+        if (loaded)
+            completion(protectedThis->layerHostingContextIdentifier().value());
+        else {
+            protectedThis->setImmersivePresentation(false);
+            completion(std::nullopt);
+        }
+    });
+}
+
+void ModelProcessModelPlayerProxy::exitImmersivePresentation(CompletionHandler<void()>&& completion)
+{
+    setImmersivePresentation(false);
+    completion();
+}
+
+void ModelProcessModelPlayerProxy::setImmersivePresentation(bool immersivePresentation)
+{
+    if (immersivePresentation)
+        [m_layer setFrame:CGRectMake(0, 0, 0, 0)];
+    else {
+        auto width = m_layoutSize.width().toDouble();
+        auto height = m_layoutSize.height().toDouble();
+        [m_layer setFrame:CGRectMake(0, 0, width, height)];
+    }
+
+    m_immersivePresentation = immersivePresentation;
+    computeTransform(false);
+    updateTransform();
+}
+
+void ModelProcessModelPlayerProxy::ensureModelLoaded(CompletionHandler<void(bool)>&& completion)
+{
+    if (m_modelRKEntity) {
+        completion(true);
+        return;
+    }
+
+    m_modelLoadedCallbacks.append(WTFMove(completion));
+}
+
+void ModelProcessModelPlayerProxy::triggerModelLoadedCallbacks(bool result)
+{
+    for (auto& callback : std::exchange(m_modelLoadedCallbacks, { }))
+        callback(result);
+}
+
+#endif
 
 } // namespace WebKit
 

@@ -32,6 +32,7 @@
 #include "StyleFilterData.h"
 #include "StyleFlexibleBoxData.h"
 #include "StyleMultiColData.h"
+#include "StylePrimitiveKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include "StyleTransformData.h"
 #include "StyleVisitedLinkColorData.h"
@@ -55,12 +56,12 @@ StyleMiscNonInheritedData::StyleMiscNonInheritedData()
     , content(RenderStyle::initialContent())
     , boxShadow(RenderStyle::initialBoxShadow())
     , aspectRatio(RenderStyle::initialAspectRatio())
-    , alignContent(RenderStyle::initialContentAlignment())
-    , justifyContent(RenderStyle::initialContentAlignment())
-    , alignItems(RenderStyle::initialDefaultAlignment())
-    , alignSelf(RenderStyle::initialSelfAlignment())
+    , alignContent(RenderStyle::initialAlignContent())
+    , alignItems(RenderStyle::initialAlignItems())
+    , alignSelf(RenderStyle::initialAlignSelf())
+    , justifyContent(RenderStyle::initialJustifyContent())
     , justifyItems(RenderStyle::initialJustifyItems())
-    , justifySelf(RenderStyle::initialSelfAlignment())
+    , justifySelf(RenderStyle::initialJustifySelf())
     , objectPosition(RenderStyle::initialObjectPosition())
     , order(RenderStyle::initialOrder())
     , tableLayout(static_cast<unsigned>(RenderStyle::initialTableLayout()))
@@ -89,9 +90,9 @@ StyleMiscNonInheritedData::StyleMiscNonInheritedData(const StyleMiscNonInherited
     , boxShadow(o.boxShadow)
     , aspectRatio(o.aspectRatio)
     , alignContent(o.alignContent)
-    , justifyContent(o.justifyContent)
     , alignItems(o.alignItems)
     , alignSelf(o.alignSelf)
+    , justifyContent(o.justifyContent)
     , justifyItems(o.justifyItems)
     , justifySelf(o.justifySelf)
     , objectPosition(o.objectPosition)
@@ -136,9 +137,9 @@ bool StyleMiscNonInheritedData::operator==(const StyleMiscNonInheritedData& o) c
         && boxShadow == o.boxShadow
         && aspectRatio == o.aspectRatio
         && alignContent == o.alignContent
-        && justifyContent == o.justifyContent
         && alignItems == o.alignItems
         && alignSelf == o.alignSelf
+        && justifyContent == o.justifyContent
         && justifyItems == o.justifyItems
         && justifySelf == o.justifySelf
         && objectPosition == o.objectPosition
@@ -188,9 +189,9 @@ void StyleMiscNonInheritedData::dumpDifferences(TextStream& ts, const StyleMiscN
 
     LOG_IF_DIFFERENT(aspectRatio);
     LOG_IF_DIFFERENT(alignContent);
-    LOG_IF_DIFFERENT(justifyContent);
     LOG_IF_DIFFERENT(alignItems);
     LOG_IF_DIFFERENT(alignSelf);
+    LOG_IF_DIFFERENT(justifyContent);
     LOG_IF_DIFFERENT(justifyItems);
     LOG_IF_DIFFERENT(justifySelf);
     LOG_IF_DIFFERENT(objectPosition);
@@ -214,7 +215,7 @@ void StyleMiscNonInheritedData::dumpDifferences(TextStream& ts, const StyleMiscN
 
     LOG_IF_DIFFERENT_WITH_CAST(UserDrag, objectFit);
     LOG_IF_DIFFERENT_WITH_CAST(ObjectFit, textOverflow);
-    LOG_IF_DIFFERENT_WITH_CAST(Resize, resize);
+    LOG_IF_DIFFERENT_WITH_CAST(Style::Resize, resize);
 }
 #endif // !LOG_DISABLED
 

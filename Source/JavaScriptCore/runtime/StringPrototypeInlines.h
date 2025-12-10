@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "CachedCall.h"
+#include "CachedCallInlines.h"
 #include "ExceptionHelpers.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructor.h"
@@ -68,7 +68,9 @@ ALWAYS_INLINE std::tuple<int32_t, int32_t> extractSliceOffsets(int32_t length, i
     return { from, to };
 }
 
-template<typename NumberType>
+template<typename T> concept Arithmetic = std::is_arithmetic_v<T>;
+
+template<Arithmetic NumberType>
 ALWAYS_INLINE JSString* stringSlice(JSGlobalObject* globalObject, VM& vm, JSString* string, int32_t length, NumberType start, std::optional<NumberType> endValue)
 {
     if constexpr (std::is_same_v<NumberType, int32_t>) {
@@ -91,10 +93,8 @@ ALWAYS_INLINE JSString* stringSlice(JSGlobalObject* globalObject, VM& vm, JSStri
 
 ALWAYS_INLINE std::tuple<int32_t, int32_t> extractSubstringOffsets(int32_t length, int32_t startValue, std::optional<int32_t> endValue)
 {
-    int32_t start = std::min<int32_t>(std::max<int32_t>(startValue, 0), length);
-    int32_t end = length;
-    if (endValue)
-        end = std::min<int32_t>(std::max<int32_t>(endValue.value(), 0), length);
+    int32_t start = std::clamp(startValue, 0, length);
+    int32_t end = std::clamp(endValue.value_or(length), 0, length);
 
     ASSERT(start >= 0);
     ASSERT(end >= 0);
@@ -397,7 +397,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         replaceString = asString(replaceValue)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
-        callData = JSC::getCallData(replaceValue);
+        callData = JSC::getCallDataInline(replaceValue);
         if (callData.type == CallData::Type::None) {
             replaceString = replaceValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -812,11 +812,6 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             totalLength += (sourceLen - lastIndex);
     }
 
-    if (totalLength > StringImpl::MaxLength) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-
     StringView sourceView { source };
     if (sourceView.is8Bit() && replacementsAre8Bit) {
         std::span<Latin1Character> buffer;
@@ -955,11 +950,6 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
             }
             if (static_cast<unsigned>(lastIndex) < sourceLen)
                 totalLength += (sourceLen - lastIndex);
-        }
-
-        if (totalLength > StringImpl::MaxLength) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
         }
 
         StringView sourceView { source };
@@ -1117,6 +1107,7 @@ static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObjec
     case Yarr::SpecificPattern::TrailingSpacesStar:
     case Yarr::SpecificPattern::LeadingSpacesStar:
     case Yarr::SpecificPattern::Atom:
+    case Yarr::SpecificPattern::Newlines:
     case Yarr::SpecificPattern::None:
         break;
     }
@@ -1300,6 +1291,7 @@ ALWAYS_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalO
             break;
         }
         case Yarr::SpecificPattern::Atom:
+        case Yarr::SpecificPattern::Newlines:
         case Yarr::SpecificPattern::None:
             break;
         }
@@ -1514,7 +1506,7 @@ ALWAYS_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String replacementString;
-    auto callData = JSC::getCallData(replaceValue);
+    auto callData = JSC::getCallDataInline(replaceValue);
     if (callData.type == CallData::Type::None) {
         replacementString = replaceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);

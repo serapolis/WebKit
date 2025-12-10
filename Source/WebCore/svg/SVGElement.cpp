@@ -45,6 +45,7 @@
 #include "NodeName.h"
 #include "RenderAncestorIterator.h"
 #include "RenderSVGResourceContainer.h"
+#include "RenderStyleInlines.h"
 #include "ResolvedStyle.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElementRareData.h"
@@ -56,7 +57,6 @@
 #include "SVGParsingError.h"
 #include "SVGPropertyAnimatorFactory.h"
 #include "SVGPropertyOwnerRegistry.h"
-#include "SVGRenderStyle.h"
 #include "SVGRenderSupport.h"
 #include "SVGResourceElementClient.h"
 #include "SVGSVGElement.h"
@@ -85,10 +85,11 @@ SVGElement::SVGElement(const QualifiedName& tagName, Document& document, UniqueR
     , m_propertyRegistry(WTFMove(propertyRegistry))
     , m_className(SVGAnimatedString::create(this))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<HTMLNames::classAttr, &SVGElement::m_className>();
-    });
+    }
 }
 
 SVGElement::~SVGElement()
@@ -229,14 +230,17 @@ SVGSVGElement* SVGElement::ownerSVGElement() const
     return nullptr;
 }
 
-SVGElement* SVGElement::viewportElement() const
+SVGElement* SVGElement::viewportElement(ViewportElementType type) const
 {
     // This function needs shadow tree support - as RenderSVGContainer uses this function
-    // to determine the "overflow" property. <use> on <symbol> wouldn't work otherwhise.
+    // to determine the "overflow" property. <use> on <symbol> wouldn't work otherwise.
     auto* node = parentNode();
     while (node) {
-        if (is<SVGSVGElement>(*node) || is<SVGImageElement>(*node) || node->hasTagName(SVGNames::symbolTag))
-            return downcast<SVGElement>(node);
+        if (is<SVGSVGElement>(*node) || is<SVGImageElement>(*node))
+            return dynamicDowncast<SVGElement>(node);
+
+        if (type == ViewportElementType::Any && node->hasTagName(SVGNames::symbolTag))
+            return dynamicDowncast<SVGElement>(node);
 
         node = node->parentOrShadowHostNode();
     }
@@ -319,7 +323,7 @@ SVGElement* SVGElement::correspondingElement() const
     return m_svgRareData ? m_svgRareData->correspondingElement() : nullptr;
 }
 
-RefPtr<SVGUseElement> SVGElement::correspondingUseElement() const
+SVGUseElement* SVGElement::correspondingUseElement() const
 {
     SUPPRESS_UNCOUNTED_LOCAL auto* root = containingShadowRoot();
     if (!root)
@@ -695,7 +699,7 @@ const RenderStyle* SVGElement::computedStyle(const std::optional<Style::PseudoEl
 ColorInterpolation SVGElement::colorInterpolation() const
 {
     if (auto renderer = this->renderer())
-        return renderer->style().svgStyle().colorInterpolationFilters();
+        return renderer->style().colorInterpolationFilters();
 
     // Try to determine the property value from the computed style.
     if (auto value = Style::Extractor(const_cast<SVGElement*>(this)).propertyValue(CSSPropertyColorInterpolationFilters, Style::Extractor::UpdateLayout::No))

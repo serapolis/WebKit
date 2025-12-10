@@ -317,7 +317,7 @@ TestHarness = class TestHarness extends WI.Object
             return "(unknown)";
 
         let lastPathSeparator = Math.max(url.lastIndexOf("/"), url.lastIndexOf("\\"));
-        let location = lastPathSeparator > 0 ? url.substr(lastPathSeparator + 1) : url;
+        let location = lastPathSeparator > 0 ? url.substring(lastPathSeparator + 1) : url;
         if (!location.length)
             location = "(unknown)";
 
@@ -336,7 +336,7 @@ TestHarness = class TestHarness extends WI.Object
         let frameName = nameAndURLSeparator > 0 ? frame.substr(0, nameAndURLSeparator) : "(anonymous)";
 
         let lastPathSeparator = Math.max(frame.lastIndexOf("/"), frame.lastIndexOf("\\"));
-        let frameLocation = lastPathSeparator > 0 ? frame.substr(lastPathSeparator + 1) : frame;
+        let frameLocation = lastPathSeparator > 0 ? frame.substring(lastPathSeparator + 1) : frame;
         if (!frameLocation.length)
             frameLocation = "unknown";
 

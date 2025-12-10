@@ -109,6 +109,7 @@ class BackForwardController;
 class BadgeClient;
 class BroadcastChannelRegistry;
 class CacheStorageProvider;
+class CaptionDisplaySettingsClient;
 class Chrome;
 class CompositeEditCommand;
 class ContextMenuController;
@@ -131,6 +132,7 @@ class Element;
 class FocusController;
 class FormData;
 class Frame;
+class GraphicsContext;
 class HTMLElement;
 class HTMLImageElement;
 class HTMLMediaElement;
@@ -140,7 +142,6 @@ class OpportunisticTaskScheduler;
 class ImageAnalysisQueue;
 class ImageOverlayController;
 class InspectorBackendClient;
-class InspectorController;
 class IntSize;
 class KeyboardScrollingAnimator;
 class LayoutRect;
@@ -155,6 +156,7 @@ class ModelPlayerProvider;
 class PageConfiguration;
 class PageDebuggable;
 class PageGroup;
+class PageInspectorController;
 class PageOverlayController;
 class PaymentCoordinator;
 class PerformanceLogging;
@@ -164,7 +166,7 @@ class PluginData;
 class PluginInfoProvider;
 class PointerCaptureController;
 class PointerLockController;
-class ProcessSyncClient;
+class DocumentSyncClient;
 class ProgressTracker;
 class RTCController;
 class RenderObject;
@@ -227,9 +229,10 @@ struct ApplePayAMSUIRequest;
 struct AttributedString;
 struct CharacterRange;
 struct ClientOrigin;
+struct DocumentSyncSerializationData;
 struct FixedContainerEdges;
 struct NavigationAPIMethodTracker;
-struct ProcessSyncData;
+struct ResolvedCaptionDisplaySettingsOptions;
 struct SpatialBackdropSource;
 struct SystemPreviewInfo;
 struct TextRecognitionResult;
@@ -242,7 +245,6 @@ using SharedStringHash = uint32_t;
 enum class ActivityState : uint16_t;
 enum class AdvancedPrivacyProtections : uint16_t;
 enum class BoxSide : uint8_t;
-enum class BoxSideFlag : uint8_t;
 enum class CanWrap : bool;
 enum class ContentSecurityPolicyModeForExtension : uint8_t;
 enum class DidWrap : bool;
@@ -254,7 +256,7 @@ enum class FilterRenderingMode : uint8_t;
 enum class LayoutMilestone : uint16_t;
 enum class LoginStatusAuthenticationType : uint8_t;
 enum class PlatformMediaSessionPlaybackControlsPurpose : uint8_t;
-enum class MediaPlaybackTargetContextMockState : uint8_t;
+enum class MediaPlaybackTargetMockState : uint8_t;
 enum class MediaProducerMediaState : uint32_t;
 enum class MediaProducerMediaCaptureKind : uint8_t;
 enum class MediaProducerMutedState : uint8_t;
@@ -286,37 +288,42 @@ enum class FinalizeRenderingUpdateFlags : uint8_t {
 };
 
 enum class RenderingUpdateStep : uint32_t {
-    Reveal                          = 1 << 0,
-    Resize                          = 1 << 1,
-    Scroll                          = 1 << 2,
-    MediaQueryEvaluation            = 1 << 3,
-    Animations                      = 1 << 4,
-    Fullscreen                      = 1 << 5,
-    AnimationFrameCallbacks         = 1 << 6,
-    UpdateContentRelevancy          = 1 << 7,
-    PerformPendingViewTransitions   = 1 << 8,
-    IntersectionObservations        = 1 << 9,
-    ResizeObservations              = 1 << 10,
-    Images                          = 1 << 11,
-    WheelEventMonitorCallbacks      = 1 << 12,
-    CursorUpdate                    = 1 << 13,
-    EventRegionUpdate               = 1 << 14,
-    LayerFlush                      = 1 << 15,
+    Reveal                              = 1 << 0,
+    Resize                              = 1 << 1,
+    Scroll                              = 1 << 2,
+    MediaQueryEvaluation                = 1 << 3,
+    Animations                          = 1 << 4,
+    Fullscreen                          = 1 << 5,
+    AnimationFrameCallbacks             = 1 << 6,
+    UpdateContentRelevancy              = 1 << 7,
+    PerformPendingViewTransitions       = 1 << 8,
+    IntersectionObservations            = 1 << 9,
+    ResizeObservations                  = 1 << 10,
+    PaintTiming                         = 1 << 11,
+    EventTiming                         = 1 << 12,
+    Images                              = 1 << 13,
+    WheelEventMonitorCallbacks          = 1 << 14,
+    CursorUpdate                        = 1 << 15,
+    EventRegionUpdate                   = 1 << 16,
+    LayerFlush                          = 1 << 17,
 #if ENABLE(ASYNC_SCROLLING)
-    ScrollingTreeUpdate             = 1 << 16,
+    ScrollingTreeUpdate                 = 1 << 18,
 #endif
-    FlushAutofocusCandidates        = 1 << 17,
-    VideoFrameCallbacks             = 1 << 18,
-    PrepareCanvasesForDisplayOrFlush = 1 << 19,
-    CaretAnimation                  = 1 << 20,
-    FocusFixup                      = 1 << 21,
-    UpdateValidationMessagePositions= 1 << 22,
+    FlushAutofocusCandidates            = 1 << 19,
+    VideoFrameCallbacks                 = 1 << 20,
+    PrepareCanvasesForDisplayOrFlush    = 1 << 21,
+    CaretAnimation                      = 1 << 22,
+    FocusFixup                          = 1 << 23,
+    UpdateValidationMessagePositions    = 1 << 25,
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    AccessibilityRegionUpdate       = 1 << 23,
+    AccessibilityRegionUpdate           = 1 << 26,
 #endif
-    RestoreScrollPositionAndViewState = 1 << 24,
-    AdjustVisibility                  = 1 << 25,
-    SnapshottedScrollOffsets          = 1 << 26,
+    RestoreScrollPositionAndViewState   = 1 << 27,
+    AdjustVisibility                    = 1 << 28,
+    SnapshottedScrollOffsets            = 1 << 29,
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    Immersive                           = 1 << 30,
+#endif
 
 };
 
@@ -341,6 +348,8 @@ constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
     RenderingUpdateStep::AnimationFrameCallbacks,
     RenderingUpdateStep::IntersectionObservations,
     RenderingUpdateStep::ResizeObservations,
+    RenderingUpdateStep::PaintTiming,
+    RenderingUpdateStep::EventTiming,
     RenderingUpdateStep::Images,
     RenderingUpdateStep::WheelEventMonitorCallbacks,
     RenderingUpdateStep::CursorUpdate,
@@ -410,18 +419,16 @@ public:
 
     EditorClient& editorClient() { return m_editorClient.get(); }
 
-    WEBCORE_EXPORT RefPtr<LocalFrame> localMainFrame();
-    WEBCORE_EXPORT RefPtr<const LocalFrame> localMainFrame() const;
-    WEBCORE_EXPORT RefPtr<Document> localTopDocument();
-    WEBCORE_EXPORT RefPtr<Document> localTopDocument() const;
+    WEBCORE_EXPORT LocalFrame* localMainFrame() const;
+    WEBCORE_EXPORT Document* localTopDocument() const;
 
-    Frame& mainFrame() { return m_mainFrame.get(); }
-    const Frame& mainFrame() const { return m_mainFrame.get(); }
+    Frame& mainFrame() const { return m_mainFrame.get(); }
     WEBCORE_EXPORT Ref<Frame> protectedMainFrame() const;
     WEBCORE_EXPORT void setMainFrame(Ref<Frame>&&);
     WEBCORE_EXPORT const URL& mainFrameURL() const;
     SecurityOrigin& mainFrameOrigin() const;
     Ref<SecurityOrigin> protectedMainFrameOrigin() const;
+    WEBCORE_EXPORT RefPtr<Frame> findFrameByPath(const Vector<size_t>& path) const;
 
     WEBCORE_EXPORT void setMainFrameURLAndOrigin(const URL&, RefPtr<SecurityOrigin>&&);
 #if ENABLE(DOM_AUDIO_SESSION)
@@ -437,7 +444,7 @@ public:
     bool hasInjectedUserScript();
     WEBCORE_EXPORT void setHasInjectedUserScript();
 
-    WEBCORE_EXPORT void updateProcessSyncData(const ProcessSyncData&);
+    WEBCORE_EXPORT void updateTopDocumentSyncData(const DocumentSyncSerializationData&);
     WEBCORE_EXPORT void updateTopDocumentSyncData(Ref<DocumentSyncData>&&);
 
     WEBCORE_EXPORT void setMainFrameURLFragment(String&&);
@@ -459,6 +466,7 @@ public:
     WEBCORE_EXPORT const String& groupName() const;
 
     WEBCORE_EXPORT PageGroup& group();
+    WEBCORE_EXPORT CheckedRef<PageGroup> checkedGroup();
 
     BroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
     WEBCORE_EXPORT Ref<BroadcastChannelRegistry> protectedBroadcastChannelRegistry() const;
@@ -489,8 +497,8 @@ public:
     const Chrome& chrome() const { return m_chrome.get(); }
     CryptoClient& cryptoClient() { return m_cryptoClient.get(); }
     const CryptoClient& cryptoClient() const { return m_cryptoClient.get(); }
-    ProcessSyncClient& processSyncClient() { return m_processSyncClient.get(); }
-    const ProcessSyncClient& processSyncClient() const { return m_processSyncClient.get(); }
+    DocumentSyncClient& documentSyncClient() { return m_documentSyncClient.get(); }
+    const DocumentSyncClient& documentSyncClient() const { return m_documentSyncClient.get(); }
     DragCaretController& dragCaretController() { return m_dragCaretController.get(); }
     const DragCaretController& dragCaretController() const { return m_dragCaretController.get(); }
 #if ENABLE(DRAG_SUPPORT)
@@ -502,8 +510,8 @@ public:
     ContextMenuController& contextMenuController() { return m_contextMenuController.get(); }
     const ContextMenuController& contextMenuController() const { return m_contextMenuController.get(); }
 #endif
-    InspectorController& inspectorController() { return m_inspectorController.get(); }
-    WEBCORE_EXPORT Ref<InspectorController> protectedInspectorController();
+    PageInspectorController& inspectorController() { return m_inspectorController.get(); }
+    WEBCORE_EXPORT Ref<PageInspectorController> protectedInspectorController();
     PointerCaptureController& pointerCaptureController() { return m_pointerCaptureController.get(); }
 #if ENABLE(POINTER_LOCK)
     PointerLockController& pointerLockController() { return m_pointerLockController.get(); }
@@ -693,7 +701,7 @@ public:
     WEBCORE_EXPORT void recomputeTextAutoSizingInAllFrames();
 #endif
 
-    OptionSet<FilterRenderingMode> preferredFilterRenderingModes() const;
+    OptionSet<FilterRenderingMode> preferredFilterRenderingModes(const GraphicsContext&) const;
 
     const FloatBoxExtent& fullscreenInsets() const { return m_fullscreenInsets; }
     WEBCORE_EXPORT void setFullscreenInsets(const FloatBoxExtent&);
@@ -717,7 +725,7 @@ public:
     WEBCORE_EXPORT void appearanceDidChange();
 
     void clearAXObjectCache();
-    AXObjectCache* existingAXObjectCache() { return m_axObjectCache.get(); }
+    AXObjectCache* existingAXObjectCache();
     WEBCORE_EXPORT AXObjectCache* axObjectCache();
 
     // Page and FrameView both store a Pagination value. Page::pagination() is set only by API,
@@ -745,6 +753,7 @@ public:
     Ref<ServicesOverlayController> protectedServicesOverlayController();
 #endif
     ImageOverlayController& imageOverlayController();
+    Ref<ImageOverlayController> protectedImageOverlayController();
     ImageOverlayController* imageOverlayControllerIfExists() { return m_imageOverlayController.get(); }
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -930,7 +939,7 @@ public:
     WEBCORE_EXPORT Color pageExtendedBackgroundColor() const;
     WEBCORE_EXPORT Color sampledPageTopColor() const;
 
-    WEBCORE_EXPORT void updateFixedContainerEdges(OptionSet<BoxSideFlag>);
+    WEBCORE_EXPORT void updateFixedContainerEdges(EnumSet<BoxSide>);
     const FixedContainerEdges& fixedContainerEdges() const { return m_fixedContainerEdgesAndElements.first; }
     Element* lastFixedContainer(BoxSide) const;
 
@@ -1009,6 +1018,7 @@ public:
     PluginInfoProvider& pluginInfoProvider();
     Ref<PluginInfoProvider> protectedPluginInfoProvider() const;
 
+    UserContentProvider& userContentProviderForFrame() { return m_userContentProvider; }
     WEBCORE_EXPORT Ref<UserContentProvider> protectedUserContentProviderForFrame();
     WEBCORE_EXPORT void setUserContentProviderForWebKitLegacy(Ref<UserContentProvider>&&);
 
@@ -1043,6 +1053,11 @@ public:
     WEBCORE_EXPORT void voiceActivityDetected();
 #endif
 
+#if ENABLE(MODEL_PROCESS)
+    void incrementModelElementCount();
+    void decrementModelElementCount(unsigned);
+#endif
+
     std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const;
     WEBCORE_EXPORT bool mediaPlaybackExists();
     WEBCORE_EXPORT bool mediaPlaybackIsPaused();
@@ -1066,7 +1081,7 @@ public:
     void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, const IntPoint&, bool, RouteSharingPolicy, const String&);
     void playbackTargetPickerClientStateDidChange(PlaybackTargetClientContextIdentifier, MediaProducerMediaStateFlags);
     WEBCORE_EXPORT void setMockMediaPlaybackTargetPickerEnabled(bool);
-    WEBCORE_EXPORT void setMockMediaPlaybackTargetPickerState(const String&, MediaPlaybackTargetContextMockState);
+    WEBCORE_EXPORT void setMockMediaPlaybackTargetPickerState(const String&, MediaPlaybackTargetMockState);
     WEBCORE_EXPORT void mockMediaPlaybackTargetPickerDismissPopup();
 
     WEBCORE_EXPORT void setPlaybackTarget(PlaybackTargetClientContextIdentifier, Ref<MediaPlaybackTarget>&&);
@@ -1270,7 +1285,7 @@ public:
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     WEBCORE_EXPORT void setDefaultSpatialTrackingLabel(const String&);
-    const String& defaultSpatialTrackingLabel() const { return m_defaultSpatialTrackingLabel; }
+    String defaultSpatialTrackingLabel() const { return m_defaultSpatialTrackingLabel; }
 #endif
 
 #if ENABLE(GAMEPAD)
@@ -1336,6 +1351,10 @@ public:
     WEBCORE_EXPORT void startDeferringScrollEvents();
     WEBCORE_EXPORT void flushDeferredScrollEvents();
 
+    bool shouldDeferIntersectionObservations() const { return m_shouldDeferIntersectionObservations; }
+    WEBCORE_EXPORT void startDeferringIntersectionObservations();
+    WEBCORE_EXPORT void flushDeferredIntersectionObservations();
+
     bool reportScriptTrackingPrivacy(const URL&, ScriptTrackingPrivacyCategory);
     bool shouldAllowScriptAccess(const URL&, const SecurityOrigin& topOrigin, ScriptTrackingPrivacyCategory) const;
     bool requiresScriptTrackingPrivacyProtections(const URL&) const;
@@ -1376,8 +1395,20 @@ public:
     void updateDisplayEDRSuppression();
 #endif
 
-    void setEnhancedSecurityEnabled(bool enabled) { m_enhancedSecurityEnabled = enabled; };
-    bool enhancedSecurityEnabled() const { return m_enhancedSecurityEnabled; };
+#if PLATFORM(IOS_FAMILY)
+    using HardwareKeyboardAttachmentObserver = Function<void(bool)>;
+    void addHardwareKeyboardAttachmentObserver(HardwareKeyboardAttachmentObserver&&);
+
+    WEBCORE_EXPORT void didUpdateHardwareKeyboardAttachment(bool);
+
+    WEBCORE_EXPORT void clearIsShowingInputView();
+#endif
+
+#if ENABLE(VIDEO)
+    WEBCORE_EXPORT void setCaptionDisplaySettingsClientForTesting(Ref<CaptionDisplaySettingsClient>&&);
+    WEBCORE_EXPORT void clearCaptionDisplaySettingsClientForTesting();
+    void showCaptionDisplaySettings(HTMLMediaElement&, const ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(ExceptionOr<void>)>&&);
+#endif
 
 private:
     explicit Page(PageConfiguration&&);
@@ -1470,7 +1501,7 @@ private:
 #if ENABLE(CONTEXT_MENUS)
     const UniqueRef<ContextMenuController> m_contextMenuController;
 #endif
-    const UniqueRef<InspectorController> m_inspectorController;
+    const UniqueRef<PageInspectorController> m_inspectorController;
     const UniqueRef<PointerCaptureController> m_pointerCaptureController;
 #if ENABLE(POINTER_LOCK)
     const UniqueRef<PointerLockController> m_pointerLockController;
@@ -1481,7 +1512,7 @@ private:
     const RefPtr<Settings> m_settings;
     const UniqueRef<CryptoClient> m_cryptoClient;
     const UniqueRef<ProgressTracker> m_progress;
-    const UniqueRef<ProcessSyncClient> m_processSyncClient;
+    const UniqueRef<DocumentSyncClient> m_documentSyncClient;
 
     const UniqueRef<BackForwardController> m_backForwardController;
     HashSet<WeakRef<LocalFrame>> m_rootFrames;
@@ -1575,7 +1606,6 @@ private:
 #if ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     bool m_prefersNonBlinkingCursor { false };
 #endif
-    std::unique_ptr<AXObjectCache> m_axObjectCache;
 
     TimerThrottlingState m_timerThrottlingState { TimerThrottlingState::Disabled };
     MonotonicTime m_timerThrottlingStateLastChangedTime;
@@ -1645,6 +1675,10 @@ private:
 
 #if ENABLE(VIDEO)
     Timer m_playbackControlsManagerUpdateTimer;
+#endif
+
+#if ENABLE(MODEL_PROCESS)
+    unsigned m_modelElementCount { 0 };
 #endif
 
     bool m_allowsMediaDocumentInlinePlayback { false };
@@ -1827,6 +1861,7 @@ private:
 
     bool m_shouldDeferResizeEvents { false };
     bool m_shouldDeferScrollEvents { false };
+    bool m_shouldDeferIntersectionObservations { false };
 
     Ref<DocumentSyncData> m_topDocumentSyncData;
 
@@ -1848,7 +1883,16 @@ private:
     bool m_modelLoadDelaysDisabledForTesting { false };
 #endif
 
-    bool m_enhancedSecurityEnabled { false };
+    // Checking hardware keyboard attached
+#if PLATFORM(IOS_FAMILY)
+    bool m_hardwareKeyboardAttached { false };
+    Vector<HardwareKeyboardAttachmentObserver> m_hardwareKeyboardAttachmentObservers;
+    void flushHardwareKeyboardAttachmentObservers();
+#endif
+
+#if ENABLE(VIDEO)
+    RefPtr<CaptionDisplaySettingsClient> m_captionDisplaySettingsClientForTesting;
+#endif
 }; // class Page
 
 WTF::TextStream& operator<<(WTF::TextStream&, RenderingUpdateStep);

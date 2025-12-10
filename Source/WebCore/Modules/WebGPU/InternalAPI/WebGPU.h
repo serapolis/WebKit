@@ -36,6 +36,10 @@ namespace WebCore {
 class NativeImage;
 class IntSize;
 class GraphicsContext;
+namespace DDModel {
+class DDMesh;
+struct DDMeshDescriptor;
+}
 }
 
 namespace WebCore::WebGPU {
@@ -79,6 +83,7 @@ public:
     virtual ~GPU() = default;
 
     virtual void requestAdapter(const RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&) = 0;
+    virtual RefPtr<DDModel::DDMesh> createModelBacking(unsigned width, unsigned height, CompletionHandler<void(Vector<MachSendRight>&&)>&&) = 0;
 
     virtual RefPtr<PresentationContext> createPresentationContext(const PresentationContextDescriptor&) = 0;
 
@@ -111,6 +116,8 @@ public:
     virtual bool isValid(const XRSubImage&) const = 0;
     virtual bool isValid(const XRProjectionLayer&) const = 0;
     virtual bool isValid(const XRView&) const = 0;
+
+    virtual bool isRemoteGPUProxy() const { return false; }
 
 protected:
     GPU() = default;

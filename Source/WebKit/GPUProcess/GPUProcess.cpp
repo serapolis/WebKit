@@ -40,6 +40,7 @@
 #include "LogInitialization.h"
 #include "Logging.h"
 #include "RemoteMediaPlayerManagerProxy.h"
+#include "RemoteSnapshot.h"
 #include "SandboxExtension.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcessPoolMessages.h"
@@ -71,7 +72,7 @@
 
 #if PLATFORM(COCOA)
 #include "ArgumentCodersCocoa.h"
-#include <WebCore/CoreAudioSharedUnit.h>
+#include <WebCore/CoreAudioCaptureUnit.h>
 #include <WebCore/UTIUtilities.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #endif
@@ -93,7 +94,7 @@ GPUProcess::GPUProcess()
 {
     RELEASE_LOG(Process, "%p - GPUProcess::GPUProcess:", this);
 #if ASSERT_ENABLED && PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
-    CoreAudioSharedUnit::singleton().allowStarting();
+    CoreAudioCaptureUnit::allowStarting();
 #endif
 }
 
@@ -240,7 +241,7 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters,
     SandboxExtension::consumePermanently(parameters.microphoneSandboxExtensionHandle);
 #endif
 #if PLATFORM(IOS_FAMILY)
-    CoreAudioSharedUnit::singleton().setStatusBarWasTappedCallback([weakProcess = WeakPtr { *this }] (auto completionHandler) {
+CoreAudioCaptureUnit::defaultSingleton().setStatusBarWasTappedCallback([weakProcess = WeakPtr { *this }] (auto completionHandler) {
         if (RefPtr process = weakProcess.get())
             process->parentProcessConnection()->sendWithAsyncReply(Messages::GPUProcessProxy::StatusBarWasTapped(), [] { }, 0);
         completionHandler();
@@ -352,12 +353,70 @@ void GPUProcess::updateSandboxAccess(const Vector<SandboxExtension::Handle>& ext
         SandboxExtension::consumePermanently(extension);
 }
 
-#if PLATFORM(COCOA)
-void GPUProcess::didDrawRemoteToPDF(PageIdentifier pageID, RefPtr<SharedBuffer>&& data, SnapshotIdentifier snapshotIdentifier)
+Ref<RemoteSnapshot> GPUProcess::getOrCreateSnapshot(RemoteSnapshotIdentifier snapshotIdentifier)
 {
-    protectedParentProcessConnection()->send(Messages::GPUProcessProxy::DidDrawRemoteToPDF(pageID, WTFMove(data), snapshotIdentifier), 0);
+    Locker locker(m_globalResourceLocker);
+    auto addResult = m_snapshots.ensure(snapshotIdentifier, [&] {
+        return RemoteSnapshot::create();
+    });
+    return addResult.iterator->value;
 }
+
+#if PLATFORM(COCOA)
+
+void GPUProcess::sinkCompletedSnapshotToPDF(RemoteSnapshotIdentifier identifier, FloatSize size, FrameIdentifier rootFrameIdentifier, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&& completionHandler)
+{
+    RefPtr<RemoteSnapshot> snapshot;
+    {
+        Locker locker(m_globalResourceLocker);
+        snapshot = m_snapshots.take(identifier);
+    }
+    if (!snapshot) {
+        // Currently it's not possible to know if a snapshot exists, hence no ASSERT.
+        completionHandler({ });
+        return;
+    }
+    if (!snapshot->isComplete()) {
+        // Currently the callbacks ensure the completeness.
+        ASSERT_NOT_REACHED();
+        return;
+    }
+    auto result = snapshot->drawToPDF(size, rootFrameIdentifier);
+    if (!result) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+    completionHandler(WTFMove(*result));
+}
+
 #endif
+
+void GPUProcess::sinkCompletedSnapshotToBitmap(RemoteSnapshotIdentifier identifier, const FloatSize& size, FrameIdentifier rootFrameIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
+{
+    RefPtr<RemoteSnapshot> snapshot;
+    {
+        Locker locker(m_globalResourceLocker);
+        snapshot = m_snapshots.take(identifier);
+    }
+    if (!snapshot) {
+        // Currently it's not possible to know if a snapshot exists, hence no ASSERT.
+        completionHandler({ });
+        return;
+    }
+    if (!snapshot->isComplete()) {
+        // Currently the callbacks ensure the completeness.
+        ASSERT_NOT_REACHED();
+        return;
+    }
+    completionHandler(snapshot->drawToBitmap(size, rootFrameIdentifier));
+}
+
+void GPUProcess::releaseSnapshot(RemoteSnapshotIdentifier identifier)
+{
+    // Currently it's not possible to know if a snapshot exists, hence no ASSERT.
+    Locker locker(m_globalResourceLocker);
+    m_snapshots.remove(identifier);
+}
 
 #if ENABLE(MEDIA_STREAM)
 void GPUProcess::setMockCaptureDevicesEnabled(bool isEnabled)
@@ -375,7 +434,7 @@ void GPUProcess::setOrientationForMediaCapture(WebCore::IntDegrees orientation)
 void GPUProcess::enableMicrophoneMuteStatusAPI()
 {
 #if PLATFORM(COCOA)
-    CoreAudioSharedUnit::singleton().setMuteStatusChangedCallback([weakProcess = WeakPtr { *this }] (bool isMuting) {
+    CoreAudioCaptureUnit::defaultSingleton().setMuteStatusChangedCallback([weakProcess = WeakPtr { *this }] (bool isMuting) {
         if (RefPtr process = weakProcess.get())
             process->protectedParentProcessConnection()->send(Messages::GPUProcessProxy::MicrophoneMuteStatusChanged(isMuting), 0);
     });

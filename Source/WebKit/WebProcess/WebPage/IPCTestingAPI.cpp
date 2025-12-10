@@ -68,6 +68,11 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+
+#if ENABLE(IPC_TESTING_SWIFT)
+#include "WebKit-Swift.h"
+#endif
+
 namespace WebKit::IPCTestingAPI {
 
 class JSIPC;
@@ -214,6 +219,7 @@ private:
     JSIPCStreamClientConnection(JSIPC& jsIPC, RefPtr<IPC::StreamClientConnection> connection)
         : m_jsIPC(jsIPC)
         , m_streamConnection { WTFMove(connection) }
+        , m_dummyMessageReceiver { makeUniqueRefWithoutRefCountedCheck<MessageReceiver>(*this) }
     {
     }
 
@@ -263,7 +269,8 @@ private:
 
     private:
         WeakRef<JSIPCStreamClientConnection> m_connection;
-    } m_dummyMessageReceiver { *this };
+    };
+    UniqueRef<MessageReceiver> m_dummyMessageReceiver;
 };
 
 class JSIPCStreamServerConnectionHandle : public RefCounted<JSIPCStreamServerConnectionHandle> {
@@ -407,6 +414,9 @@ private:
         : m_webPage(webPage)
         , m_webFrame(webFrame)
         , m_testerProxy(IPCTesterReceiver::create())
+#if ENABLE(IPC_TESTING_SWIFT)
+        , m_swiftTesterProxy(IPCTesterReceiverSwift::init())
+#endif
     { }
 
     static JSIPC* unwrap(JSObjectRef);
@@ -453,6 +463,9 @@ private:
     WeakPtr<WebFrame> m_webFrame;
     Vector<Ref<JSMessageListener>> m_messageListeners;
     const Ref<IPCTesterReceiver> m_testerProxy;
+#if ENABLE(IPC_TESTING_SWIFT)
+    IPCTesterReceiverSwift m_swiftTesterProxy;
+#endif
     RefPtr<JSIPCConnection> m_uiConnection;
     RefPtr<JSIPCConnection> m_networkConnection;
     RefPtr<JSIPCConnection> m_gpuConnection;
@@ -1029,7 +1042,15 @@ void JSIPCStreamClientConnection::initialize(JSContextRef, JSObjectRef object)
 
 void JSIPCStreamClientConnection::finalize(JSObjectRef object)
 {
-    unwrap(object)->deref();
+    auto* wrapper = unwrap(object);
+
+    // The StreamClientConnection destructor asserts the connection is not valid
+    // when it runs, so we need to invalidate it here if it hasn't already been
+    // done explicitly in the test code.
+    if (wrapper->m_streamConnection)
+        wrapper->m_streamConnection->invalidate();
+
+    wrapper->deref();
 }
 
 const JSStaticFunction* JSIPCStreamClientConnection::staticFunctions()
@@ -1057,7 +1078,7 @@ JSValueRef JSIPCStreamClientConnection::open(JSContextRef context, JSObjectRef, 
         *exception = createTypeError(context, "Wrong type"_s);
         return JSValueMakeUndefined(context);
     }
-    jsIPC->m_streamConnection->open(jsIPC->m_dummyMessageReceiver);
+    jsIPC->m_streamConnection->open(jsIPC->m_dummyMessageReceiver.get());
     return JSValueMakeUndefined(context);
 }
 
@@ -2721,6 +2742,9 @@ JSValueRef JSIPC::addTesterReceiver(JSContextRef context, JSObjectRef, JSObjectR
     }
     // Currently supports only UI process, as there's no uniform way to add message receivers.
     WebProcess::singleton().addMessageReceiver(Messages::IPCTesterReceiver::messageReceiverName(), jsIPC->m_testerProxy.get());
+#if ENABLE(IPC_TESTING_SWIFT)
+    WebProcess::singleton().addMessageReceiver(Messages::IPCTesterReceiverSwift::messageReceiverName(), jsIPC->m_swiftTesterProxy.getMessageReceiver());
+#endif
     return JSValueMakeUndefined(context);
 }
 

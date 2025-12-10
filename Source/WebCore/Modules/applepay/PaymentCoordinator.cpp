@@ -35,7 +35,7 @@
 #include "ApplePayShippingMethod.h"
 #include "ApplePayShippingMethodUpdate.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "ExceptionDetails.h"
 #include "LinkIconCollector.h"
 #include "Logging.h"
@@ -331,5 +331,6 @@ void PaymentCoordinator::endApplePaySetup()
 
 #undef PAYMENT_COORDINATOR_RELEASE_LOG_ERROR
 #undef PAYMENT_COORDINATOR_RELEASE_LOG
+#undef PAYMENT_COORDINATOR_RELEASE_LOG_WITH_THIS
 
 #endif // ENABLE(APPLE_PAY)

@@ -83,7 +83,7 @@ static int fontWeightToFontconfigWeight(FontSelectionValue weight)
 
 bool FontCache::configurePatternForFontDescription(FcPattern* pattern, const FontDescription& fontDescription)
 {
-    if (!FcPatternAddInteger(pattern, FC_SLANT, fontDescription.italic() ? FC_SLANT_ITALIC : FC_SLANT_ROMAN))
+    if (!FcPatternAddInteger(pattern, FC_SLANT, fontDescription.fontStyleSlope() ? FC_SLANT_ITALIC : FC_SLANT_ROMAN))
         return false;
     if (!FcPatternAddInteger(pattern, FC_WEIGHT, fontWeightToFontconfigWeight(fontDescription.weight())))
         return false;
@@ -119,7 +119,7 @@ static void getFontPropertiesFromPattern(FcPattern* pattern, const FontDescripti
     int actualFontSlant;
     bool allowSyntheticOblique = fontDescription.hasAutoFontSynthesisStyle()
         && !options.contains(FontLookupOptions::DisallowObliqueSynthesis);
-    if (allowSyntheticOblique && fontDescription.italic()
+    if (allowSyntheticOblique && fontDescription.fontStyleSlope()
         && FcPatternGetInteger(pattern, FC_SLANT, 0, &actualFontSlant) == FcResultMatch) {
         syntheticOblique = actualFontSlant == FC_SLANT_ROMAN;
     }
@@ -201,21 +201,21 @@ static String getFamilyNameStringFromFamily(const String& family)
     if (family.length() && !family.startsWith("-webkit-"_s))
         return family;
 
-    if (family == familyNamesData->at(FamilyNamesIndex::StandardFamily) || family == familyNamesData->at(FamilyNamesIndex::SerifFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::StandardFamily) || family == *familyNamesData->at(FamilyNamesIndex::SerifFamily))
         return "serif"_s;
-    if (family == familyNamesData->at(FamilyNamesIndex::SansSerifFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::SansSerifFamily))
         return "sans-serif"_s;
-    if (family == familyNamesData->at(FamilyNamesIndex::MonospaceFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::MonospaceFamily))
         return "monospace"_s;
-    if (family == familyNamesData->at(FamilyNamesIndex::CursiveFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::CursiveFamily))
         return "cursive"_s;
-    if (family == familyNamesData->at(FamilyNamesIndex::FantasyFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::FantasyFamily))
         return "fantasy"_s;
-    if (family == familyNamesData->at(FamilyNamesIndex::MathFamily))
+    if (family == *familyNamesData->at(FamilyNamesIndex::MathFamily))
         return "math"_s;
 
 #if PLATFORM(GTK) || (PLATFORM(WPE) && ENABLE(WPE_PLATFORM))
-    if (family == familyNamesData->at(FamilyNamesIndex::SystemUiFamily) || family == "-webkit-system-font"_s)
+    if (family == *familyNamesData->at(FamilyNamesIndex::SystemUiFamily) || family == "-webkit-system-font"_s)
         return SystemSettings::singleton().defaultSystemFont();
 #endif
 

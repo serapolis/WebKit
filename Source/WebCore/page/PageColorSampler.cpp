@@ -30,7 +30,6 @@
 #include "ColorSerialization.h"
 #include "ContentfulPaintChecker.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Element.h"
 #include "FixedContainerEdges.h"
 #include "FrameSnapshotting.h"
@@ -54,7 +53,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderStyleInlines.h"
 #include "Settings.h"
-#include "Styleable.h"
+#include "StylableInlines.h"
 #include "WebAnimation.h"
 #include <ranges>
 #include <wtf/HashCountedSet.h>

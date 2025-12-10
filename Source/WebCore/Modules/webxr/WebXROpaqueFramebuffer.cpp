@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Igalia S.L. All rights reserved.
+ * Copyright (C) 2025 Igalia S.L.
  * Copyright (C) 2021-2024 Apple, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,7 +27,7 @@
 #include "config.h"
 #include "WebXROpaqueFramebuffer.h"
 
-#if ENABLE(WEBXR) && !PLATFORM(COCOA)
+#if ENABLE(WEBXR)
 
 #include "ContextDestructionObserverInlines.h"
 #include "IntSize.h"
@@ -71,8 +71,22 @@ static void createAndBindCompositorBuffer(GL& gl, WebXRExternalRenderbuffer& buf
     LOG(XR, "WebXROpaqueFramebuffer::createAndBindCompositorBuffer(): created and bound external image to renderbuffer");
 }
 
-static GL::ExternalImageSource makeExternalImageSource(PlatformXR::FrameData::ExternalTexture& imageSource, WebCore::IntSize size)
+#if PLATFORM(COCOA)
+static GL::ExternalImageSource makeExternalImageSource(const PlatformXR::FrameData::ExternalTexture& imageSource, const IntSize&)
 {
+    if (imageSource.isSharedTexture)
+        return GraphicsContextGLExternalImageSourceMTLSharedTextureHandle { MachSendRight(imageSource.handle) };
+    return GraphicsContextGLExternalImageSourceIOSurfaceHandle { MachSendRight(imageSource.handle) };
+}
+#else
+static GL::ExternalImageSource makeExternalImageSource(PlatformXR::FrameData::ExternalTexture& imageSource, const IntSize& size)
+{
+#if OS(ANDROID)
+    return GraphicsContextGLExternalImageSource {
+        .hardwareBuffer = RefPtr { imageSource },
+        .size = size,
+    };
+#else
     return GraphicsContextGLExternalImageSource {
         .fds = WTFMove(imageSource.fds),
         .strides = WTFMove(imageSource.strides),
@@ -81,7 +95,9 @@ static GL::ExternalImageSource makeExternalImageSource(PlatformXR::FrameData::Ex
         .modifier = imageSource.modifier,
         .size = size
     };
+#endif // OS(ANDROID)
 }
+#endif
 
 static void createAndBindTempBuffer(GL& gl, WebXRExternalRenderbuffer& buffer, GCGLenum internalFormat, IntSize size)
 {
@@ -126,7 +142,6 @@ WebXROpaqueFramebuffer::~WebXROpaqueFramebuffer()
         m_resolveAttachments.release(*gl);
         m_displayFBO.release(*gl);
         m_resolvedFBO.release(*gl);
-        m_context->deleteFramebuffer(m_drawFramebuffer.ptr());
     } else {
         // The GraphicsContextGL is gone, so disarm the GCGLOwned objects so
         // their destructors don't assert.
@@ -139,7 +154,9 @@ WebXROpaqueFramebuffer::~WebXROpaqueFramebuffer()
 
 void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
 {
+#if USE(OPENXR)
     ASSERT(!m_fenceFD);
+#endif
 
     RefPtr gl = m_context->graphicsContextGL();
     if (!gl)
@@ -158,6 +175,7 @@ void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
     ScopedWebGLRestoreTexture restoreTexture { m_context, textureTarget };
     ScopedWebGLRestoreRenderbuffer restoreRenderBuffer { m_context };
 
+    m_drawFramebuffer->setInsideWebXRRAF(true);
     gl->bindFramebuffer(GL::FRAMEBUFFER, m_drawFramebuffer->object());
     // https://immersive-web.github.io/webxr/#opaque-framebuffer
     // The buffers attached to an opaque framebuffer MUST be cleared to the values in the provided table when first created,
@@ -170,18 +188,21 @@ void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
         // to recreate the framebuffer.
         if (!setupFramebuffer(*gl, *data.layerSetup))
             return;
+
+#if PLATFORM(COCOA)
+        m_completionSyncEvent = MachSendRight(data.layerSetup->completionSyncEvent);
+#endif
     }
+
     bindCompositorTexturesForDisplay(*gl, data);
     auto displayAttachmentSet = reusableDisplayAttachmentsAtIndex(m_currentDisplayAttachmentIndex);
     ASSERT(displayAttachmentSet);
     if (!displayAttachmentSet) {
         RELEASE_LOG_ERROR(XR, "WebXROpaqueFramebuffer::startFrame(): unable to find display attachments at index: %zu", m_currentDisplayAttachmentIndex);
-        LOG(XR, "WebXROpaqueFramebuffer::startFrame(): unable to find display attachments at index: %zu", m_currentDisplayAttachmentIndex);
         return;
     }
     if (!(*displayAttachmentSet)[0].colorBuffer.image) {
         RELEASE_LOG_ERROR(XR, "WebXROpaqueFramebuffer::startFrame(): no color texture at index: %zu", m_currentDisplayAttachmentIndex);
-        LOG(XR, "WebXROpaqueFramebuffer::startFrame(): no color texture at index: %zu", m_currentDisplayAttachmentIndex);
         return;
     }
 
@@ -207,6 +228,8 @@ void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
 
 void WebXROpaqueFramebuffer::endFrame()
 {
+    m_drawFramebuffer->setInsideWebXRRAF(false);
+
     RefPtr gl = m_context->graphicsContextGL();
     if (!gl)
         return;
@@ -217,7 +240,9 @@ void WebXROpaqueFramebuffer::endFrame()
         tracePoint(WebXRLayerEndFrameEnd);
     });
 
+    ScopedDisableScissorTest disableScissorTest { m_context };
     ScopedWebGLRestoreFramebuffer restoreFramebuffer { m_context };
+
     switch (m_displayLayout) {
     case PlatformXR::Layout::Shared:
         blitShared(*gl);
@@ -227,17 +252,33 @@ void WebXROpaqueFramebuffer::endFrame()
         break;
     }
 
+#if PLATFORM(COCOA)
+    if (m_completionSyncEvent) {
+        auto completionSync = gl->createExternalSync(std::tuple(m_completionSyncEvent, m_renderingFrameIndex));
+        ASSERT(completionSync);
+        if (completionSync) {
+            gl->flush();
+            gl->deleteExternalSync(completionSync);
+        }
+        return;
+    }
+#else
     if (auto sync = gl->createExternalSync({ })) {
         m_fenceFD = gl->exportExternalSync(sync);
         gl->deleteExternalSync(sync);
-    } else
-        gl->finish();
+        return;
+    }
+#endif
+
+    gl->finish();
 }
 
+#if USE(OPENXR)
 WTF::UnixFileDescriptor WebXROpaqueFramebuffer::takeFenceFD()
 {
     return std::exchange(m_fenceFD, { });
 }
+#endif
 
 bool WebXROpaqueFramebuffer::usesLayeredMode() const
 {
@@ -253,6 +294,12 @@ void WebXROpaqueFramebuffer::releaseAllDisplayAttachments()
 
 void WebXROpaqueFramebuffer::resolveMSAAFramebuffer(GraphicsContextGL& gl)
 {
+#if PLATFORM(VISION) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+    // End of rendering. Discard the MSAA buffers to avoid writing them back to
+    // memory since we only need the resolved versions.
+    Vector<GCGLenum, 3> discardAttachments = { GL::COLOR_ATTACHMENT0, GL::DEPTH_ATTACHMENT, GL::STENCIL_ATTACHMENT };
+    gl.framebufferDiscard(GL::FRAMEBUFFER, discardAttachments);
+#else
     IntSize size = m_framebufferSize; // Physical Space
     PlatformGLObject readFBO = m_drawFramebuffer->object();
     PlatformGLObject drawFBO = m_resolvedFBO ? m_resolvedFBO : m_displayFBO;
@@ -267,8 +314,8 @@ void WebXROpaqueFramebuffer::resolveMSAAFramebuffer(GraphicsContextGL& gl)
     ASSERT(gl.checkFramebufferStatus(GL::READ_FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE);
     gl.bindFramebuffer(GL::DRAW_FRAMEBUFFER, drawFBO);
     ASSERT(gl.checkFramebufferStatus(GL::DRAW_FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE);
-    ScopedDisableScissorTest disableScissorTest { m_context };
     gl.blitFramebuffer(0, 0, size.width(), size.height(), 0, 0, size.width(), size.height(), buffers, GL::NEAREST);
+#endif
 }
 
 void WebXROpaqueFramebuffer::blitShared(GraphicsContextGL& gl)
@@ -335,7 +382,11 @@ void WebXROpaqueFramebuffer::blitSharedToLayered(GraphicsContextGL& gl)
 
 bool WebXROpaqueFramebuffer::supportsDynamicViewportScaling() const
 {
+#if PLATFORM(VISION)
+    return false;
+#else
     return true;
+#endif
 }
 
 IntSize WebXROpaqueFramebuffer::drawFramebufferSize() const
@@ -358,8 +409,7 @@ IntRect WebXROpaqueFramebuffer::drawViewport(PlatformXR::Eye eye) const
     case PlatformXR::Eye::Right:
         return m_rightViewport;
     }
-    ASSERT_NOT_REACHED();
-    return { };
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static PlatformXR::Layout displayLayout(const PlatformXR::FrameData::LayerSetupData& data)
@@ -423,6 +473,12 @@ bool WebXROpaqueFramebuffer::setupFramebuffer(GraphicsContextGL& gl, const Platf
     if ((!m_resolvedFBO || framebufferResize) && needsIntermediateResolve) {
         allocateAttachments(gl, m_resolveAttachments, 0, m_framebufferSize);
 
+#if PLATFORM(VISION) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+        gl.bindFramebuffer(GL::FRAMEBUFFER, m_drawFramebuffer->object());
+        bindResolveAttachments(gl, m_resolveAttachments);
+        ASSERT(gl.checkFramebufferStatus(GL::FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE);
+#endif
+
         ensure(gl, m_resolvedFBO);
         gl.bindFramebuffer(GL::FRAMEBUFFER, m_resolvedFBO);
         bindAttachments(gl, m_resolveAttachments);
@@ -436,12 +492,12 @@ bool WebXROpaqueFramebuffer::setupFramebuffer(GraphicsContextGL& gl, const Platf
 
 const std::array<WebXRExternalAttachments, 2>* WebXROpaqueFramebuffer::reusableDisplayAttachments(const PlatformXR::FrameData::ExternalTextureData& textureData) const
 {
-    if (!textureData.colorTexture.fds.isEmpty())
+    if (textureData.colorTexture)
         return nullptr;
 
     auto reusableTextureIndex = textureData.reusableTextureIndex;
     if (reusableTextureIndex >= m_displayAttachmentsSets.size() || !m_displayAttachmentsSets[reusableTextureIndex][0]) {
-        RELEASE_LOG_FAULT(XR, "Unable to find reusable texture at index: %lu", reusableTextureIndex);
+        RELEASE_LOG_FAULT(XR, "Unable to find reusable texture at index: %" PRIu64, reusableTextureIndex);
         ASSERT_NOT_REACHED();
         return nullptr;
     }
@@ -471,18 +527,24 @@ void WebXROpaqueFramebuffer::bindCompositorTexturesForDisplay(GraphicsContextGL&
         return;
 
     releaseDisplayAttachmentsAtIndex(m_currentDisplayAttachmentIndex);
+
     for (int layer = 0; layer < layerCount; ++layer) {
-        ASSERT(!layerData.textureData->colorTexture.fds.isEmpty());
-        if (layerData.textureData->colorTexture.fds.isEmpty())
+        ASSERT(layerData.textureData->colorTexture);
+        if (!layerData.textureData->colorTexture)
             return;
 
         auto colorTextureSource = makeExternalImageSource(layerData.textureData->colorTexture, framebufferSize);
-        createAndBindCompositorBuffer(gl, m_displayAttachmentsSets[m_currentDisplayAttachmentIndex][layer].colorBuffer, GL::RGBA8, WTFMove(colorTextureSource), layer);
+#if PLATFORM(COCOA)
+        constexpr auto kColorFormat = GL::BGRA_EXT;
+#else
+        constexpr auto kColorFormat = GL::RGBA8;
+#endif
+        createAndBindCompositorBuffer(gl, m_displayAttachmentsSets[m_currentDisplayAttachmentIndex][layer].colorBuffer, kColorFormat, WTFMove(colorTextureSource), layer);
         ASSERT(m_displayAttachmentsSets[m_currentDisplayAttachmentIndex][layer].colorBuffer.image);
         if (!m_displayAttachmentsSets[m_currentDisplayAttachmentIndex][layer].colorBuffer.image)
             return;
 
-        if (!layerData.textureData->depthStencilBuffer.fds.isEmpty()) {
+        if (layerData.textureData->depthStencilBuffer) {
             auto depthStencilBufferSource = makeExternalImageSource(layerData.textureData->depthStencilBuffer, framebufferSize);
             createAndBindCompositorBuffer(gl, m_displayAttachmentsSets[m_currentDisplayAttachmentIndex][layer].depthStencilBuffer, GL::DEPTH24_STENCIL8, WTFMove(depthStencilBufferSource), layer);
         }
@@ -564,4 +626,4 @@ void WebXRExternalRenderbuffer::leakObject()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEBXR) && !PLATFORM(COCOA)
+#endif // ENABLE(WEBXR)

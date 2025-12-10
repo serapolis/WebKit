@@ -37,7 +37,6 @@
 #include "ChromeClient.h"
 #include "Document.h"
 #include "DocumentFullscreen.h"
-#include "DocumentInlines.h"
 #include "ElementInlines.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLAttachmentElement.h"
@@ -49,7 +48,6 @@
 #include "HTMLHeadElement.h"
 #include "HTMLHtmlElement.h"
 #include "HTMLInputElement.h"
-#include "HTMLMediaElement.h"
 #include "HTMLMeterElement.h"
 #include "HTMLObjectElement.h"
 #include "HTMLProgressElement.h"
@@ -81,6 +79,7 @@ StyleSheetContents* UserAgentStyle::defaultStyleSheet;
 StyleSheetContents* UserAgentStyle::quirksStyleSheet;
 StyleSheetContents* UserAgentStyle::svgStyleSheet;
 StyleSheetContents* UserAgentStyle::mathMLStyleSheet;
+StyleSheetContents* UserAgentStyle::mathMLCoreExtrasStyleSheet;
 StyleSheetContents* UserAgentStyle::mediaQueryStyleSheet;
 StyleSheetContents* UserAgentStyle::popoverStyleSheet;
 StyleSheetContents* UserAgentStyle::horizontalFormControlsStyleSheet;
@@ -227,6 +226,10 @@ void UserAgentStyle::ensureDefaultStyleSheetsForElement(const Element& element)
         if (!mathMLStyleSheet) {
             mathMLStyleSheet = parseUASheet(StringImpl::createWithoutCopying(mathmlUserAgentStyleSheet));
             addToDefaultStyle(*mathMLStyleSheet);
+        }
+        if (!mathMLCoreExtrasStyleSheet && element.document().settings().coreMathMLEnabled()) {
+            mathMLCoreExtrasStyleSheet = parseUASheet(StringImpl::createWithoutCopying(mathmlCoreExtrasUserAgentStyleSheet));
+            addToDefaultStyle(*mathMLCoreExtrasStyleSheet);
         }
     }
 #endif // ENABLE(MATHML)

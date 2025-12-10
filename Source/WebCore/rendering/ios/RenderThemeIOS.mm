@@ -119,7 +119,7 @@ RenderTheme& RenderTheme::singleton()
     return theme;
 }
 
-bool RenderThemeIOS::canCreateControlPartForRenderer(const RenderObject& renderer) const
+bool RenderThemeIOS::canCreateControlPartForRenderer(const RenderElement& renderer) const
 {
     auto type = renderer.style().usedAppearance();
 #if ENABLE(APPLE_PAY)
@@ -159,7 +159,7 @@ bool RenderThemeIOS::isControlStyled(const RenderStyle& style) const
 {
     // Buttons and MenulistButtons are styled if they contain a background image.
     if (style.usedAppearance() == StyleAppearance::PushButton || style.usedAppearance() == StyleAppearance::MenulistButton)
-        return !style.visitedDependentColor(CSSPropertyBackgroundColor).isVisible() || style.backgroundLayers().hasImage();
+        return !style.visitedDependentColor(CSSPropertyBackgroundColor).isVisible() || Style::hasImageInAnyLayer(style.backgroundLayers());
 
     if (style.usedAppearance() == StyleAppearance::TextField || style.usedAppearance() == StyleAppearance::TextArea || style.usedAppearance() == StyleAppearance::SearchField)
         return style.nativeAppearanceDisabled();
@@ -173,49 +173,50 @@ void RenderThemeIOS::adjustMinimumIntrinsicSizeForAppearance(StyleAppearance app
 
     // FIXME: The min-width/min-heigh value should use `calc-size()` when supported to make non-specified overrides work.
 
+    auto usedZoom = style.usedZoomForLength();
     if (auto fixedOverrideMinWidth = minimumControlSize.width().tryFixed()) {
         if (auto fixedOriginalMinWidth = style.minWidth().tryFixed()) {
-            if (fixedOverrideMinWidth->value > fixedOriginalMinWidth->value)
+            if (fixedOverrideMinWidth->resolveZoom(usedZoom) > fixedOriginalMinWidth->resolveZoom(usedZoom))
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         } else if (auto percentageOriginalMinWidth = style.minWidth().tryPercentage()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (fixedOverrideMinWidth->value > percentageOriginalMinWidth->value)
+            if (fixedOverrideMinWidth->resolveZoom(usedZoom) > percentageOriginalMinWidth->value)
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
-        } else if (fixedOverrideMinWidth->value > 0) {
+        } else if (fixedOverrideMinWidth->isPositive()) {
             style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         }
     } else if (auto percentageOverrideMinWidth = minimumControlSize.width().tryPercentage()) {
         if (auto fixedOriginalMinWidth = style.minWidth().tryFixed()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (percentageOverrideMinWidth->value > fixedOriginalMinWidth->value)
+            if (percentageOverrideMinWidth->value > fixedOriginalMinWidth->resolveZoom(usedZoom))
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         } else if (auto percentageOriginalMinWidth = style.minWidth().tryPercentage()) {
             if (percentageOverrideMinWidth->value > percentageOriginalMinWidth->value)
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
-        } else if (percentageOverrideMinWidth->value > 0) {
+        } else if (percentageOverrideMinWidth->isPositive()) {
             style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         }
     }
     if (auto fixedOverrideMinHeight = minimumControlSize.height().tryFixed()) {
         if (auto fixedOriginalMinHeight = style.minHeight().tryFixed()) {
-            if (fixedOverrideMinHeight->value > fixedOriginalMinHeight->value)
+            if (fixedOverrideMinHeight->resolveZoom(usedZoom) > fixedOriginalMinHeight->resolveZoom(usedZoom))
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         } else if (auto percentageOriginalMinHeight = style.minHeight().tryPercentage()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (fixedOverrideMinHeight->value > percentageOriginalMinHeight->value)
+            if (fixedOverrideMinHeight->resolveZoom(usedZoom) > percentageOriginalMinHeight->value)
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
-        } else if (fixedOverrideMinHeight->value > 0) {
+        } else if (fixedOverrideMinHeight->isPositive()) {
             style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         }
     } else if (auto percentageOverrideMinHeight = minimumControlSize.height().tryPercentage()) {
         if (auto fixedOriginalMinHeight = style.minHeight().tryFixed()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (percentageOverrideMinHeight->value > fixedOriginalMinHeight->value)
+            if (percentageOverrideMinHeight->value > fixedOriginalMinHeight->resolveZoom(usedZoom))
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         } else if (auto percentageOriginalMinHeight = style.minHeight().tryPercentage()) {
             if (percentageOverrideMinHeight->value > percentageOriginalMinHeight->value)
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
-        } else if (percentageOverrideMinHeight->value > 0) {
+        } else if (percentageOverrideMinHeight->isPositive()) {
             style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         }
     }
@@ -383,7 +384,9 @@ Style::PaddingBox RenderThemeIOS::popupInternalPaddingBox(const RenderStyle& sty
     auto padding = emSize->resolveAsLength<float>({ style, nullptr, nullptr, nullptr });
 
     if (style.usedAppearance() == StyleAppearance::MenulistButton) {
-        auto value = toTruncatedPaddingEdge(padding + Style::evaluate(style.borderTopWidth(), 1.0f /* FIXME FIND ZOOM */));
+        // FIXME: Reduce code duplication with toTruncatedPaddingEdge.
+        auto value = Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(padding + Style::evaluate<float>(style.borderTopWidth(),  Style::ZoomNeeded { }))) / style.usedZoom() };
+
         if (style.writingMode().isBidiRTL())
             return { 0_css_px, 0_css_px, 0_css_px, value };
         return { 0_css_px, value, 0_css_px, 0_css_px };
@@ -409,7 +412,7 @@ static inline bool canAdjustBorderRadiusForAppearance(StyleAppearance appearance
 
 void RenderThemeIOS::adjustRoundBorderRadius(RenderStyle& style, RenderBox& box)
 {
-    if (!canAdjustBorderRadiusForAppearance(style.usedAppearance(), box) || style.backgroundLayers().hasImage())
+    if (!canAdjustBorderRadiusForAppearance(style.usedAppearance(), box) || Style::hasImageInAnyLayer(style.backgroundLayers()))
         return;
 
     auto boxLogicalHeight = box.logicalHeight();
@@ -451,8 +454,7 @@ static void adjustSelectListButtonStyle(RenderStyle& style, const Element& eleme
     // Enforce "padding: 0 0.5em".
     applyCommonButtonPaddingToStyle(style, element);
 
-    // Enforce "line-height: normal".
-    style.setLineHeight(Length(LengthType::Normal));
+    style.setLineHeight(CSS::Keyword::Normal { });
 }
 
 class RenderThemeMeasureTextClient : public MeasureTextClient {
@@ -480,7 +482,7 @@ static void adjustInputElementButtonStyle(RenderStyle& style, const HTMLInputEle
     applyCommonNonCapsuleBorderRadiusToStyle(style);
 
     // Don't adjust the style if the width is specified.
-    if (auto fixedLogicalWidth = style.logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->value > 0)
+    if (auto fixedLogicalWidth = style.logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive())
         return;
 
     // Don't adjust for unsupported date input types.
@@ -610,9 +612,9 @@ void RenderThemeIOS::paintMenuListButtonDecorations(const RenderBox& box, const 
     FloatPoint glyphOrigin;
     glyphOrigin.setY(logicalRect.center().y() - glyphSize.height() / 2.0f);
     if (!style.writingMode().isInlineFlipped())
-        glyphOrigin.setX(logicalRect.maxX() - glyphSize.width() - Style::evaluate(box.style().borderEndWidth(), 1.0f /* FIXME FIND ZOOM */) - Style::evaluate(box.style().paddingEnd(), logicalRect.width(), 1.0f/* FIXME FIND ZOOM */));
+        glyphOrigin.setX(logicalRect.maxX() - glyphSize.width() - Style::evaluate<float>(box.style().borderEndWidth(), Style::ZoomNeeded { }) - Style::evaluate<float>(box.style().paddingEnd(), logicalRect.width(), box.style().usedZoomForLength()));
     else
-        glyphOrigin.setX(logicalRect.x() + Style::evaluate(box.style().borderEndWidth(), 1.0f /* FIXME FIND ZOOM */) + Style::evaluate(box.style().paddingEnd(), logicalRect.width(), 1.0f /* FIXME FIND ZOOM */));
+        glyphOrigin.setX(logicalRect.x() + Style::evaluate<float>(box.style().borderEndWidth(), Style::ZoomNeeded { }) + Style::evaluate<float>(box.style().paddingEnd(), logicalRect.width(), box.style().usedZoomForLength()));
 
     if (!isHorizontalWritingMode)
         glyphOrigin = glyphOrigin.transposedPoint();
@@ -652,7 +654,7 @@ void RenderThemeIOS::adjustSliderTrackStyle(RenderStyle& style, const Element* e
 
 constexpr auto nativeControlBorderInlineSize = 1.0f;
 
-bool RenderThemeIOS::paintSliderTrack(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintSliderTrack(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (box.settings().formControlRefreshEnabled())
@@ -758,7 +760,7 @@ void RenderThemeIOS::adjustSliderThumbSize(RenderStyle& style, const Element* el
 constexpr auto reducedMotionProgressAnimationMinOpacity = 0.3f;
 constexpr auto reducedMotionProgressAnimationMaxOpacity = 0.6f;
 
-bool RenderThemeIOS::paintProgressBar(const RenderObject& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintProgressBar(const RenderElement& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (renderer.settings().formControlRefreshEnabled())
@@ -907,7 +909,7 @@ void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Elem
     if (element.isDisabledFormControl())
         return;
 
-    if (!style.hasAutoAccentColor()) {
+    if (!style.accentColor().isAuto()) {
         auto tintColor = style.usedAccentColor(element.document().styleColorOptions(&style));
         if (isSubmitStyleButton(&element))
             style.setBackgroundColor(WTFMove(tintColor));
@@ -942,7 +944,7 @@ void RenderThemeIOS::adjustButtonStyle(RenderStyle& style, const Element* elemen
     if (style.logicalWidth().isIntrinsicOrLegacyIntrinsicOrAuto() || style.logicalHeight().isAuto()) {
         auto minimumHeight = ControlBaseHeight / ControlBaseFontSize * style.fontDescription().computedSize();
         if (auto fixedLogicalMinHeight = style.logicalMinHeight().tryFixed())
-            minimumHeight = std::max(minimumHeight, fixedLogicalMinHeight->value);
+            minimumHeight = std::max(minimumHeight, fixedLogicalMinHeight->resolveZoom(style.usedZoomForLength()));
         // FIXME: This may need to be a layout time adjustment to support various values like fit-content etc.
         style.setLogicalMinHeight(Style::MinimumSize::Fixed { minimumHeight });
     }
@@ -1041,7 +1043,7 @@ Color RenderThemeIOS::autocorrectionReplacementMarkerColor(const RenderText& ren
     return caretColor.colorWithAlpha(0.3);
 }
 
-Color RenderThemeIOS::platformAnnotationHighlightColor(OptionSet<StyleColorOptions>) const
+Color RenderThemeIOS::platformAnnotationHighlightBackgroundColor(OptionSet<StyleColorOptions>) const
 {
     // FIXME: expose the real value from UIKit.
     return SRGBA<uint8_t> { 255, 238, 190 };
@@ -1052,7 +1054,7 @@ bool RenderThemeIOS::shouldHaveSpinButton(const HTMLInputElement&) const
     return false;
 }
 
-bool RenderThemeIOS::supportsFocusRing(const RenderObject& renderer, const RenderStyle& style) const
+bool RenderThemeIOS::supportsFocusRing(const RenderElement& renderer, const RenderStyle& style) const
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (renderer.settings().formControlRefreshEnabled())
@@ -1247,7 +1249,7 @@ Color RenderThemeIOS::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
     return color;
 }
 
-Color RenderThemeIOS::pictureFrameColor(const RenderObject& buttonRenderer)
+Color RenderThemeIOS::pictureFrameColor(const RenderElement& buttonRenderer)
 {
     return buttonRenderer.style().visitedDependentColor(CSSPropertyBorderTopColor);
 }
@@ -1356,7 +1358,7 @@ static void paintAttachmentBorder(GraphicsContext& context, Path& borderPath)
     context.strokePath(borderPath);
 }
 
-bool RenderThemeIOS::paintAttachment(const RenderObject& renderer, const PaintInfo& paintInfo, const IntRect& paintRect)
+bool RenderThemeIOS::paintAttachment(const RenderElement& renderer, const PaintInfo& paintInfo, const IntRect& paintRect)
 {
     auto* attachment = dynamicDowncast<RenderAttachment>(renderer);
     if (!attachment)
@@ -1521,7 +1523,7 @@ void RenderThemeIOS::paintCheckboxRadioInnerShadow(const PaintInfo& paintInfo, c
     context.fillPath(innerShadowPath);
 }
 
-bool RenderThemeIOS::paintCheckbox(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintCheckbox(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (box.settings().formControlRefreshEnabled())
@@ -1611,7 +1613,7 @@ bool RenderThemeIOS::paintCheckbox(const RenderObject& box, const PaintInfo& pai
     return false;
 }
 
-bool RenderThemeIOS::paintRadio(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintRadio(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (box.settings().formControlRefreshEnabled())
@@ -1673,7 +1675,7 @@ bool RenderThemeIOS::supportsMeter(StyleAppearance appearance) const
     return appearance == StyleAppearance::Meter;
 }
 
-bool RenderThemeIOS::paintMeter(const RenderObject& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintMeter(const RenderElement& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (renderer.settings().formControlRefreshEnabled())
@@ -1730,7 +1732,7 @@ bool RenderThemeIOS::paintMeter(const RenderObject& renderer, const PaintInfo& p
     return false;
 }
 
-bool RenderThemeIOS::paintListButton(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintListButton(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (box.settings().formControlRefreshEnabled())
@@ -1744,10 +1746,11 @@ bool RenderThemeIOS::paintListButton(const RenderObject& box, const PaintInfo& p
     auto& context = paintInfo.context();
     GraphicsContextStateSaver stateSaver(context);
 
-    float paddingTop = Style::evaluate(style.paddingTop(), rect.height(), 1.0f /* FIXME FIND ZOOM */);
-    float paddingRight = Style::evaluate(style.paddingRight(), rect.width(), 1.0f /* FIXME FIND ZOOM */);
-    float paddingBottom = Style::evaluate(style.paddingBottom(), rect.height(), 1.0f /* FIXME FIND ZOOM */);
-    float paddingLeft = Style::evaluate(style.paddingLeft(), rect.width(), 1.0f /* FIXME FIND ZOOM */);
+    const auto& zoomFactor = style.usedZoomForLength();
+    auto paddingTop = Style::evaluate<float>(style.paddingTop(), rect.height(), zoomFactor);
+    auto paddingRight = Style::evaluate<float>(style.paddingRight(), rect.width(), zoomFactor);
+    auto paddingBottom = Style::evaluate<float>(style.paddingBottom(), rect.height(), zoomFactor);
+    auto paddingLeft = Style::evaluate<float>(style.paddingLeft(), rect.width(), zoomFactor);
 
     FloatRect indicatorRect = rect;
     indicatorRect.move(paddingLeft, paddingTop);
@@ -1782,9 +1785,9 @@ bool RenderThemeIOS::paintListButton(const RenderObject& box, const PaintInfo& p
     return false;
 }
 
-void RenderThemeIOS::paintSliderTicks(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderThemeIOS::paintSliderTicks(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
-    RefPtr input = dynamicDowncast<HTMLInputElement>(box.node());
+    RefPtr input = dynamicDowncast<HTMLInputElement>(box.element());
     if (!input || !input->isRangeControl())
         return;
 
@@ -1838,7 +1841,7 @@ void RenderThemeIOS::paintSliderTicks(const RenderObject& box, const PaintInfo& 
     }
 }
 
-void RenderThemeIOS::paintColorWellDecorations(const RenderObject& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderThemeIOS::paintColorWellDecorations(const RenderElement& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (renderer.settings().formControlRefreshEnabled()) {
@@ -1904,7 +1907,7 @@ void RenderThemeIOS::adjustSearchFieldDecorationPartStyle(RenderStyle& style, co
     style.setMarginEnd(searchFieldDecorationMargin);
 }
 
-bool RenderThemeIOS::paintSearchFieldDecorationPart(const RenderObject& box, const PaintInfo& paintInfo, const FloatRect& rect)
+bool RenderThemeIOS::paintSearchFieldDecorationPart(const RenderElement& box, const PaintInfo& paintInfo, const FloatRect& rect)
 {
 #if ENABLE(FORM_CONTROL_REFRESH)
     if (box.settings().formControlRefreshEnabled())

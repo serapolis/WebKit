@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/EventTarget.h>
+
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RefPtr.h>
@@ -50,12 +52,12 @@ public:
     void removeItem(UndoItem&);
     void removeAllItems();
     ExceptionOr<void> addItem(Ref<UndoItem>&&);
-    Document& document() { return m_document; }
+    Document& document() { return m_document.get(); }
 
 private:
     UndoManager(Document&);
 
-    Document& m_document;
+    WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     HashSet<RefPtr<UndoItem>> m_items;
 };
 

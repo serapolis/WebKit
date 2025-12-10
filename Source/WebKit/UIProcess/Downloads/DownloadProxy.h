@@ -110,6 +110,8 @@ public:
     API::FrameInfo& frameInfo() { return m_frameInfo.get(); }
 
     API::DownloadClient& client() { return m_client.get(); }
+    Ref<API::DownloadClient> protectedClient() const;
+
     void setClient(Ref<API::DownloadClient>&&);
     void setDidStartCallback(CompletionHandler<void(DownloadProxy*)>&& callback) { m_didStartCallback = WTFMove(callback); }
     void setSuggestedFilename(const String& suggestedFilename) { m_suggestedFilename = suggestedFilename; }
@@ -130,10 +132,13 @@ public:
     void willSendRequest(WebCore::ResourceRequest&& redirectRequest, const WebCore::ResourceResponse& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
     void decideDestinationWithSuggestedFilename(const WebCore::ResourceResponse&, String&& suggestedFilename, DecideDestinationCallback&&);
 
+#if HAVE(MODERN_DOWNLOADPROGRESS)
+    static Vector<uint8_t> activityAccessToken();
+#endif
+
 private:
     explicit DownloadProxy(DownloadProxyMap&, WebsiteDataStore&, API::DownloadClient&, const WebCore::ResourceRequest&, const std::optional<FrameInfoData>&, WebPageProxy*);
 
-    Ref<API::DownloadClient> protectedClient() const;
     RefPtr<WebsiteDataStore> protectedDataStore() { return m_dataStore; }
 
     // IPC::MessageReceiver
@@ -141,7 +146,6 @@ private:
 
 #if HAVE(MODERN_DOWNLOADPROGRESS)
     static Vector<uint8_t> bookmarkDataForURL(const URL&);
-    static Vector<uint8_t> activityAccessToken();
 #endif
 
     WeakPtr<DownloadProxyMap> m_downloadProxyMap;

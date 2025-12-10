@@ -53,7 +53,7 @@ class Image;
 class NativeImage;
 class TransformState;
 
-#if ENABLE(MODEL_PROCESS)
+#if ENABLE(MODEL_CONTEXT)
 class ModelContext;
 #endif
 
@@ -142,7 +142,7 @@ public:
     WEBCORE_EXPORT void setBlendMode(BlendMode) override;
 
     WEBCORE_EXPORT void setNeedsDisplay() override;
-    WEBCORE_EXPORT void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ClipToLayer) override;
+    WEBCORE_EXPORT void setNeedsDisplayInRect(const FloatRect&, ShouldClipToLayer = ShouldClipToLayer::Clip) override;
     WEBCORE_EXPORT void setContentsNeedsDisplay() override;
     
     WEBCORE_EXPORT void setContentsRect(const FloatRect&) override;
@@ -162,7 +162,7 @@ public:
     WEBCORE_EXPORT void suspendAnimations(MonotonicTime) override;
     WEBCORE_EXPORT void resumeAnimations() override;
 
-    WEBCORE_EXPORT bool addAnimation(const KeyframeValueList&, const FloatSize& boxSize, const GraphicsLayerAnimation*, const String& animationName, double timeOffset) override;
+    WEBCORE_EXPORT bool addAnimation(const KeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, double timeOffset) override;
     WEBCORE_EXPORT void pauseAnimation(const String& animationName, double timeOffset) override;
     WEBCORE_EXPORT void removeAnimation(const String& animationName, std::optional<AnimatedProperty>) override;
     WEBCORE_EXPORT void transformRelatedPropertyDidChange() override;
@@ -173,8 +173,11 @@ public:
 #endif
     WEBCORE_EXPORT void setContentsToPlatformLayer(PlatformLayer*, ContentsLayerPurpose) override;
     WEBCORE_EXPORT void setContentsToPlatformLayerHost(LayerHostingContextIdentifier) override;
-#if ENABLE(MODEL_PROCESS)
+#if ENABLE(MODEL_CONTEXT) && !ENABLE(GPU_PROCESS_MODEL)
     WEBCORE_EXPORT void setContentsToModelContext(Ref<ModelContext>, ContentsLayerPurpose) override;
+#endif
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    WEBCORE_EXPORT void removeModelContents() override;
 #endif
     WEBCORE_EXPORT void setContentsToVideoElement(HTMLVideoElement&, ContentsLayerPurpose) override;
     WEBCORE_EXPORT void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;
@@ -226,14 +229,14 @@ public:
 
     WEBCORE_EXPORT TiledBacking* tiledBacking() const override;
 
-    WEBCORE_EXPORT Vector<std::pair<String, double>> acceleratedAnimationsForTesting(const Settings&) const final;
+    WEBCORE_EXPORT Vector<GraphicsLayer::AcceleratedAnimationForTesting> acceleratedAnimationsForTesting() const final;
 
     constexpr static CompositingCoordinatesOrientation defaultContentsOrientation = CompositingCoordinatesOrientation::TopDown;
 
     WEBCORE_EXPORT RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> createAsyncContentsDisplayDelegate(GraphicsLayerAsyncContentsDisplayDelegate*) override;
 
     WEBCORE_EXPORT void markFrontBufferVolatileForTesting() override;
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
     WEBCORE_EXPORT void setAcceleratedEffectsAndBaseValues(AcceleratedEffects&&, AcceleratedEffectValues&&) override;
 #endif
 
@@ -311,7 +314,7 @@ private:
 
     virtual Ref<PlatformCALayer> createPlatformCALayer(PlatformCALayer::LayerType, PlatformCALayerClient* owner);
     virtual Ref<PlatformCALayer> createPlatformCALayer(PlatformLayer*, PlatformCALayerClient* owner);
-#if ENABLE(MODEL_PROCESS)
+#if ENABLE(MODEL_CONTEXT) && !ENABLE(GPU_PROCESS_MODEL)
     virtual Ref<PlatformCALayer> createPlatformCALayer(Ref<ModelContext>, PlatformCALayerClient*);
 #endif
 #if ENABLE(MODEL_ELEMENT)
@@ -344,7 +347,7 @@ private:
     static void clearClones(LayerMap&);
 
     bool createAnimationFromKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
-    bool createTransformAnimationsFromKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, const FloatSize& boxSize, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool createTransformAnimationsFromKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
     bool createFilterAnimationsFromKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
 
     // Return autoreleased animation (use RetainPtr?)
@@ -358,8 +361,8 @@ private:
     bool setAnimationEndpoints(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*);
     bool setAnimationKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, bool keyframesShouldUseAnimationWideTimingFunction);
 
-    bool setTransformAnimationEndpoints(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation, const FloatSize& boxSize);
-    bool setTransformAnimationKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation, const FloatSize& boxSize, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool setTransformAnimationEndpoints(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation);
+    bool setTransformAnimationKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex, TransformOperation::Type, bool isMatrixAnimation, bool keyframesShouldUseAnimationWideTimingFunction);
     
     bool setFilterAnimationEndpoints(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex);
     bool setFilterAnimationKeyframes(const KeyframeValueList&, const GraphicsLayerAnimation*, PlatformCAAnimation*, int functionIndex, FilterOperation::Type, bool keyframesShouldUseAnimationWideTimingFunction);
@@ -615,7 +618,7 @@ private:
         moveOrCopyAnimations(Copy, fromLayer, toLayer);
     }
 
-    bool appendToUncommittedAnimations(const KeyframeValueList&, const TransformOperation::Type, const GraphicsLayerAnimation*, const String& animationName, const FloatSize& boxSize, unsigned animationIndex, Seconds timeOffset, bool isMatrixAnimation, bool keyframesShouldUseAnimationWideTimingFunction);
+    bool appendToUncommittedAnimations(const KeyframeValueList&, const TransformOperation::Type, const GraphicsLayerAnimation*, const String& animationName, unsigned animationIndex, Seconds timeOffset, bool isMatrixAnimation, bool keyframesShouldUseAnimationWideTimingFunction);
     bool appendToUncommittedAnimations(const KeyframeValueList&, const FilterOperation&, const GraphicsLayerAnimation*, const String& animationName, int animationIndex, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
 
     enum LayerChange : uint64_t {

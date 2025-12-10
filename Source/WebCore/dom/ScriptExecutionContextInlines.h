@@ -28,7 +28,6 @@
 #include <WebCore/DOMTimer.h>
 #include <WebCore/EventLoop.h>
 #include <WebCore/ScriptExecutionContext.h>
-#include <WebCore/ServiceWorkerIdentifier.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/CrossThreadTask.h>
 #include <wtf/NativePromise.h>
@@ -50,11 +49,6 @@ inline DOMTimer* ScriptExecutionContext::findTimeout(int timeoutId)
     return m_timeouts.get(timeoutId);
 }
 
-inline ServiceWorker* ScriptExecutionContext::serviceWorker(ServiceWorkerIdentifier identifier)
-{
-    return m_serviceWorkers.get(identifier);
-}
-
 inline CheckedRef<EventLoopTaskGroup> ScriptExecutionContext::checkedEventLoop()
 {
     return eventLoop();
@@ -71,8 +65,8 @@ inline void ScriptExecutionContext::postCrossThreadTask(Arguments&&... arguments
 template<typename Promise, typename TaskType>
 void ScriptExecutionContext::enqueueTaskWhenSettled(Ref<Promise>&& promise, TaskSource taskSource, TaskType&& task)
 {
-    auto request = makeUnique<NativePromiseRequest>();
-    WeakPtr weakRequest { *request };
+    auto request = NativePromiseRequest::create();
+    WeakPtr weakRequest { request.get() };
     auto command = promise->whenSettled(nativePromiseDispatcher(), [weakThis = WeakPtr { *this }, taskSource, task = WTFMove(task), request = WTFMove(request)] (auto&& result) mutable {
         request->complete();
         RefPtr protectedThis = weakThis.get();

@@ -49,8 +49,9 @@ struct IDBGetRecordData;
 
 namespace IDBServer {
 
-class IDBServer : public UniqueIDBDatabaseManager {
+class IDBServer final : public UniqueIDBDatabaseManager {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(IDBServer, WEBCORE_EXPORT);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(IDBServer);
 public:
     using SpaceRequester = Function<bool(const ClientOrigin&, uint64_t spaceRequested)>;
     WEBCORE_EXPORT IDBServer(const String& databaseDirectoryPath, SpaceRequester&&, Lock&);
@@ -108,7 +109,7 @@ public:
 
 private:
     UniqueIDBDatabase& getOrCreateUniqueIDBDatabase(const IDBDatabaseIdentifier&);
-    UniqueIDBDatabaseTransaction* idbTransaction(const IDBRequestData&) const;
+    RefPtr<UniqueIDBDatabaseTransaction> idbTransaction(const IDBRequestData&) const;
 
     void upgradeFilesIfNecessary();
     String upgradedDatabaseDirectory(const WebCore::IDBDatabaseIdentifier&);
@@ -118,8 +119,8 @@ private:
     HashMap<IDBConnectionIdentifier, RefPtr<IDBConnectionToClient>> m_connectionMap;
     HashMap<IDBDatabaseIdentifier, std::unique_ptr<UniqueIDBDatabase>> m_uniqueIDBDatabaseMap;
 
-    HashMap<IDBDatabaseConnectionIdentifier, UniqueIDBDatabaseConnection*> m_databaseConnections;
-    HashMap<IDBResourceIdentifier, UniqueIDBDatabaseTransaction*> m_transactions;
+    HashMap<IDBDatabaseConnectionIdentifier, WeakPtr<UniqueIDBDatabaseConnection>> m_databaseConnections;
+    HashMap<IDBResourceIdentifier, WeakPtr<UniqueIDBDatabaseTransaction>> m_transactions;
 
     HashMap<uint64_t, Function<void ()>> m_deleteDatabaseCompletionHandlers;
 

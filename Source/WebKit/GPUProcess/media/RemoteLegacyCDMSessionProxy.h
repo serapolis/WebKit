@@ -52,6 +52,7 @@ public:
     static Ref<RemoteLegacyCDMSessionProxy> create(RemoteLegacyCDMFactoryProxy&, uint64_t logIdentifier, RemoteLegacyCDMSessionIdentifier, WebCore::LegacyCDM&);
     ~RemoteLegacyCDMSessionProxy();
 
+    // IPC::MessageReceiver, WebCore::LegacyCDMSessionClient.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
@@ -60,8 +61,6 @@ public:
     RemoteLegacyCDMFactoryProxy* factory() const { return m_factory.get(); }
     WebCore::LegacyCDMSession* session() const { return m_session.get(); }
     RefPtr<WebCore::LegacyCDMSession> protectedSession() const;
-
-    void setPlayer(WeakPtr<RemoteMediaPlayerProxy>);
 
     RefPtr<ArrayBuffer> getCachedKeyForKeyId(const String&);
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess() const;
@@ -106,7 +105,6 @@ private:
 
     RemoteLegacyCDMSessionIdentifier m_identifier;
     RefPtr<WebCore::LegacyCDMSession> m_session;
-    WeakPtr<RemoteMediaPlayerProxy> m_player;
     String m_mediaKeysHashSalt;
 };
 

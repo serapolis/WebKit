@@ -31,6 +31,7 @@
 #import "ImportanceAssertion.h"
 #import "Logging.h"
 #import "MachMessage.h"
+#import "MachPort.h"
 #import "MachUtilities.h"
 #import "WKCrashReporter.h"
 #import "XPCUtilities.h"
@@ -163,9 +164,9 @@ void Connection::platformOpen()
         requestNoSenderNotifications(m_receivePort);
     } else {
         ASSERT(!m_receivePort);
-        auto kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &m_receivePort);
+        auto kr = allocateImmovableConnectionPort(&m_receivePort);
         if (kr != KERN_SUCCESS) {
-            LOG_ERROR("Could not allocate mach port, error %x: %s", kr, mach_error_string(kr));
+            RELEASE_LOG_ERROR(IPC, "Could not allocate mach port, error: %{private}s (%x)", mach_error_string(kr), kr);
             CRASH();
         }
 #if !PLATFORM(WATCHOS)
@@ -198,7 +199,7 @@ void Connection::platformOpen()
     // Change the message queue length for the receive port.
     setMachPortQueueLength(m_receivePort, largeOutgoingMessageQueueCountThreshold);
 
-    m_receiveSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, m_receivePort, 0, m_connectionQueue->dispatchQueue()));
+    m_receiveSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_RECV, m_receivePort, 0, m_connectionQueue->protectedDispatchQueue().get()));
     dispatch_source_set_event_handler(m_receiveSource.get(), [this, protectedThis = Ref { *this }] {
         receiveSourceEventHandler();
     });
@@ -343,7 +344,7 @@ void Connection::initializeSendSource()
         return;
     RELEASE_ASSERT(m_sendPort != MACH_PORT_NULL);
 
-    m_sendSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_SEND, m_sendPort, DISPATCH_MACH_SEND_POSSIBLE, m_connectionQueue->dispatchQueue()));
+    m_sendSource = adoptOSObject(dispatch_source_create(DISPATCH_SOURCE_TYPE_MACH_SEND, m_sendPort, DISPATCH_MACH_SEND_POSSIBLE, m_connectionQueue->protectedDispatchQueue().get()));
     dispatch_source_set_registration_handler(m_sendSource.get(), [this, protectedThis = Ref { *this }] {
         if (!m_sendSource)
             return;
@@ -498,13 +499,7 @@ static mach_msg_header_t* readFromMachPort(mach_port_t machPort, ReceiveBuffer& 
 
 static bool shouldLogIncomingMessageHandling()
 {
-    static dispatch_once_t once;
-    static bool shouldLog;
-
-    dispatch_once(&once, ^{
-        shouldLog = !!getenv("WEBKIT_LOG_INCOMING_MESSAGES");
-    });
-
+    static bool shouldLog = !!getenv("WEBKIT_LOG_INCOMING_MESSAGES");
     return shouldLog;
 }
 

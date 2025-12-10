@@ -42,7 +42,6 @@
 #include "Logging.h"
 #include "MediaSampleAVFObjC.h"
 #include "SharedBuffer.h"
-#include "SpanCoreAudio.h"
 #include "VideoTrackPrivate.h"
 #include "WebMAudioUtilitiesCocoa.h"
 #include <AudioToolbox/AudioConverter.h>
@@ -50,6 +49,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <SourceBufferParserWebM.h>
 #include <limits>
+#include <pal/cf/CoreAudioExtras.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/Function.h>
 #include <wtf/NativePromise.h>
@@ -58,6 +58,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
+
 #include <pal/cf/AudioToolboxSoftLink.h>
 #include <pal/cf/CoreMediaSoftLink.h>
 
@@ -197,7 +198,8 @@ std::unique_ptr<AudioFileReaderWebMData> AudioFileReader::demuxWebMData(std::spa
             if (audioTrack.track) {
                 duration = init.duration;
                 audioTrackId = audioTrack.track->id();
-                track = static_pointer_cast<AudioTrackPrivateWebM>(audioTrack.track);
+                // FIXME: Use downcast instead.
+                track = unsafeRefPtrDowncast<AudioTrackPrivateWebM>(audioTrack.track);
                 return;
             }
         }
@@ -356,8 +358,8 @@ std::optional<size_t> AudioFileReader::decodeWebMData(AudioBufferList& bufferLis
             // So we set it to what there is left to decode instead.
             UInt32 numFrames = std::min<uint32_t>(std::numeric_limits<int32_t>::max() / sizeof(float), numberOfFrames - totalDecodedFrames);
 
-            auto decodedBuffers = WebCore::span(*decodedBufferList);
-            auto bufferListBuffers = WebCore::span(bufferList);
+            auto decodedBuffers = PAL::span(*decodedBufferList);
+            auto bufferListBuffers = PAL::span(bufferList);
             for (UInt32 i = 0; i < inFormat.mChannelsPerFrame; ++i) {
                 decodedBuffers[i].mNumberChannels = 1;
                 decodedBuffers[i].mDataByteSize = numFrames * sizeof(float);
@@ -550,7 +552,7 @@ RefPtr<AudioBus> AudioFileReader::createBus(float sampleRate, bool mixToMono)
     AudioFloatArray rightChannel;
 
     RELEASE_ASSERT(bufferList->mNumberBuffers == numberOfChannels);
-    auto buffers = WebCore::span(*bufferList);
+    auto buffers = PAL::span(*bufferList);
     if (mixToMono && numberOfChannels == 2) {
         leftChannel.resize(numberOfFrames);
         rightChannel.resize(numberOfFrames);

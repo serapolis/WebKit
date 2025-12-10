@@ -53,12 +53,11 @@ static bool isValidBCP47LanguageTag(const String&);
 #if !RELEASE_LOG_DISABLED
 static Ref<Logger> nullLogger(TrackBase& track)
 {
-    static std::once_flag onceKey;
-    static LazyNeverDestroyed<Ref<Logger>> logger;
-    std::call_once(onceKey, [&] {
-        logger.construct(Logger::create(&track));
-        logger.get()->setEnabled(&track, false);
-    });
+    static NeverDestroyed<Ref<Logger>> logger = [&] {
+        Ref logger = Logger::create(&track);
+        logger->setEnabled(&track, false);
+        return logger;
+    }();
     return logger.get();
 }
 #endif
@@ -213,8 +212,15 @@ void TrackBase::removeClientFromTrackPrivateBase(TrackPrivateBase& track)
     track.removeClient(m_clientRegistrationId);
 }
 
-MediaTrackBase::MediaTrackBase(ScriptExecutionContext* context, Type type, const std::optional<AtomString>& id, TrackID trackId, const AtomString& label, const AtomString& language)
-    : TrackBase(context, type, id, trackId, label, language)
+static std::optional<AtomString> trackUID(const std::optional<String>& id)
+{
+    if (!id)
+        return { };
+    return AtomString { *id };
+}
+
+MediaTrackBase::MediaTrackBase(ScriptExecutionContext* context, Type type, const std::optional<String>& id, TrackID trackId, const String& label, const String& language)
+    : TrackBase(context, type, trackUID(id), trackId, AtomString { label.isolatedCopy() }, AtomString { language.isolatedCopy() })
 {
 }
 

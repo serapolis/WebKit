@@ -34,7 +34,7 @@
 namespace WebCore {
 namespace Layout {
 
-static InlineRect mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, const LayoutSize containerRenderSize, WritingMode writingMode)
+static InlineRect mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, const LayoutSize formattingRootBorderBoxSize, WritingMode writingMode)
 {
     if (writingMode.isHorizontal())
         return lineLogicalRect;
@@ -42,7 +42,7 @@ static InlineRect mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, 
         return { lineLogicalRect.left(), lineLogicalRect.top(), lineLogicalRect.height(), lineLogicalRect.width() };
 
     return {
-        containerRenderSize.height() - lineLogicalRect.right(),
+        formattingRootBorderBoxSize.height() - lineLogicalRect.right(),
         lineLogicalRect.top(),
         lineLogicalRect.height(),
         lineLogicalRect.width()
@@ -116,7 +116,7 @@ InlineDisplayLineBuilder::EnclosingLineGeometry InlineDisplayLineBuilder::collec
         enclosingTop = std::min(enclosingTop.value_or(adjustedBorderBoxTop), adjustedBorderBoxTop);
         enclosingBottom = std::max(enclosingBottom.value_or(adjustedBorderBoxBottom), adjustedBorderBoxBottom);
     }
-    return { { enclosingTop.value_or(lineBoxRect.top()), enclosingBottom.value_or(lineBoxRect.top()) }, contentOverflowRect };
+    return { { enclosingTop.value_or(lineBoxRect.top()), enclosingBottom.value_or(lineBoxRect.bottom()) }, contentOverflowRect };
 }
 
 InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& lineLayoutResult, const LineBox& lineBox, bool lineIsFullyTruncatedInBlockDirection) const
@@ -137,10 +137,22 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
         ? rootInlineBoxRect.left()
         : lineBoxLogicalRect.width() - lineLayoutResult.contentGeometry.logicalRightIncludingNegativeMargin; // Note that with hanging content lineLayoutResult.contentGeometry.logicalRight is not the same as rootLineBoxRect.right().
 
+    auto hasInflowContent = [&] {
+        if (lineLayoutResult.hasContentfulInFlowContent())
+            return true;
+        for (auto& run : lineLayoutResult.runs) {
+            if (!run.isOpaque())
+                return true;
+        }
+        return false;
+    };
     auto writingMode = root().writingMode();
-    return InlineDisplay::Line { lineBoxLogicalRect
-        , mapLineRectLogicalToVisual(lineBoxLogicalRect, constraints.containerRenderSize(), writingMode)
-        , mapLineRectLogicalToVisual(enclosingLineGeometry.contentOverflowRect, constraints.containerRenderSize(), writingMode)
+    return InlineDisplay::Line { hasInflowContent()
+        , lineBox.hasContent()
+        , lineLayoutResult.isBlockContent()
+        , lineBoxLogicalRect
+        , mapLineRectLogicalToVisual(lineBoxLogicalRect, constraints.formattingRootBorderBoxSize(), writingMode)
+        , mapLineRectLogicalToVisual(enclosingLineGeometry.contentOverflowRect, constraints.formattingRootBorderBoxSize(), writingMode)
         , enclosingLineGeometry.enclosingTopAndBottom
         , rootInlineBox.logicalTop() + rootInlineBox.ascent()
         , lineBox.baselineType()
@@ -497,6 +509,16 @@ void InlineDisplayLineBuilder::applyEllipsisIfNeeded(LineEndingTruncationPolicy 
 
     if (auto ellipsisRect = trailingEllipsisVisualRectAfterTruncation(truncationPolicy, ellipsisText, displayLine, displayBoxes))
         displayLine.setEllipsis({ truncationPolicy == LineEndingTruncationPolicy::WhenContentOverflowsInInlineDirection ? InlineDisplay::Line::Ellipsis::Type::Inline : InlineDisplay::Line::Ellipsis::Type::Block, *ellipsisRect, ellipsisText });
+}
+
+bool InlineDisplayLineBuilder::hasTrailingLineWithBlockContent(const InlineDisplay::Lines& displayLines)
+{
+    for (auto& line : displayLines | std::views::reverse) {
+        if (!line.hasContentfulInFlowBox())
+            continue;
+        return line.hasBlockLevelBox();
+    }
+    return false;
 }
 
 }

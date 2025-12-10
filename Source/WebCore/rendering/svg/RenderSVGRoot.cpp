@@ -32,6 +32,7 @@
 #include "Page.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderInline.h"
 #include "RenderIterator.h"
@@ -102,7 +103,11 @@ FloatSize RenderSVGRoot::computeIntrinsicSize() const
 {
     ASSERT_IMPLIES(view().frameView().layoutContext().isInRenderTreeLayout(), !shouldApplySizeContainment());
     // https://www.w3.org/TR/SVG/coords.html#IntrinsicSizing
-    return FloatSize { svgSVGElement().intrinsicWidth(), svgSVGElement().intrinsicHeight() };
+    FloatSize intrinsicSize = { svgSVGElement().intrinsicWidth(), svgSVGElement().intrinsicHeight() };
+    // Transpose for vertical writing mode
+    if (!isHorizontalWritingMode())
+        return intrinsicSize.transposedSize();
+    return intrinsicSize;
 }
 
 FloatSize RenderSVGRoot::preferredAspectRatio() const
@@ -120,7 +125,10 @@ FloatSize RenderSVGRoot::preferredAspectRatio() const
         FloatSize viewBoxSize = svgSVGElement().currentViewBoxRect().size();
         if (!viewBoxSize.isEmpty()) {
             // The viewBox can only yield an intrinsic ratio, not an intrinsic size.
-            intrinsicRatioValue = { viewBoxSize.width(), viewBoxSize.height() };
+            if (isHorizontalWritingMode())
+                intrinsicRatioValue = { viewBoxSize.width(), viewBoxSize.height() };
+            else
+                intrinsicRatioValue = { viewBoxSize.height(), viewBoxSize.width() };
         }
     }
 

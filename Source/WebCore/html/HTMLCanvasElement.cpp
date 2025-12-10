@@ -36,11 +36,12 @@
 #include "CanvasRenderingContext2D.h"
 #include "CanvasRenderingContext2DSettings.h"
 #include "ContainerNodeInlines.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "GPU.h"
 #include "GPUBasedCanvasRenderingContext.h"
 #include "GPUCanvasContext.h"
@@ -64,7 +65,6 @@
 #include "NodeInlines.h"
 #include "OffscreenCanvas.h"
 #include "PlaceholderRenderingContext.h"
-#include "Quirks.h"
 #include "RenderBoxInlines.h"
 #include "RenderElement.h"
 #include "RenderHTMLCanvas.h"
@@ -176,7 +176,7 @@ void HTMLCanvasElement::collectPresentationalHintsForAttribute(const QualifiedNa
 void HTMLCanvasElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     if (name == widthAttr || name == heightAttr)
-        reset();
+        didUpdateSizeProperties();
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
@@ -188,7 +188,7 @@ RenderPtr<RenderElement> HTMLCanvasElement::createElementRenderer(RenderStyle&& 
     return HTMLElement::createElementRenderer(WTFMove(style), insertionPosition);
 }
 
-bool HTMLCanvasElement::isReplaced(const RenderStyle&) const
+bool HTMLCanvasElement::isReplaced(const RenderStyle*) const
 {
     RefPtr frame = document().frame();
     return frame && frame->checkedScript()->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript);
@@ -220,16 +220,16 @@ ExceptionOr<void> HTMLCanvasElement::setWidth(unsigned value)
     return { };
 }
 
-void HTMLCanvasElement::setSize(const IntSize& newSize)
+void HTMLCanvasElement::setCSSCanvasContextSize(const IntSize& newSize)
 {
     if (newSize == size())
         return;
 
-    m_ignoreReset = true;
+    m_ignoreDidUpdateSizeProperties = true;
     setWidth(newSize.width());
     setHeight(newSize.height());
-    m_ignoreReset = false;
-    reset();
+    m_ignoreDidUpdateSizeProperties = false;
+    didUpdateSizeProperties();
 }
 
 ExceptionOr<std::optional<RenderingContext>> HTMLCanvasElement::getContext(JSC::JSGlobalObject& state, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments)
@@ -336,7 +336,7 @@ ExceptionOr<std::optional<RenderingContext>> HTMLCanvasElement::getContext(JSC::
     return std::optional<RenderingContext> { std::nullopt };
 }
 
-CanvasRenderingContext* HTMLCanvasElement::getContext(const String& type)
+RefPtr<CanvasRenderingContext> HTMLCanvasElement::getContext(const String& type)
 {
     if (HTMLCanvasElement::is2dType(type))
         return getContext2d(type, { });
@@ -456,23 +456,21 @@ WebGLRenderingContextBase* HTMLCanvasElement::createContextWebGL(WebGLVersion ty
 
     // TODO(WEBXR): ensure the context is created in a compatible graphics
     // adapter when there is an active immersive device.
-    auto context = WebGLRenderingContextBase::create(*this, attrs, type);
-    WeakPtr weakContext = context.get();
-    m_context = WTFMove(context);
-    if (weakContext) {
+    m_context = WebGLRenderingContextBase::create(*this, attrs, type);
+    if (m_context) {
         // Need to make sure a RenderLayer and compositing layer get created for the Canvas.
         invalidateStyleAndLayerComposition();
         if (CheckedPtr box = renderBox())
             box->contentChanged(ContentChangeType::Canvas);
 #if ENABLE(WEBXR)
-        ASSERT(!attrs.xrCompatible || weakContext->isXRCompatible());
+        ASSERT(!attrs.xrCompatible || downcast<WebGLRenderingContextBase>(*m_context).isXRCompatible());
 #endif
     }
 
-    return weakContext.get();
+    return downcast<WebGLRenderingContextBase>(m_context.get());
 }
 
-WebGLRenderingContextBase* HTMLCanvasElement::getContextWebGL(WebGLVersion type, WebGLContextAttributes&& attrs)
+RefPtr<WebGLRenderingContextBase> HTMLCanvasElement::getContextWebGL(WebGLVersion type, WebGLContextAttributes&& attrs)
 {
     if (!shouldEnableWebGL(document().settings()))
         return nullptr;
@@ -487,7 +485,7 @@ WebGLRenderingContextBase* HTMLCanvasElement::getContextWebGL(WebGLVersion type,
     if ((type == WebGLVersion::WebGL1) != glContext->isWebGL1())
         return nullptr;
 
-    return glContext.get();
+    return glContext;
 }
 
 #endif // ENABLE(WEBGL)
@@ -605,9 +603,9 @@ void HTMLCanvasElement::didDraw(const std::optional<FloatRect>& rect, ShouldAppl
     CanvasBase::didDraw(rect, shouldApplyPostProcessingToDirtyRect);
 }
 
-void HTMLCanvasElement::reset()
+void HTMLCanvasElement::didUpdateSizeProperties()
 {
-    if (m_ignoreReset || isControlledByOffscreen())
+    if (m_ignoreDidUpdateSizeProperties || isControlledByOffscreen())
         return;
 
     bool hadImageBuffer = hasCreatedImageBuffer();
@@ -630,7 +628,10 @@ void HTMLCanvasElement::reset()
         return;
     }
 
-    setSurfaceSize(newSize);
+    setSize(newSize);
+    setHasCreatedImageBuffer(false);
+    setImageBuffer(nullptr);
+    clearCopiedImage();
 
     if (m_context) {
         if (RefPtr context = dynamicDowncast<GPUBasedCanvasRenderingContext>(*m_context))
@@ -684,14 +685,6 @@ void HTMLCanvasElement::paint(GraphicsContext& context, const LayoutRect& r)
 
     if (m_context->hasActiveInspectorCanvasCallTracer()) [[unlikely]]
         InspectorInstrumentation::didFinishRecordingCanvasFrame(*m_context);
-}
-
-void HTMLCanvasElement::setSurfaceSize(const IntSize& size)
-{
-    CanvasBase::setSize(size);
-    setHasCreatedImageBuffer(false);
-    setImageBuffer(nullptr);
-    clearCopiedImage();
 }
 
 static String toEncodingMimeType(const String& mimeType)

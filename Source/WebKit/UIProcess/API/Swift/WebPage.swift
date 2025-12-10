@@ -94,6 +94,9 @@ internal import WebKit_Internal
 @available(iOS 26.0, macOS 26.0, visionOS 26.0, *)
 @available(watchOS, unavailable)
 @available(tvOS, unavailable)
+#if compiler(>=6.2.3)
+@_expose(!Cxx)
+#endif
 final public class WebPage {
     /// A CSS media type as defined by the [CSS specification](https://www.w3.org/TR/mediaqueries-4/#media-types), or an arbitrary media type value.
     ///
@@ -607,7 +610,7 @@ final public class WebPage {
     ///   frame is no longer valid when script evaluation begins, this function throws an error with the
     ///   `WKError.Code.javaScriptInvalidFrameTarget` code.
     ///
-    ///   - contentWorld: The namespace in which to evaluate the JavaScript code. THis parameter doesn't apply to changes
+    ///   - contentWorld: The namespace in which to evaluate the JavaScript code. This parameter doesn't apply to changes
     ///   you make in the underlying web content, such as the document's DOM structure. Those changes remain visible to
     ///   all scripts, regardless of which content world you specify. For more information about content worlds, see `WKContentWorld`.
     ///

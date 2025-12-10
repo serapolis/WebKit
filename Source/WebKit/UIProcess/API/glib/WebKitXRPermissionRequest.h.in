@@ -51,6 +51,8 @@ WEBKIT_DECLARE_FINAL_TYPE (WebKitXRPermissionRequest, webkit_xr_permission_reque
  *
  * Enum values representing the XR session mode.
  *
+ * See <https://immersive-web.github.io/webxr/#xrsessionmode-enum>
+ *
  * Since: 2.52
  */
 typedef enum {
@@ -67,8 +69,13 @@ typedef enum {
  * @WEBKIT_XR_SESSION_FEATURES_BOUNDED_FLOOR: bounded-floor feature.
  * @WEBKIT_XR_SESSION_FEATURES_UNBOUNDED: unbounded feature.
  * @WEBKIT_XR_SESSION_FEATURES_HAND_TRACKING: hand tracking feature.
+ * @WEBKIT_XR_SESSION_FEATURES_HIT_TEST: hit test feature.
+ * @WEBKIT_XR_SESSION_FEATURES_LAYERS: WebXR Layers feature.
  *
  * Enum values representing the XR session features.
+ *
+ * See <https://immersive-web.github.io/webxr/#xrreferencespace-interface>.
+ * And, see <https://immersive-web.github.io/webxr-hand-input/> for hand tracking.
  *
  * Since: 2.52
  */
@@ -79,6 +86,8 @@ typedef enum {
     WEBKIT_XR_SESSION_FEATURES_BOUNDED_FLOOR = 1 << 3,
     WEBKIT_XR_SESSION_FEATURES_UNBOUNDED     = 1 << 4,
     WEBKIT_XR_SESSION_FEATURES_HAND_TRACKING = 1 << 5,
+    WEBKIT_XR_SESSION_FEATURES_HIT_TEST      = 1 << 6,
+    WEBKIT_XR_SESSION_FEATURES_LAYERS        = 1 << 7,
 } WebKitXRSessionFeatures;
 
 WEBKIT_API WebKitSecurityOrigin *
@@ -88,22 +97,22 @@ WEBKIT_API WebKitXRSessionMode
 webkit_xr_permission_request_get_session_mode                (WebKitXRPermissionRequest *request);
 
 WEBKIT_API WebKitXRSessionFeatures
-webkit_xr_permission_request_get_granted_features            (WebKitXRPermissionRequest *request);
+webkit_xr_permission_request_get_granted_features            (WebKitXRPermissionRequest *request) G_GNUC_WARN_UNUSED_RESULT;
 
 WEBKIT_API WebKitXRSessionFeatures
-webkit_xr_permission_request_get_consent_required_features   (WebKitXRPermissionRequest *request);
+webkit_xr_permission_request_get_consent_required_features   (WebKitXRPermissionRequest *request) G_GNUC_WARN_UNUSED_RESULT;
 
 WEBKIT_API WebKitXRSessionFeatures
-webkit_xr_permission_request_get_consent_optional_features   (WebKitXRPermissionRequest *request);
+webkit_xr_permission_request_get_consent_optional_features   (WebKitXRPermissionRequest *request) G_GNUC_WARN_UNUSED_RESULT;
 
 WEBKIT_API WebKitXRSessionFeatures
-webkit_xr_permission_request_get_required_features_requested (WebKitXRPermissionRequest *request);
+webkit_xr_permission_request_get_required_features_requested (WebKitXRPermissionRequest *request) G_GNUC_WARN_UNUSED_RESULT;
 
 WEBKIT_API WebKitXRSessionFeatures
-webkit_xr_permission_request_get_optional_features_requested (WebKitXRPermissionRequest *request);
+webkit_xr_permission_request_get_optional_features_requested (WebKitXRPermissionRequest *request) G_GNUC_WARN_UNUSED_RESULT;
 
 WEBKIT_API void
-webkit_xr_permission_request_set_granted_features            (WebKitXRPermissionRequest *request,
+webkit_xr_permission_request_set_granted_optional_features   (WebKitXRPermissionRequest *request,
                                                               WebKitXRSessionFeatures    granted);
 
 G_END_DECLS

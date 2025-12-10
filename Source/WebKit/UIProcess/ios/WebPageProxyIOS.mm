@@ -32,6 +32,7 @@
 #import "APIPageConfiguration.h"
 #import "APIUIClient.h"
 #import "APIWebsitePolicies.h"
+#import "BrowsingContextGroup.h"
 #import "Connection.h"
 #import "DocumentEditingContext.h"
 #import "DragInitiationResult.h"
@@ -49,9 +50,11 @@
 #import "PaymentAuthorizationController.h"
 #import "PrintInfo.h"
 #import "ProvisionalPageProxy.h"
+#import "RemoteLayerTreeCommitBundle.h"
 #import "RemoteLayerTreeHost.h"
 #import "RemoteLayerTreeNode.h"
 #import "RemoteLayerTreeTransaction.h"
+#import "RemotePageProxy.h"
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "RevealItem.h"
 #import "TapHandlingResult.h"
@@ -333,14 +336,26 @@ WebCore::ScreenOrientationType WebPageProxy::toScreenOrientationType(IntDegrees 
 
 void WebPageProxy::setDeviceOrientation(IntDegrees deviceOrientation)
 {
-    if (m_screenOrientationManager)
-        m_screenOrientationManager->setCurrentOrientation(toScreenOrientationType(deviceOrientation));
+    if (deviceOrientation == m_deviceOrientation)
+        return;
 
-    if (deviceOrientation != m_deviceOrientation) {
-        m_deviceOrientation = deviceOrientation;
-        if (hasRunningProcess())
-            m_legacyMainFrameProcess->send(Messages::WebPage::SetDeviceOrientation(deviceOrientation), webPageIDInMainFrameProcess());
-    }
+    m_deviceOrientation = deviceOrientation;
+    auto orientation = toScreenOrientationType(deviceOrientation);
+
+    // Update screen orientation for main page and all remote pages (site-isolated iframes)
+    if (m_screenOrientationManager)
+        m_screenOrientationManager->setCurrentOrientation(orientation);
+
+    protectedBrowsingContextGroup()->forEachRemotePage(*this, [orientation](auto& remotePageProxy) {
+        remotePageProxy.setCurrentOrientation(orientation);
+    });
+
+    // Update device orientation for all web processes
+    forEachWebContentProcess([deviceOrientation](auto& process, auto pageID) {
+        if (!process.hasConnection())
+            return;
+        process.send(Messages::WebPage::SetDeviceOrientation(deviceOrientation), pageID);
+    });
 }
 
 void WebPageProxy::setOverrideViewportArguments(const std::optional<ViewportArguments>& viewportArguments)
@@ -352,15 +367,15 @@ void WebPageProxy::setOverrideViewportArguments(const std::optional<ViewportArgu
         m_legacyMainFrameProcess->send(Messages::WebPage::SetOverrideViewportArguments(viewportArguments), webPageIDInMainFrameProcess());
 }
 
-bool WebPageProxy::updateLayoutViewportParameters(const RemoteLayerTreeTransaction& layerTreeTransaction)
+bool WebPageProxy::updateLayoutViewportParameters(const MainFrameData& mainFrameData)
 {
-    if (internals().baseLayoutViewportSize == layerTreeTransaction.baseLayoutViewportSize()
-        && internals().minStableLayoutViewportOrigin == layerTreeTransaction.minStableLayoutViewportOrigin()
-        && internals().maxStableLayoutViewportOrigin == layerTreeTransaction.maxStableLayoutViewportOrigin())
+    if (internals().baseLayoutViewportSize == mainFrameData.baseLayoutViewportSize
+        && internals().minStableLayoutViewportOrigin == mainFrameData.minStableLayoutViewportOrigin
+        && internals().maxStableLayoutViewportOrigin == mainFrameData.maxStableLayoutViewportOrigin)
         return false;
-    internals().baseLayoutViewportSize = layerTreeTransaction.baseLayoutViewportSize();
-    internals().minStableLayoutViewportOrigin = layerTreeTransaction.minStableLayoutViewportOrigin();
-    internals().maxStableLayoutViewportOrigin = layerTreeTransaction.maxStableLayoutViewportOrigin();
+    internals().baseLayoutViewportSize = mainFrameData.baseLayoutViewportSize;
+    internals().minStableLayoutViewportOrigin = mainFrameData.minStableLayoutViewportOrigin;
+    internals().maxStableLayoutViewportOrigin = mainFrameData.maxStableLayoutViewportOrigin;
     LOG_WITH_STREAM(VisibleRects, stream << "WebPageProxy::updateLayoutViewportParameters: baseLayoutViewportSize: " << internals().baseLayoutViewportSize << " minStableLayoutViewportOrigin: " << internals().minStableLayoutViewportOrigin << " maxStableLayoutViewportOrigin: " << internals().maxStableLayoutViewportOrigin);
     return true;
 }
@@ -776,6 +791,18 @@ void WebPageProxy::relayAccessibilityNotification(String&& notificationName, std
         pageClient->relayAccessibilityNotification(WTFMove(notificationName), toNSData(data));
 }
 
+void WebPageProxy::relayAriaNotifyNotification(WebCore::AriaNotifyData&& notificationData)
+{
+    if (RefPtr pageClient = this->pageClient())
+        pageClient->relayAriaNotifyNotification(notificationData);
+}
+
+void WebPageProxy::relayLiveRegionNotification(WebCore::LiveRegionAnnouncementData&& notificationData)
+{
+    if (RefPtr pageClient = this->pageClient())
+        pageClient->relayLiveRegionNotification(notificationData);
+}
+
 void WebPageProxy::assistiveTechnologyMakeFirstResponder()
 {
     if (RefPtr pageClient = this->pageClient())
@@ -826,7 +853,7 @@ void WebPageProxy::potentialTapAtPosition(std::optional<WebCore::FrameIdentifier
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
-        protectedThis->potentialTapAtPosition(data->targetFrameID, data->transformedPoint, shouldRequestMagnificationInformation, requestID);
+        protectedThis->potentialTapAtPosition(data->targetFrameID, FloatPoint(data->transformedPoint), shouldRequestMagnificationInformation, requestID);
     } });
 }
 
@@ -1161,7 +1188,27 @@ std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToPDFiOS(FrameIde
         return std::nullopt;
     }
 
-    return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawToPDFiOS(frameID, printInfo, pageCount), WTFMove(completionHandler));
+    Ref preferences = this->preferences();
+    if (!(preferences->remoteSnapshottingEnabled() && preferences->useGPUProcessForDOMRenderingEnabled()))
+        return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawToPDFiOS(frameID, printInfo, pageCount), WTFMove(completionHandler));
+
+    auto snapshotIdentifier = RemoteSnapshotIdentifier::generate();
+    Ref gpuProcess = GPUProcessProxy::getOrCreate();
+    CompletionHandler<void(std::optional<FloatSize>&&)> snapshotCallback = [weakGPUProcess = WeakPtr { gpuProcess }, snapshotIdentifier, completionHandler = WTFMove(completionHandler), rootFrameIdentifier = frameID](std::optional<FloatSize> result) mutable {
+        RefPtr gpuProcess = weakGPUProcess.get();
+        if (!gpuProcess || !gpuProcess->hasConnection()) {
+            completionHandler({ });
+            return;
+        }
+        if (!result) {
+            gpuProcess->releaseSnapshot(snapshotIdentifier);
+            completionHandler({ });
+            return;
+        }
+        gpuProcess->sinkCompletedSnapshotToPDF(snapshotIdentifier, *result, rootFrameIdentifier, WTFMove(completionHandler));
+    };
+
+    return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPrintingPagesToSnapshotiOS(snapshotIdentifier, frameID, printInfo, pageCount), WTFMove(snapshotCallback));
 }
 
 std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToImage(FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
@@ -1171,7 +1218,27 @@ std::optional<IPC::Connection::AsyncReplyID> WebPageProxy::drawToImage(FrameIden
         return std::nullopt;
     }
 
-    return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawToImage(frameID, printInfo), WTFMove(completionHandler));
+    Ref preferences = this->preferences();
+    if (!(preferences->remoteSnapshottingEnabled() && preferences->useGPUProcessForDOMRenderingEnabled()))
+        return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawToImage(frameID, printInfo), WTFMove(completionHandler));
+
+    auto snapshotIdentifier = RemoteSnapshotIdentifier::generate();
+    Ref gpuProcess = GPUProcessProxy::getOrCreate();
+    CompletionHandler<void(std::optional<FloatSize>&&)> snapshotCallback = [weakGPUProcess = WeakPtr { gpuProcess }, snapshotIdentifier, completionHandler = WTFMove(completionHandler), rootFrameIdentifier = frameID](std::optional<FloatSize> result) mutable {
+        RefPtr gpuProcess = weakGPUProcess.get();
+        if (!gpuProcess || !gpuProcess->hasConnection()) {
+            completionHandler({ });
+            return;
+        }
+        if (!result) {
+            gpuProcess->releaseSnapshot(snapshotIdentifier);
+            completionHandler({ });
+            return;
+        }
+        gpuProcess->sinkCompletedSnapshotToBitmap(snapshotIdentifier, *result, rootFrameIdentifier, WTFMove(completionHandler));
+    };
+
+    return sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPrintingToSnapshotiOS(snapshotIdentifier, frameID, printInfo), WTFMove(snapshotCallback));
 }
 
 void WebPageProxy::contentSizeCategoryDidChange(const String& contentSizeCategory)
@@ -1440,15 +1507,16 @@ void WebPageProxy::Internals::getWindowSceneAndBundleIdentifierForPaymentPresent
     completionHandler(nullString(), nullString());
 }
 
+void WebPageProxy::Internals::notifyWillPresentPaymentUI(WebPageProxyIdentifier)
+{
+    ASSERT_NOT_REACHED();
+}
+
 #endif
 
 static bool desktopClassBrowsingSupported()
 {
-    static bool supportsDesktopClassBrowsing = false;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        supportsDesktopClassBrowsing = !PAL::currentUserInterfaceIdiomIsSmallScreen();
-    });
+    static bool supportsDesktopClassBrowsing = !PAL::currentUserInterfaceIdiomIsSmallScreen();
     return supportsDesktopClassBrowsing;
 }
 
@@ -1493,9 +1561,8 @@ bool WebPageProxy::isDesktopClassBrowsingRecommended(const WebCore::ResourceRequ
         return false;
 #endif
 
-    static bool shouldRecommendDesktopClassBrowsing = false;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    static bool shouldRecommendDesktopClassBrowsing = [&] {
+        bool shouldRecommendDesktopClassBrowsing = false;
 #if PLATFORM(MACCATALYST)
         shouldRecommendDesktopClassBrowsing = desktopClassBrowsingSupported();
 #else
@@ -1508,7 +1575,8 @@ bool WebPageProxy::isDesktopClassBrowsingRecommended(const WebCore::ResourceRequ
             // WKWebView on appropriately-sized iPad models.
             shouldRecommendDesktopClassBrowsing = false;
         }
-    });
+        return shouldRecommendDesktopClassBrowsing;
+    }();
     return shouldRecommendDesktopClassBrowsing;
 }
 

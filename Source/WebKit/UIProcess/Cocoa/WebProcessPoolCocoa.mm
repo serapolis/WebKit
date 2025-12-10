@@ -85,6 +85,7 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/FileSystem.h>
+#import <wtf/OSObjectPtr.h>
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/StdLibExtras.h>
@@ -231,6 +232,7 @@ static void registerUserDefaults()
     
     [registrationDictionary setObject:@YES forKey:WebKitJSCJITEnabledDefaultsKey];
     [registrationDictionary setObject:@YES forKey:WebKitJSCFTLJITEnabledDefaultsKey];
+    [registrationDictionary setObject:@YES forKey:@"WebKitPrefersFullScreenDimming"];
 
     [[NSUserDefaults standardUserDefaults] registerDefaults:registrationDictionary.get()];
 }
@@ -263,6 +265,16 @@ NSMutableDictionary *WebProcessPool::ensureBundleParameters()
     return m_bundleParameters.get();
 }
 
+RetainPtr<NSMutableDictionary> WebProcessPool::ensureProtectedBundleParameters()
+{
+    return ensureBundleParameters();
+}
+
+RetainPtr<NSMutableDictionary> WebProcessPool::protectedBundleParameters()
+{
+    return bundleParameters();
+}
+
 static AccessibilityPreferences accessibilityPreferences()
 {
     AccessibilityPreferences preferences;
@@ -287,11 +299,7 @@ static AccessibilityPreferences accessibilityPreferences()
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
 void WebProcessPool::setMediaAccessibilityPreferences(WebProcessProxy& process)
 {
-    static LazyNeverDestroyed<RetainPtr<dispatch_queue_t>> mediaAccessibilityQueue;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        mediaAccessibilityQueue.construct(adoptNS(dispatch_queue_create("MediaAccessibility queue", DISPATCH_QUEUE_SERIAL)));
-    });
+    static NeverDestroyed<OSObjectPtr<dispatch_queue_t>> mediaAccessibilityQueue = adoptOSObject(dispatch_queue_create("MediaAccessibility queue", DISPATCH_QUEUE_SERIAL));
 
     dispatch_async(mediaAccessibilityQueue.get().get(), [weakProcess = WeakPtr { process }] {
         auto captionDisplayMode = WebCore::CaptionUserPreferencesMediaAF::platformCaptionDisplayMode();
@@ -360,17 +368,16 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization needsGlo
     [WKWebInspectorPreferenceObserver sharedInstance];
 #endif
 
-    PAL::registerNotifyCallback("com.apple.WebKit.logProcessState"_s, ^{
+    PAL::registerNotifyCallback("com.apple.WebKit.logProcessState"_s, [] {
         for (const auto& pool : WebProcessPool::allProcessPools())
             logProcessPoolState(pool.get());
     });
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    PAL::registerNotifyCallback("com.apple.WebKit.restrictedDomains"_s, ^{
+    PAL::registerNotifyCallback("com.apple.WebKit.restrictedDomains"_s, [] {
         RestrictedOpenerDomainsController::singleton();
     });
 #endif
-
 }
 
 void WebProcessPool::platformResolvePathsForSandboxExtensions()
@@ -720,7 +727,7 @@ void WebProcessPool::hardwareKeyboardAvailabilityChanged()
 
 void WebProcessPool::initializeHardwareKeyboardAvailability()
 {
-    dispatch_async(globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), makeBlockPtr([weakThis = WeakPtr { *this }] {
+    dispatch_async(globalDispatchQueueSingleton(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), makeBlockPtr([weakThis = WeakPtr { *this }]() mutable {
         auto keyboardState = currentHardwareKeyboardState();
         callOnMainRunLoop([weakThis = WTFMove(weakThis), keyboardState] {
             RefPtr protectedThis = weakThis.get();
@@ -805,18 +812,18 @@ void WebProcessPool::registerNotificationObservers()
         return notifyToken;
     });
 
-    const Vector<NSString*> nsNotificationMessages = {
+    const Vector<RetainPtr<NSString>> nsNotificationMessages = {
         NSProcessInfoPowerStateDidChangeNotification
     };
-    m_notificationObservers = WTF::compactMap(nsNotificationMessages, [weakThis = WeakPtr { *this }](NSString* message) -> RetainPtr<NSObject>  {
-        RetainPtr observer = [[NSNotificationCenter defaultCenter] addObserverForName:message object:nil queue:[NSOperationQueue currentQueue] usingBlock:[weakThis, message](NSNotification *notification) {
+    m_notificationObservers = WTF::compactMap(nsNotificationMessages, [weakThis = WeakPtr { *this }](const RetainPtr<NSString>& message) -> RetainPtr<NSObject>  {
+        RetainPtr observer = [[NSNotificationCenter defaultCenter] addObserverForName:message.get() object:nil queue:[NSOperationQueue currentQueue] usingBlock:[weakThis, message](NSNotification *notification) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
             if (!protectedThis->m_processes.isEmpty()) {
-                String messageString(message);
+                String messageString(message.get());
                 for (auto& process : protectedThis->m_processes)
-                    process->send(Messages::WebProcess::PostObserverNotification(message), 0);
+                    process->send(Messages::WebProcess::PostObserverNotification(messageString), 0);
             }
         }];
         return observer;
@@ -831,7 +838,7 @@ void WebProcessPool::registerNotificationObservers()
     m_systemSleepListener = PAL::SystemSleepListener::create(*this);
     // Listen for enhanced accessibility changes and propagate them to the WebProcess.
     m_enhancedAccessibilityObserver = [[NSNotificationCenter defaultCenter] addObserverForName:WebKitApplicationDidChangeAccessibilityEnhancedUserInterfaceNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *note) {
-        setEnhancedAccessibility([[[note userInfo] objectForKey:@"AXEnhancedUserInterface"] boolValue]);
+        setEnhancedAccessibility([[retainPtr([note userInfo]) objectForKey:@"AXEnhancedUserInterface"] boolValue]);
     }];
 
     m_automaticTextReplacementNotificationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSSpellCheckerDidChangeAutomaticTextReplacementNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *notification) {
@@ -854,18 +861,7 @@ void WebProcessPool::registerNotificationObservers()
         textCheckerStateChanged();
     }];
 
-    // FIXME: This isn't that ideal since it listens to every user default change and not just the smart lists default.
-    m_smartListsNotificationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *notification) {
-        TextChecker::didChangeSmartListsEnabled();
-
-        auto newValue = TextChecker::state().contains(TextCheckerState::SmartListsEnabled);
-        if (std::exchange(m_smartListsEnabled, newValue) == newValue)
-            return;
-
-        textCheckerStateChanged();
-    }];
-
-    m_accessibilityDisplayOptionsNotificationObserver = [[NSWorkspace.sharedWorkspace notificationCenter] addObserverForName:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *notification) {
+    m_accessibilityDisplayOptionsNotificationObserver = [retainPtr([NSWorkspace.sharedWorkspace notificationCenter]) addObserverForName:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil queue:[NSOperationQueue currentQueue] usingBlock:^(NSNotification *notification) {
         screenPropertiesChanged();
     }];
 
@@ -897,7 +893,7 @@ void WebProcessPool::registerNotificationObservers()
     }];
 #endif
 
-    addCFNotificationObserver(colorPreferencesDidChangeCallback, AppleColorPreferencesChangedNotification, CFNotificationCenterGetDistributedCenterSingleton());
+    addCFNotificationObserver(colorPreferencesDidChangeCallback, RetainPtr { AppleColorPreferencesChangedNotification }.get(), CFNotificationCenterGetDistributedCenterSingleton());
 
     const char* messages[] = { kNotifyDSCacheInvalidation, kNotifyDSCacheInvalidationGroup, kNotifyDSCacheInvalidationHost, kNotifyDSCacheInvalidationService, kNotifyDSCacheInvalidationUser };
     m_openDirectoryNotifyTokens.reserveInitialCapacity(std::size(messages));
@@ -993,7 +989,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #endif
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (canLoadkAXSReduceMotionAutoplayAnimatedImagesChangedNotification())
-        addCFNotificationObserver(accessibilityPreferencesChangedCallback, getkAXSReduceMotionAutoplayAnimatedImagesChangedNotification());
+        addCFNotificationObserver(accessibilityPreferencesChangedCallback, getkAXSReduceMotionAutoplayAnimatedImagesChangedNotificationSingleton());
 #endif
 #if ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     addCFNotificationObserver(accessibilityPreferencesChangedCallback, kAXSPrefersNonBlinkingCursorIndicatorDidChangeNotification);
@@ -1023,8 +1019,7 @@ void WebProcessPool::unregisterNotificationObservers()
     [[NSNotificationCenter defaultCenter] removeObserver:m_automaticSpellingCorrectionNotificationObserver.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_automaticQuoteSubstitutionNotificationObserver.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_automaticDashSubstitutionNotificationObserver.get()];
-    [[NSNotificationCenter defaultCenter] removeObserver:m_smartListsNotificationObserver.get()];
-    [[NSWorkspace.sharedWorkspace notificationCenter] removeObserver:m_accessibilityDisplayOptionsNotificationObserver.get()];
+    [retainPtr([NSWorkspace.sharedWorkspace notificationCenter]) removeObserver:m_accessibilityDisplayOptionsNotificationObserver.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_scrollerStyleNotificationObserver.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_deactivationObserver.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_didChangeScreenParametersNotificationObserver.get()];
@@ -1032,7 +1027,7 @@ void WebProcessPool::unregisterNotificationObservers()
     [[NSNotificationCenter defaultCenter] removeObserver:m_didBeginSuppressingHighDynamicRange.get()];
     [[NSNotificationCenter defaultCenter] removeObserver:m_didEndSuppressingHighDynamicRange.get()];
 #endif
-    removeCFNotificationObserver(AppleColorPreferencesChangedNotification, CFNotificationCenterGetDistributedCenterSingleton());
+    removeCFNotificationObserver(RetainPtr { AppleColorPreferencesChangedNotification }.get(), CFNotificationCenterGetDistributedCenterSingleton());
     for (auto token : m_openDirectoryNotifyTokens)
         notify_cancel(token);
 #elif !PLATFORM(MACCATALYST)
@@ -1113,7 +1108,7 @@ void WebProcessPool::clearPermanentCredentialsForProtectionSpace(WebCore::Protec
     for (NSString* user in credentials.get()) {
         RetainPtr<NSURLCredential> credential = credentials.get()[user];
         if (credential.get().persistence == NSURLCredentialPersistencePermanent)
-            [sharedStorage removeCredential:credentials.get()[user] forProtectionSpace:space.get()];
+            [sharedStorage removeCredential:retainPtr(credentials.get()[user]).get() forProtectionSpace:space.get()];
     }
 }
 
@@ -1625,7 +1620,7 @@ void WebProcessPool::registerAssetFonts(WebProcessProxy& process)
     for (auto& fontName : assetFonts)
         [descriptions addObject:(__bridge id)fontDescription(fontName).get()];
 
-    auto blockPtr = makeBlockPtr([assetFonts = WTFMove(assetFonts), weakProcess = WeakPtr { process }, weakThis = WeakPtr { *this }](CTFontDescriptorMatchingState state, CFDictionaryRef progressParameter) {
+    auto blockPtr = makeBlockPtr([assetFonts = WTFMove(assetFonts), weakProcess = WeakPtr { process }, weakThis = WeakPtr { *this }](CTFontDescriptorMatchingState state, CFDictionaryRef progressParameter) mutable {
         if (state != kCTFontDescriptorMatchingDidFinish)
             return true;
         RELEASE_LOG(Process, "Font matching finished, progress parameter = %@", (__bridge id)progressParameter);

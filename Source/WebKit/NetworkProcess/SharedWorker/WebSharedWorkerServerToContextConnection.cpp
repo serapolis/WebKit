@@ -161,7 +161,7 @@ void WebSharedWorkerServerToContextConnection::resumeSharedWorker(WebCore::Share
 void WebSharedWorkerServerToContextConnection::postConnectEvent(const WebSharedWorker& sharedWorker, const WebCore::TransferredMessagePort& port, CompletionHandler<void(bool)>&& completionHandler)
 {
     CONTEXT_CONNECTION_RELEASE_LOG("postConnectEvent: sharedWorkerIdentifier=%" PRIu64, sharedWorker.identifier().toUInt64());
-    sendWithAsyncReply(Messages::WebSharedWorkerContextManagerConnection::PostConnectEvent { sharedWorker.identifier(), port, sharedWorker.origin().clientOrigin.toString() }, WTFMove(completionHandler));
+    sendWithAsyncReply(Messages::WebSharedWorkerContextManagerConnection::PostConnectEvent { sharedWorker.identifier(), port, sharedWorker.origin().clientOrigin }, WTFMove(completionHandler));
 }
 
 void WebSharedWorkerServerToContextConnection::terminateSharedWorker(const WebSharedWorker& sharedWorker)

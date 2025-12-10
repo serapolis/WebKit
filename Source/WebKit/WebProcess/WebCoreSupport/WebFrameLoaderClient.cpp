@@ -155,14 +155,13 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         navigationAction.isInitialFrameSrcLoad(),
         navigationAction.isContentRuleListRedirect(),
         { },
-        requester.securityOrigin->data(),
-        requester.topOrigin->data(),
         navigationAction.targetBackForwardItemIdentifier(),
         navigationAction.sourceBackForwardItemIdentifier(),
         navigationAction.lockHistory(),
         navigationAction.lockBackForwardList(),
         clientRedirectSourceForHistory,
         sandboxFlags,
+        ReferrerPolicy::EmptyString,
         WTFMove(ownerPermissionsPolicy),
         navigationAction.privateClickMeasurement(),
         requestingFrame ? requestingFrame->advancedPrivacyProtections() : OptionSet<AdvancedPrivacyProtections> { },
@@ -177,6 +176,7 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         navigationAction.originalRequest(),
         request,
         request.url().isValid() ? String() : request.url().string(),
+        requester,
     };
 }
 
@@ -234,10 +234,34 @@ void WebFrameLoaderClient::updateSandboxFlags(SandboxFlags sandboxFlags)
         webPage->send(Messages::WebPageProxy::UpdateSandboxFlags(m_frame->frameID(), sandboxFlags));
 }
 
-void WebFrameLoaderClient::updateOpener(const WebCore::Frame& newOpener)
+void WebFrameLoaderClient::updateReferrerPolicy(ReferrerPolicy referrerPolicy)
 {
     if (RefPtr webPage = m_frame->page())
-        webPage->send(Messages::WebPageProxy::UpdateOpener(m_frame->frameID(), newOpener.frameID()));
+        webPage->send(Messages::WebPageProxy::UpdateReferrerPolicy(m_frame->frameID(), referrerPolicy));
+}
+
+void WebFrameLoaderClient::updateOpener(std::optional<WebCore::FrameIdentifier> newFrameOpenerIdentifier)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::UpdateOpener(m_frame->frameID(), newFrameOpenerIdentifier));
+}
+
+void WebFrameLoaderClient::setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize adjustViewSize)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::SetFramePrinting(m_frame->frameID(), printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize));
+}
+
+void WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::BroadcastAllFrameTreeSyncData(m_frame->frameID(), data));
+}
+
+void WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(const FrameTreeSyncSerializationData& data)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::BroadcastFrameTreeSyncData(m_frame->frameID(), data));
 }
 
 }

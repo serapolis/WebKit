@@ -193,7 +193,7 @@ class JSCBuildFactory(Factory):
         Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=triggers, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
         self.addStep(KillOldProcesses())
         self.addStep(ValidateChange(addURLs=False))
-        self.addStep(CompileJSC32() if architectures and 'armv7' in architectures else CompileJSC())
+        self.addStep(CompileJSC())
 
 
 class JSCBuildAndTestsFactory(Factory):
@@ -201,9 +201,9 @@ class JSCBuildAndTestsFactory(Factory):
         Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, remotes=remotes, additionalArguments=additionalArguments, checkRelevance=True)
         self.addStep(KillOldProcesses())
         self.addStep(ValidateChange(addURLs=False))
-        self.addStep(CompileJSC32(skipUpload=True) if architectures and 'armv7' in architectures else CompileJSC(skipUpload=True))
+        self.addStep(CompileJSC(skipUpload=True))
         if runTests.lower() == 'true':
-            self.addStep(RunJavaScriptCoreTests32() if architectures and 'armv7' in architectures else RunJavaScriptCoreTests())
+            self.addStep(RunJavaScriptCoreTests())
 
 
 class JSCTestsFactory(Factory):
@@ -212,7 +212,7 @@ class JSCTestsFactory(Factory):
         self.addStep(KillOldProcesses())
         self.addStep(DownloadBuiltProduct())
         self.addStep(ExtractBuiltProduct())
-        self.addStep(RunJavaScriptCoreTests32() if architectures and 'armv7' in architectures else RunJavaScriptCoreTests())
+        self.addStep(RunJavaScriptCoreTests())
 
 
 class APITestsFactory(TestFactory):
@@ -308,7 +308,7 @@ class WPEBuildFactory(BuildFactory):
     branches = [r'main', r'webkit.+']
 
 
-class WPECairoBuildFactory(WPEBuildFactory):
+class WPECairoLibWebRTCBuildFactory(WPEBuildFactory):
     skipUpload = True
 
 
@@ -321,8 +321,7 @@ class ServicesFactory(Factory):
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
         Factory.__init__(self, platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, additionalArguments=additionalArguments, checkRelevance=True)
         self.addStep(ValidateChange(verifyBugClosed=False, addURLs=False))
-        # TODO: update unit-tests for Buildbot 4, see https://bugs.webkit.org/show_bug.cgi?id=299036
-        # self.addStep(RunBuildWebKitOrgUnitTests())
+        self.addStep(RunBuildWebKitOrgUnitTests())
         self.addStep(RunBuildbotCheckConfigForBuildWebKit())
         self.addStep(RunEWSUnitTests())
         self.addStep(RunBuildbotCheckConfigForEWS())

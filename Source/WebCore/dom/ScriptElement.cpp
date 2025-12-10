@@ -31,22 +31,28 @@
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginAccessControl.h"
 #include "CurrentScriptIncrementer.h"
+#include "DOMWrapperWorld.h"
+#include "DocumentEventLoop.h"
 #include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
+#include "HTMLAnchorElement.h"
+#include "HTMLCollection.h"
 #include "HTMLNames.h"
 #include "HTMLScriptElement.h"
 #include "IgnoreDestructiveWriteCountIncrementer.h"
 #include "InlineClassicScript.h"
 #include "LoadableClassicScript.h"
 #include "LoadableModuleScript.h"
+#include "LoadableScriptError.h"
 #include "LocalFrame.h"
 #include "MIMETypeRegistry.h"
 #include "ModuleFetchParameters.h"
-#include "Page.h"
 #include "PendingScript.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGScriptElement.h"
@@ -58,7 +64,12 @@
 #include "Settings.h"
 #include "TextNodeTraversal.h"
 #include "TrustedType.h"
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ImportMap.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSLock.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/Scope.h>
 #include <wtf/SystemTracing.h>
@@ -124,8 +135,26 @@ void ScriptElement::dispatchErrorEvent()
     protectedElement()->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
+static void reportSpeculationRulesError(LocalFrame& frame, const String& errorMessage)
+{
+    // https://html.spec.whatwg.org/C#report-an-exception
+    auto& world = mainThreadNormalWorldSingleton();
+    JSC::VM& vm = world.vm();
+    JSC::JSLockHolder lock(vm);
+
+    if (auto* jsGlobalObject = frame.checkedScript()->globalObject(world)) {
+        auto* error = JSC::createTypeError(jsGlobalObject, errorMessage);
+        LoadableScript::Error scriptError {
+            LoadableScriptErrorType::Script,
+            std::nullopt,
+            JSC::Strong<JSC::Unknown>(vm, error)
+        };
+        frame.checkedScript()->reportExceptionFromScriptError(scriptError, false);
+    }
+}
+
 // https://html.spec.whatwg.org/C#prepare-the-script-element (Steps 8-12)
-std::optional<ScriptType> ScriptElement::determineScriptType(const String& type, const String& language, bool isHTMLDocument)
+std::optional<ScriptType> ScriptElement::determineScriptType(const String& type, const String& language, bool isHTMLDocument, bool speculationRulesPrefetchEnabled)
 {
     // Step 8. If any of the following are true:
     //  - el has a type attribute whose value is the empty string;
@@ -161,12 +190,16 @@ std::optional<ScriptType> ScriptElement::determineScriptType(const String& type,
     if (equalLettersIgnoringASCIICase(type, "importmap"_s))
         return ScriptType::ImportMap;
 
+    // Step 12. Otherwise, if the script block's type string is an ASCII case-insensitive match for the string "speculationrules", then set el's type to "speculationrules".
+    if (speculationRulesPrefetchEnabled && equalLettersIgnoringASCIICase(type, "speculationrules"_s))
+        return ScriptType::SpeculationRules;
+
     return std::nullopt;
 }
 
 std::optional<ScriptType> ScriptElement::determineScriptType() const
 {
-    return determineScriptType(typeAttributeValue(), languageAttributeValue(), element().document().isHTMLDocument());
+    return determineScriptType(typeAttributeValue(), languageAttributeValue(), element().document().isHTMLDocument(), element().document().settings().speculationRulesPrefetchEnabled());
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#prepare-the-script-element
@@ -258,8 +291,9 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
         potentiallyBlockRendering();
         break;
     }
-    case ScriptType::ImportMap: {
-        // If the element’s node document's acquiring import maps is false, then queue a task to fire an event named error at the element, and return.
+    case ScriptType::ImportMap:
+    case ScriptType::SpeculationRules: {
+        // If the element has a source attribute, queue a task to fire an event named error at the element, and return.
         if (hasSourceAttribute()) {
             element->protectedDocument()->checkedEventLoop()->queueTask(TaskSource::DOMManipulation, [protectedThis = Ref { *this }] {
                 protectedThis->dispatchErrorEvent();
@@ -293,16 +327,18 @@ bool ScriptElement::prepareScript(const TextPosition& scriptStartPosition)
         ASSERT(hasAsyncAttribute() || m_forceAsync);
         document->protectedScriptRunner()->queueScriptForExecution(*this, *protectedLoadableScript(), ScriptRunner::ASYNC_EXECUTION);
     } else if (!hasSourceAttribute() && m_parserInserted == ParserInserted::Yes && !document->haveStylesheetsLoaded()) {
-        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap);
+        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap || scriptType == ScriptType::SpeculationRules);
         m_willBeParserExecuted = true;
         m_readyToBeParserExecuted = true;
     } else {
-        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap);
+        ASSERT(scriptType == ScriptType::Classic || scriptType == ScriptType::ImportMap || scriptType == ScriptType::SpeculationRules);
         TextPosition position = document->isInDocumentWrite() ? TextPosition() : scriptStartPosition;
         if (scriptType == ScriptType::Classic)
             executeClassicScript(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Program, InlineClassicScript::create(*this)));
-        else
+        else if (scriptType == ScriptType::ImportMap)
             registerImportMap(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::ImportMap));
+        else
+            registerSpeculationRules(ScriptSourceCode(sourceText, m_taintedOrigin, URL(document->url()), position, JSC::SourceProviderSourceType::Program));
     }
 
     return true;
@@ -573,11 +609,13 @@ void ScriptElement::executePendingScript(PendingScript& pendingScript)
             executeScriptAndDispatchEvent(*loadableScript);
         else {
             ASSERT(!pendingScript.hasError());
-            ASSERT_WITH_MESSAGE(scriptType() == ScriptType::Classic || scriptType() == ScriptType::ImportMap, "Module script always have a loadableScript pointer.");
+            ASSERT_WITH_MESSAGE(scriptType() == ScriptType::Classic || scriptType() == ScriptType::ImportMap || (scriptType() == ScriptType::SpeculationRules && document->settings().speculationRulesPrefetchEnabled()), "Module script always have a loadableScript pointer.");
             if (scriptType() == ScriptType::Classic)
                 executeClassicScript(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program, InlineClassicScript::create(*this)));
-            else
+            else if (scriptType() == ScriptType::ImportMap)
                 registerImportMap(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::ImportMap));
+            else
+                registerSpeculationRules(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program));
             dispatchLoadEventRespectingUserGestureIndicator();
         }
     }
@@ -619,5 +657,52 @@ ScriptElement* dynamicDowncastScriptElement(Element& element)
         return htmlElement;
     return dynamicDowncast<SVGScriptElement>(element);
 }
+
+// https://html.spec.whatwg.org/C#register-speculation-rules
+void ScriptElement::registerSpeculationRules(const ScriptSourceCode& sourceCode)
+{
+    ASSERT(m_alreadyStarted);
+    ASSERT(scriptType() == ScriptType::SpeculationRules);
+
+    Ref element = this->element();
+    Ref document = element->document();
+
+    if (!document->settings().speculationRulesPrefetchEnabled())
+        return;
+
+    RefPtr frame = document->frame();
+
+    if (sourceCode.isEmpty()) {
+        dispatchErrorEvent();
+        if (frame)
+            reportSpeculationRulesError(*frame, "Speculation rules script has empty content"_s);
+        return;
+    }
+
+    if (!m_isExternalScript) {
+        CheckedPtr contentSecurityPolicy = document->contentSecurityPolicy();
+        if (!contentSecurityPolicy)
+            return;
+
+        if (!contentSecurityPolicy->allowNonParserInsertedScripts(URL(), document->url(), m_startLineNumber, element->nonce(), emptyString(), sourceCode.source(), m_parserInserted))
+            return;
+
+        if (!contentSecurityPolicy->allowInlineScript(document->url().string(), m_startLineNumber, sourceCode.source(), element, element->nonce(), element->isInUserAgentShadowTree()))
+            return;
+    }
+
+    if (!frame)
+        return;
+
+    if (frame->checkedScript()->registerSpeculationRules(sourceCode, document->baseURL()))
+        document->considerSpeculationRules();
+    else {
+        dispatchErrorEvent();
+        reportSpeculationRulesError(*frame, "Failed to register speculation rules"_s);
+    }
+}
+
+// TODO: Also implement unregister/update speculation rules
+// https://whatpr.org/html/11426/c9c4d33...28571ea/scripting.html#:~:text=The%20script%20%20HTML%20element,result%20%20given%20%20changedNode%20.
 
 }

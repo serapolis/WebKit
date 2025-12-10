@@ -48,10 +48,10 @@
 #endif
 
 #if USE(SKIA)
+#include "ViewSnapshotStore.h"
+
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
-IGNORE_CLANG_WARNINGS_BEGIN("cast-align")
 #include <skia/core/SkPixmap.h>
-IGNORE_CLANG_WARNINGS_END
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
@@ -125,11 +125,15 @@ ViewPlatform::ViewPlatform(WPEDisplay* display, const API::PageConfiguration& co
         webView.toplevelStateChanged(previousState, wpe_view_get_toplevel_state(view));
     }), this);
 #if USE(GBM)
-    g_signal_connect(m_wpeView.get(), "preferred-dma-buf-formats-changed", G_CALLBACK(+[](WPEView*, gpointer userData) {
+    g_signal_connect(m_wpeView.get(), "preferred-buffer-formats-changed", G_CALLBACK(+[](WPEView*, gpointer userData) {
         auto& webView = *reinterpret_cast<ViewPlatform*>(userData);
         webView.page().preferredBufferFormatsDidChange();
     }), this);
 #endif
+    g_signal_connect_after(m_wpeView.get(), "buffer-rendered", G_CALLBACK(+[](WPEView*, WPEBuffer*, gpointer userData) {
+        auto& webView = *reinterpret_cast<ViewPlatform*>(userData);
+        webView.frameDisplayed();
+    }), this);
 
     createWebPage(configuration);
     m_pageProxy->setIntrinsicDeviceScaleFactor(wpe_view_get_scale(m_wpeView.get()));
@@ -137,7 +141,7 @@ ViewPlatform::ViewPlatform(WPEDisplay* display, const API::PageConfiguration& co
     m_backingStore = AcceleratedBackingStore::create(*m_pageProxy, m_wpeView.get());
 
     auto& pageConfiguration = m_pageProxy->configuration();
-    m_pageProxy->initializeWebPage(pageConfiguration.openedSite(), pageConfiguration.initialSandboxFlags());
+    m_pageProxy->initializeWebPage(pageConfiguration.openedSite(), pageConfiguration.initialSandboxFlags(), pageConfiguration.initialReferrerPolicy());
 
     WebCore::SystemSettings::singleton().addObserver([this](const auto& state) {
         if (state.darkMode)
@@ -482,8 +486,8 @@ void ViewPlatform::handleGesture(WPEEvent* event)
                 m_wpeView.get(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0, static_cast<WPEModifiers>(0), dx, dy, TRUE, FALSE, x, y
             ));
             auto phase = wpe_gesture_controller_is_drag_begin(gestureController)
-                ? WebWheelEvent::Phase::PhaseBegan
-                : (wpe_event_get_event_type(event) == WPE_EVENT_TOUCH_UP) ? WebWheelEvent::Phase::PhaseEnded : WebWheelEvent::Phase::PhaseChanged;
+                ? WebWheelEvent::Phase::Began
+                : (wpe_event_get_event_type(event) == WPE_EVENT_TOUCH_UP) ? WebWheelEvent::Phase::Ended : WebWheelEvent::Phase::Changed;
             page().handleNativeWheelEvent(WebKit::NativeWebWheelEvent(simulatedScrollEvent.get(), phase));
         }
     }
@@ -663,6 +667,13 @@ void ViewPlatform::callAfterNextPresentationUpdate(CompletionHandler<void()>&& c
         }), this);
     }
 }
+
+#if USE(SKIA)
+Expected<Ref<ViewSnapshot>, String> ViewPlatform::takeViewSnapshot(std::optional<WebCore::IntRect>&& clipRect)
+{
+    return m_backingStore->takeSnapshot(WTFMove(clipRect));
+}
+#endif
 
 } // namespace WKWPE
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -50,7 +50,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         topFrame = vm.topCallFrame;
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
-            if (skipFirstFrame || topFrame->isPartiallyInitializedFrame()) {
+            if (skipFirstFrame || topFrame->isZombieFrame()) {
                 m_previousReturnPC = topFrame->rawReturnPC();
                 topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
@@ -200,7 +200,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
     switch (callee.category()) {
     case NativeCallee::Category::Wasm: {
 #if ENABLE(WEBASSEMBLY)
-        auto& wasmCallee = static_cast<Wasm::Callee&>(callee);
+        auto& wasmCallee = uncheckedDowncast<Wasm::Callee>(callee);
         auto depth = m_frame.m_wasmDistanceFromDeepestInlineFrame;
         m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
         m_frame.m_returnPC = m_previousReturnPC;
@@ -222,7 +222,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         if (!canInline)
             return;
 
-        const auto& omgCallee = *static_cast<const Wasm::OptimizingJITCallee*>(&wasmCallee);
+        const auto& omgCallee = uncheckedDowncast<const Wasm::OptimizingJITCallee>(wasmCallee);
         bool isInlined = false;
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
@@ -361,7 +361,7 @@ std::optional<RegisterAtOffsetList> StackVisitor::Frame::calleeSaveRegistersForU
         switch (nativeCallee->category()) {
         case NativeCallee::Category::Wasm: {
 #if ENABLE(WEBASSEMBLY)
-            auto* wasmCallee = static_cast<Wasm::Callee*>(nativeCallee);
+            auto* wasmCallee = uncheckedDowncast<Wasm::Callee>(nativeCallee);
             if (auto* calleeSaveRegisters = wasmCallee->calleeSaveRegisters())
                 return *calleeSaveRegisters;
 #endif // ENABLE(WEBASSEMBLY)
@@ -639,8 +639,8 @@ void StackVisitor::Frame::dump(PrintStream& out, Indenter indent, WTF::Function<
 
                     JITType jitType = codeBlock->jitType();
                     if (jitType != JITType::FTLJIT) {
-                        JITCode* jitCode = codeBlock->jitCode().get();
-                        out.print(indent, "jitCode: ", RawPointer(jitCode),
+                        RefPtr jitCode = codeBlock->jitCode();
+                        out.print(indent, "jitCode: ", RawPointer(jitCode.get()),
                             " start ", RawPointer(jitCode->start()),
                             " end ", RawPointer(jitCode->end()), "\n");
                     }

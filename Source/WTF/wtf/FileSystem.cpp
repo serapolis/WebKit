@@ -35,6 +35,7 @@
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -47,6 +48,12 @@
 
 #if HAVE(STD_FILESYSTEM) || HAVE(STD_EXPERIMENTAL_FILESYSTEM)
 #include <wtf/StdFilesystem.h>
+#endif
+
+#if OS(WINDOWS)
+    constexpr char pathSeparator = '\\';
+#else
+    constexpr char pathSeparator = '/';
 #endif
 
 namespace WTF::FileSystemImpl {
@@ -67,7 +74,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 static String fromStdFileSystemPath(const std::filesystem::path& path)
 {
 #if HAVE(MISSING_U8STRING)
-    return String::fromUTF8(unsafeSpan8(path.u8string().c_str()));
+    // FIXME: This uses u8string so how can it be correct inside HAVE(MISSING_U8STRING)?
+    return String::fromUTF8(unsafeSpan(path.u8string().c_str()));
 #else
     return String::fromUTF8(span(path.u8string()));
 #endif
@@ -117,7 +125,7 @@ constexpr std::array<bool, 128> needsEscaping = {
     false, false, false, false, true,  false, false, true,  /* 78-7F */
 };
 
-static inline bool shouldEscapeUChar(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
+static inline bool shouldEscapeChar16(char16_t character, char16_t previousCharacter, char16_t nextCharacter)
 {
     if (character <= 127)
         return needsEscaping[character];
@@ -168,7 +176,7 @@ String encodeForFileName(const String& inputString)
     char16_t nextCharacter = inputString[0];
     for (unsigned i = 0; i < length; ++i) {
         auto character = std::exchange(nextCharacter, i + 1 < length ? inputString[i + 1] : 0);
-        if (shouldEscapeUChar(character, previousCharacter, nextCharacter)) {
+        if (shouldEscapeChar16(character, previousCharacter, nextCharacter)) {
             if (character <= 0xFF)
                 result.append('%', hex(character, 2));
             else
@@ -235,12 +243,6 @@ String decodeFromFilename(const String& inputString)
 
 String lastComponentOfPathIgnoringTrailingSlash(const String& path)
 {
-#if OS(WINDOWS)
-    char pathSeparator = '\\';
-#else
-    char pathSeparator = '/';
-#endif
-
     auto position = path.reverseFind(pathSeparator);
     if (position == notFound)
         return path;
@@ -712,6 +714,15 @@ String createTemporaryFile(StringView prefix, StringView suffix)
     return path;
 }
 
+FileHandle createDumpFile(StringView filename, StringView path)
+{
+    if (path.isEmpty()) {
+        auto [p, handle] = openTemporaryFile(nullString(), filename);
+        return WTFMove(handle);
+    }
+    return openFile(makeString(path, pathSeparator, filename), FileOpenMode::Truncate);
+}
+
 #if !PLATFORM(PLAYSTATION)
 String realPath(const String& path)
 {
@@ -780,7 +791,7 @@ String pathByAppendingComponents(StringView path, std::span<const StringView> co
 
 #endif
 
-#if !OS(WINDOWS) && !PLATFORM(COCOA) && !PLATFORM(PLAYSTATION)
+#if !OS(WINDOWS) && !PLATFORM(COCOA) && !PLATFORM(PLAYSTATION) && !PLATFORM(GLIB)
 
 String createTemporaryDirectory()
 {

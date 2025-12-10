@@ -105,6 +105,7 @@ DECLARE_SYSTEM_HEADER
 
 #if !PLATFORM(MAC) || USE(APPLE_INTERNAL_SDK)
 
+// FIXME: (rdar://165525506) This file is invalid in a module because PassKit has symbols with incorrect linkage.
 // FIXME: PassKit does not declare its NSString constant symbols with C linkage, so we end up with
 // linkage mismatches in the SOFT_LINK_CONSTANT macros used in PassKitSoftLink.mm unless we wrap
 // these includes in an extern "C" block.
@@ -377,6 +378,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 NS_ASSUME_NONNULL_END
 
+// FIXME: (rdar://165525506) This file is invalid in a module because PassKit has symbols with incorrect linkage.
+
 extern "C"
 void PKDrawApplePayButtonWithCornerRadius(_Nonnull CGContextRef, CGRect drawRect, CGFloat scale, CGFloat cornerRadius, PKPaymentButtonType, PKPaymentButtonStyle, NSString * _Nullable languageCode);
 
@@ -396,3 +399,10 @@ NS_ASSUME_NONNULL_END
 #define PAL_PASSKIT_SPI_GUARD_AGAINST_INDIRECT_INCLUSION
 #import "PassKitInstallmentsSPI.h"
 #undef PAL_PASSKIT_SPI_GUARD_AGAINST_INDIRECT_INCLUSION
+
+#if HAVE(PASSKIT_DELEGATED_REQUEST)
+// FIXME: <rdar://165836164> (Remove bincompat staging code from WebKit)
+@interface PKPaymentRequest (DelegatedRequest)
+@property (nonatomic, assign) BOOL isDelegatedRequest;
+@end
+#endif // HAVE(PASSKIT_DELEGATED_REQUEST)

@@ -55,10 +55,12 @@ JITData::JITData(unsigned stubInfoSize, unsigned poolSize, const JITCode& jitCod
         case LinkerIR::Type::StringSymbolReplaceWatchpointSet:
         case LinkerIR::Type::StringSymbolToPrimitiveWatchpointSet:
         case LinkerIR::Type::RegExpPrimordialPropertiesWatchpointSet:
+        case LinkerIR::Type::PromiseThenWatchpointSet:
         case LinkerIR::Type::ArraySpeciesWatchpointSet:
         case LinkerIR::Type::ArrayPrototypeChainIsSaneWatchpointSet:
         case LinkerIR::Type::StringPrototypeChainIsSaneWatchpointSet:
-        case LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet: {
+        case LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet:
+        case LinkerIR::Type::PromiseSpeciesWatchpointSet: {
             ++numberOfWatchpoints;
             break;
         }
@@ -180,6 +182,11 @@ bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode
             success &= attemptToWatch(codeBlock, m_globalObject->regExpPrimordialPropertiesWatchpointSet(), watchpoint);
             break;
         }
+        case LinkerIR::Type::PromiseThenWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->promiseThenWatchpointSet(), watchpoint);
+            break;
+        }
         case LinkerIR::Type::ArraySpeciesWatchpointSet: {
             auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
             success &= attemptToWatch(codeBlock, m_globalObject->arraySpeciesWatchpointSet(), watchpoint);
@@ -198,6 +205,11 @@ bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode
         case LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet: {
             auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
             success &= attemptToWatch(codeBlock, m_globalObject->objectPrototypeChainIsSaneWatchpointSet(), watchpoint);
+            break;
+        }
+        case LinkerIR::Type::PromiseSpeciesWatchpointSet: {
+            auto& watchpoint = m_watchpoints[indexOfWatchpoints++];
+            success &= attemptToWatch(codeBlock, m_globalObject->promiseSpeciesWatchpointSet(), watchpoint);
             break;
         }
         }
@@ -411,10 +423,7 @@ std::optional<CodeOrigin> JITCode::findPC(CodeBlock* codeBlock, void* pc)
 
 void JITCode::finalizeOSREntrypoints(Vector<OSREntryData>&& osrEntry)
 {
-    auto comparator = [] (const auto& a, const auto& b) {
-        return a.m_bytecodeIndex < b.m_bytecodeIndex;
-    };
-    std::sort(osrEntry.begin(), osrEntry.end(), comparator);
+    std::ranges::sort(osrEntry, { }, &OSREntryData::m_bytecodeIndex);
 
 #if ASSERT_ENABLED
     auto verifyIsSorted = [&] (auto& osrVector) {

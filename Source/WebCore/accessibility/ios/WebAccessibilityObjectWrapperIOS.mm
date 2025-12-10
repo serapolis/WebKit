@@ -66,6 +66,10 @@
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+#import "ModelPlayerAccessibilityChildren.h"
+#endif
+
 @interface NSObject (AccessibilityPrivate)
 - (void)_accessibilityUnregister;
 - (NSString *)accessibilityLabel;
@@ -210,7 +214,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     return _textMarkerData.ignored;
 }
 
-- (AccessibilityObject*)accessibilityObject
+- (RefPtr<AccessibilityObject>)accessibilityObject
 {
     return _cache->objectForTextMarkerData(_textMarkerData);
 }
@@ -357,7 +361,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
         return nil;
 
     if (RetainPtr remoteElement = axObject->remoteFramePlatformElement())
-        return remoteElement.get();
+        return remoteElement.unsafeGet();
 
     // If this is a good accessible object to return, no extra work is required.
     if ([axObject->wrapper() accessibilityCanFuzzyHitTest])
@@ -395,10 +399,10 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     }
 
     auto array = adoptNS([[NSMutableArray alloc] init]);
-    for (const auto& child : self.axBackingObject->unignoredChildren()) {
+    for (const auto& child : self.axBackingObject->stitchedUnignoredChildren()) {
         auto* wrapper = child->wrapper();
         if (child->isRemoteFrame()) {
-            if (id platformRemoteFrame = child->remoteFramePlatformElement().get())
+            if (id platformRemoteFrame = child->remoteFramePlatformElement().unsafeGet())
                 [array addObject:platformRemoteFrame];
         } else if (child->isAttachment()) {
             if (id attachmentView = [wrapper attachmentView])
@@ -407,9 +411,9 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
             [array addObject:wrapper];
     }
 
-#if ENABLE(MODEL_ELEMENT)
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
     if (self.axBackingObject->isModel()) {
-        for (auto child : self.axBackingObject->modelElementChildren())
+        for (auto child : self.axBackingObject->modelElementChildren().children)
             [array addObject:child.get()];
     }
 #endif
@@ -427,7 +431,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
             return [attachmentView accessibilityElementCount];
     }
 
-    return self.axBackingObject->unignoredChildren().size();
+    return self.axBackingObject->stitchedUnignoredChildren().size();
 }
 
 - (id)accessibilityElementAtIndex:(NSInteger)index
@@ -440,7 +444,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
             return [attachmentView accessibilityElementAtIndex:index];
     }
 
-    const auto& children = self.axBackingObject->unignoredChildren();
+    const auto& children = self.axBackingObject->stitchedUnignoredChildren();
     size_t elementIndex = static_cast<size_t>(index);
     if (elementIndex >= children.size())
         return nil;
@@ -450,7 +454,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
         if (id attachmentView = [wrapper attachmentView])
             return attachmentView;
     } else if (children[elementIndex]->isRemoteFrame()) {
-        if (id remoteFramePlatformElement = children[elementIndex]->remoteFramePlatformElement().get())
+        if (id remoteFramePlatformElement = children[elementIndex]->remoteFramePlatformElement().unsafeGet())
             return remoteFramePlatformElement;
     }
 
@@ -467,7 +471,7 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
             return [attachmentView indexOfAccessibilityElement:element];
     }
 
-    const auto& children = self.axBackingObject->unignoredChildren();
+    const auto& children = self.axBackingObject->stitchedUnignoredChildren();
     unsigned count = children.size();
     for (unsigned k = 0; k < count; ++k) {
         AccessibilityObjectWrapper* wrapper = children[k]->wrapper();
@@ -647,6 +651,15 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
         return object.isFieldset();
     });
     return ancestor ? ancestor->wrapper() : nil;
+}
+
+// FIXME: Switch to exposing BEAccessibilityContainerTypeFieldset directly in the wrapper via browserAccessibilityContainerType.
+- (BOOL)accessibilityIsFieldset
+{
+    if (![self _prepareAccessibilityCall])
+        return NO;
+
+    return self.axBackingObject->isFieldset();
 }
 
 - (AccessibilityObjectWrapper *)_accessibilityFrameAncestor
@@ -1054,6 +1067,8 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
     case AccessibilityRole::LineBreak:
     case AccessibilityRole::Presentational:
     case AccessibilityRole::RemoteFrame:
+    case AccessibilityRole::LocalFrame:
+    case AccessibilityRole::FrameHost:
     case AccessibilityRole::Unknown:
         return false;
     }
@@ -1441,7 +1456,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     }
 
     if (listItemAncestor && listItemAncestor.get() != self.axBackingObject) {
-        const auto& listItemChildren = listItemAncestor->unignoredChildren();
+        const auto& listItemChildren = listItemAncestor->stitchedUnignoredChildren();
         if (listItemChildren.isEmpty())
             return NSMakeRange(NSNotFound, 0);
 
@@ -1459,7 +1474,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
         })) {
             size_t listItemCount = 0;
             size_t indexOfListItem = notFound;
-            for (Ref child : listAncestor->unignoredChildren()) {
+            for (Ref child : listAncestor->stitchedUnignoredChildren()) {
                 if (child.ptr() == listItemAncestor.get())
                     indexOfListItem = listItemCount;
 
@@ -1814,7 +1829,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     if (role != AccessibilityRole::Link)
         return NO;
 
-    const auto& children = self.axBackingObject->unignoredChildren();
+    const auto& children = self.axBackingObject->stitchedUnignoredChildren();
     unsigned childrenSize = children.size();
 
     // If there's only one child, then it doesn't have segmented children.
@@ -1864,7 +1879,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     if (![self _prepareAccessibilityCall])
         return nil;
 
-    auto* focus = self.axBackingObject->focusedUIElement();
+    auto* focus = self.axBackingObject->focusedUIElementInAnyLocalFrame();
     return focus ? focus->wrapper() : nil;
 }
 
@@ -2000,7 +2015,12 @@ static NSArray *accessibleElementsForObjects(const AXCoreObject::AccessibilityCh
 {
     if (![self _prepareAccessibilityCall])
         return nil;
-    return accessibleElementsForObjects(self.axBackingObject->detailedByObjects());
+
+    return createNSArray(self.axBackingObject->detailedByObjects(), [] (auto&& detailedByObject) -> id {
+        auto wrapper = detailedByObject->wrapper();
+        ASSERT(wrapper);
+        return wrapper;
+    }).autorelease();
 }
 
 - (NSArray *)accessibilityErrorMessageElements
@@ -2357,11 +2377,11 @@ static RenderObject* rendererForView(WAKView* view)
     if (!marker)
         return nil;
 
-    AccessibilityObject* obj = [marker accessibilityObject];
-    if (!obj)
+    RefPtr object = [marker accessibilityObject];
+    if (!object)
         return nil;
 
-    return AccessibilityUnignoredAncestor(obj->wrapper());
+    return AccessibilityUnignoredAncestor(object->wrapper());
 }
 
 - (NSArray *)textMarkerRangeForSelection
@@ -3259,6 +3279,22 @@ static RenderObject* rendererForView(WAKView* view)
     // If the orientation is the default, we don't need to share that with ATs.
     std::optional orientation = self.axBackingObject->orientation();
     return orientation && *orientation == *defaultOrientation ? AccessibilityOrientation::Undefined : *orientation;
+}
+
+- (BOOL)accessibilitySupportsKeyboardShortcuts
+{
+    if (![self _prepareAccessibilityCall])
+        return NO;
+
+    return self.axBackingObject->supportsKeyShortcuts();
+}
+
+- (NSString *)accessibilityKeyboardShortcuts
+{
+    if (![self _prepareAccessibilityCall])
+        return nil;
+
+    return self.axBackingObject->keyShortcuts().createNSString().autorelease();
 }
 
 @end

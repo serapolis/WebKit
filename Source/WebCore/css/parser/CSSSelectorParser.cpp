@@ -547,20 +547,24 @@ static bool isTreeAbidingPseudoElement(CSSSelector::PseudoElement pseudoElement)
     }
 }
 
-static bool isSimpleSelectorValidAfterPseudoElement(const MutableCSSSelector& simpleSelector, CSSSelector::PseudoElement compoundPseudoElement)
+static bool isSimpleSelectorValidAfterPseudoElement(const MutableCSSSelector& simpleSelector, const MutableCSSSelector& compoundPseudoElement)
 {
-    if (compoundPseudoElement == CSSSelector::PseudoElement::Part) {
+    if (compoundPseudoElement.pseudoElement() == CSSSelector::PseudoElement::UserAgentPart && compoundPseudoElement.value() == UserAgentParts::detailsContent()) {
+        if (simpleSelector.match() == CSSSelector::Match::PseudoElement)
+            return true;
+    }
+    if (compoundPseudoElement.pseudoElement() == CSSSelector::PseudoElement::Part) {
         if (simpleSelector.match() == CSSSelector::Match::PseudoElement && simpleSelector.pseudoElement() != CSSSelector::PseudoElement::Part)
             return true;
     }
-    if (compoundPseudoElement == CSSSelector::PseudoElement::Slotted) {
+    if (compoundPseudoElement.pseudoElement() == CSSSelector::PseudoElement::Slotted) {
         if (simpleSelector.match() == CSSSelector::Match::PseudoElement && isTreeAbidingPseudoElement(simpleSelector.pseudoElement()))
             return true;
     }
     if (simpleSelector.match() != CSSSelector::Match::PseudoClass)
         return false;
 
-    return isPseudoClassValidAfterPseudoElement(simpleSelector.pseudoClass(), compoundPseudoElement);
+    return isPseudoClassValidAfterPseudoElement(simpleSelector.pseudoClass(), compoundPseudoElement.pseudoElement());
 }
 
 static bool atEndIgnoringWhitespace(CSSParserTokenRange range)
@@ -583,12 +587,12 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeCompoundSelector(C
         if (!compoundSelector)
             return nullptr;
         if (compoundSelector->match() == CSSSelector::Match::PseudoElement)
-            m_precedingPseudoElement = compoundSelector->pseudoElement();
+            m_precedingPseudoElement = compoundSelector.get();
     }
 
     while (auto simpleSelector = consumeSimpleSelector(range)) {
         if (simpleSelector->match() == CSSSelector::Match::PseudoElement)
-            m_precedingPseudoElement = simpleSelector->pseudoElement();
+            m_precedingPseudoElement = simpleSelector.get();
 
         if (compoundSelector)
             compoundSelector->prependInComplexSelector(CSSSelector::Relation::Subselector, WTFMove(simpleSelector));
@@ -597,7 +601,7 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeCompoundSelector(C
     }
 
     if (!m_disallowPseudoElements)
-        m_precedingPseudoElement = { };
+        m_precedingPseudoElement = nullptr;
 
     // While inside a nested selector like :is(), the default namespace shall be ignored when [1]:
     // * The compound selector represents the subject [2], and
@@ -970,7 +974,7 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
             Vector<AtomString> nameAndClasses;
 
             // Check for implicit universal selector.
-            if (m_context.viewTransitionClassesEnabled && block.peek().type() == DelimiterToken && block.peek().delimiter() == '.')
+            if (block.peek().type() == DelimiterToken && block.peek().delimiter() == '.')
                 nameAndClasses.append(starAtom());
 
             // Parse name or explicit universal selector.
@@ -985,15 +989,13 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
             }
 
             // Parse classes.
-            if (m_context.viewTransitionClassesEnabled) {
-                while (!block.atEnd() && !CSSTokenizer::isWhitespace(block.peek().type())) {
-                    if (block.peek().type() != DelimiterToken || block.consume().delimiter() != '.')
-                        return nullptr;
+            while (!block.atEnd() && !CSSTokenizer::isWhitespace(block.peek().type())) {
+                if (block.peek().type() != DelimiterToken || block.consume().delimiter() != '.')
+                    return nullptr;
 
-                    if (block.peek().type() != IdentToken)
-                        return nullptr;
-                    nameAndClasses.append({ block.consume().value().toAtomString() });
-                }
+                if (block.peek().type() != IdentToken)
+                    return nullptr;
+                nameAndClasses.append({ block.consume().value().toAtomString() });
             }
 
             block.consumeWhitespace();
@@ -1308,12 +1310,21 @@ CSSSelectorList CSSSelectorParser::resolveNestingParent(const CSSSelectorList& n
     MutableCSSSelectorList result;
 
     auto canInline = [](const CSSSelector& nestingSelector, const CSSSelectorList& list) {
+        auto hasTagInCompound = [](const CSSSelector& simpleSelector) {
+            // A compound is organized so that any tag selector is always last.
+            return simpleSelector.lastInCompound()->match() == CSSSelector::Match::Tag;
+        };
+
         if (list.listSize() != 1) {
             // .foo, .bar { & .baz {...} } -> :is(.foo, .bar) .baz {...}
             return false;
         }
         if (complexSelectorCanMatchPseudoElement(*list.first())) {
             // .foo::before { & {...} } -> :is(.foo::before) {...} (which matches nothing)
+            return false;
+        }
+        if (hasTagInCompound(*list.first()) && hasTagInCompound(nestingSelector)) {
+            // foo { bar& {...} } -> bar:is(foo) {...}
             return false;
         }
         if (!nestingSelector.precedingInComplexSelector()) {
@@ -1394,12 +1405,12 @@ CSSSelectorList CSSSelectorParser::resolveNestingParent(const CSSSelectorList& n
     return CSSSelectorList { WTFMove(result) };
 }
 
-static std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifierFor(CSSSelectorPseudoElement type)
+static std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifierFor(CSSSelectorPseudoElement selectorPseudoElement)
 {
-    auto pseudoId = CSSSelector::pseudoId(type);
-    if (pseudoId == PseudoId::None)
+    auto type = CSSSelector::stylePseudoElementTypeFor(selectorPseudoElement);
+    if (!type)
         return { };
-    return Style::PseudoElementIdentifier { pseudoId };
+    return Style::PseudoElementIdentifier { *type };
 }
 
 // FIXME: It's probably worth investigating if more logic can be shared with
@@ -1445,7 +1456,7 @@ std::pair<bool, std::optional<Style::PseudoElementIdentifier>> CSSSelectorParser
         auto& ident = block.consumeIncludingWhitespace();
         if (ident.type() != IdentToken || !block.atEnd())
             return { };
-        return { true, Style::PseudoElementIdentifier { PseudoId::Highlight, ident.value().toAtomString() } };
+        return { true, Style::PseudoElementIdentifier { PseudoElementType::Highlight, ident.value().toAtomString() } };
     }
     case CSSSelector::PseudoElement::ViewTransitionGroup:
     case CSSSelector::PseudoElement::ViewTransitionImagePair:
@@ -1454,7 +1465,7 @@ std::pair<bool, std::optional<Style::PseudoElementIdentifier>> CSSSelectorParser
         auto& ident = block.consumeIncludingWhitespace();
         if (ident.type() != IdentToken || !isValidCustomIdentifier(ident.id()) || !block.atEnd())
             return { };
-        return { true, Style::PseudoElementIdentifier { CSSSelector::pseudoId(*pseudoElement), ident.value().toAtomString() } };
+        return { true, Style::PseudoElementIdentifier { *CSSSelector::stylePseudoElementTypeFor(*pseudoElement), ident.value().toAtomString() } };
     }
     default:
         return { };

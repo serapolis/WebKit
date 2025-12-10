@@ -32,7 +32,6 @@
 
 #include <WebCore/OrderIterator.h>
 #include <WebCore/RenderBlock.h>
-#include <WebCore/RenderStyleInlines.h>
 #include <wtf/WeakHashSet.h>
 
 namespace WebCore {
@@ -113,43 +112,13 @@ protected:
 private:
     class FlexLayoutItem {
     public:
-        FlexLayoutItem(RenderBox& flexItem, LayoutUnit flexBaseContentSize, LayoutUnit mainAxisBorderAndPadding, LayoutUnit mainAxisMargin, std::pair<LayoutUnit, LayoutUnit> minMaxSizes, bool everHadLayout)
-            : renderer(flexItem)
-            , flexBaseContentSize(flexBaseContentSize)
-            , mainAxisBorderAndPadding(mainAxisBorderAndPadding)
-            , mainAxisMargin(mainAxisMargin)
-            , minMaxSizes(minMaxSizes)
-            , hypotheticalMainContentSize(constrainSizeByMinMax(flexBaseContentSize))
-            , frozen(false)
-            , everHadLayout(everHadLayout)
-        {
-            ASSERT(!flexItem.isOutOfFlowPositioned());
-        }
+        FlexLayoutItem(RenderBox&, LayoutUnit, LayoutUnit, LayoutUnit, std::pair<LayoutUnit, LayoutUnit>, bool);
 
-        LayoutUnit hypotheticalMainAxisMarginBoxSize() const
-        {
-            return hypotheticalMainContentSize + mainAxisBorderAndPadding + mainAxisMargin;
-        }
-
-        LayoutUnit flexBaseMarginBoxSize() const
-        {
-            return flexBaseContentSize + mainAxisBorderAndPadding + mainAxisMargin;
-        }
-
-        LayoutUnit flexedMarginBoxSize() const
-        {
-            return flexedContentSize + mainAxisBorderAndPadding + mainAxisMargin;
-        }
-
-        const RenderStyle& style() const
-        {
-            return renderer->style();
-        }
-
-        LayoutUnit constrainSizeByMinMax(const LayoutUnit size) const
-        {
-            return std::max(minMaxSizes.first, std::min(size, minMaxSizes.second));
-        }
+        LayoutUnit hypotheticalMainAxisMarginBoxSize() const;
+        LayoutUnit flexBaseMarginBoxSize() const;
+        LayoutUnit flexedMarginBoxSize() const;
+        const RenderStyle& style() const;
+        LayoutUnit constrainSizeByMinMax(const LayoutUnit size) const;
 
         CheckedRef<RenderBox> renderer;
         LayoutUnit flexBaseContentSize;
@@ -270,7 +239,7 @@ private:
     void trimMainAxisMarginEnd(const FlexLayoutItem&);
     void trimCrossAxisMarginStart(const FlexLayoutItem&);
     void trimCrossAxisMarginEnd(const FlexLayoutItem&);
-    bool isChildEligibleForMarginTrim(MarginTrimType, const RenderBox&) const final;
+    bool isChildEligibleForMarginTrim(Style::MarginTrimSide, const RenderBox&) const final;
     bool canFitItemWithTrimmedMarginEnd(const FlexLayoutItem&, LayoutUnit sumHypotheticalMainSize, LayoutUnit lineBreakLength) const;
     void removeMarginEndFromFlexSizes(FlexLayoutItem&, LayoutUnit& sumFlexBaseSize, LayoutUnit& sumHypotheticalMainSize) const;
 
@@ -348,8 +317,8 @@ private:
     // This is SizeIsUnknown outside of layoutBlock()
     SizeDefiniteness m_hasDefiniteHeight { SizeDefiniteness::Unknown };
     bool m_inLayout { false };
-    bool m_inCrossAxisLayout { false };
-    bool m_inFlexItemLayout { false };
+    bool m_afterMainAxisItemSizing { false };
+    bool m_afterCrossAxisItemSizing { false };
     bool m_inSimplifiedLayout { false };
     bool m_inPostFlexUpdateScrollbarLayout { false };
     mutable bool m_inFlexItemIntrinsicWidthComputation { false };

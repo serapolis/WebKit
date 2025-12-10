@@ -67,7 +67,7 @@ class AcceleratedSurface;
 namespace WebKit {
 class WebPage;
 
-class AcceleratedSurface final : public ThreadSafeRefCounted<AcceleratedSurface, WTF::DestructionThread::MainRunLoop>
+class AcceleratedSurface final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AcceleratedSurface, WTF::DestructionThread::MainRunLoop>
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
     , public IPC::MessageReceiver
 #endif
@@ -78,8 +78,8 @@ public:
     ~AcceleratedSurface();
 
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
-    void ref() const final { ThreadSafeRefCounted::ref(); }
-    void deref() const final { ThreadSafeRefCounted::deref(); }
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
 #endif
 
 public:
@@ -183,7 +183,6 @@ private:
 #if USE(GBM)
     struct BufferFormat {
         BufferFormat() = default;
-        ~BufferFormat() = default;
         BufferFormat(const BufferFormat&) = delete;
         BufferFormat& operator=(const BufferFormat&) = delete;
         BufferFormat(BufferFormat&& other)
@@ -275,7 +274,6 @@ private:
         WTF_MAKE_NONCOPYABLE(SwapChain);
     public:
         explicit SwapChain(uint64_t);
-        ~SwapChain() = default;
 
         enum class Type {
             Invalid,
@@ -313,7 +311,7 @@ private:
 #endif
 
     private:
-        static constexpr unsigned s_maximumBuffers = 3;
+        static constexpr unsigned s_maximumBuffers = 4;
 
         std::unique_ptr<RenderTarget> createTarget() const;
 

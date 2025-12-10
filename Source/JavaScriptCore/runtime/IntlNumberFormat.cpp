@@ -283,7 +283,7 @@ IGNORE_GCC_WARNINGS_END
     return "unknown"_s;
 }
 
-// https://tc39.github.io/ecma402/#sec-initializenumberformat
+// https://tc39.es/ecma402/#sec-intl.numberformat
 void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {
     VM& vm = globalObject->vm();
@@ -372,11 +372,18 @@ void IntlNumberFormat::initializeNumberFormat(JSGlobalObject* globalObject, JSVa
     m_unitDisplay = intlOption<UnitDisplay>(globalObject, options, Identifier::fromString(vm, "unitDisplay"_s), { { "short"_s, UnitDisplay::Short }, { "narrow"_s, UnitDisplay::Narrow }, { "long"_s, UnitDisplay::Long } }, "unitDisplay must be either \"short\", \"narrow\", or \"long\""_s, UnitDisplay::Short);
     RETURN_IF_EXCEPTION(scope, void());
 
-    unsigned minimumFractionDigitsDefault = (m_style == Style::Currency) ? currencyDigits : 0;
-    unsigned maximumFractionDigitsDefault = (m_style == Style::Currency) ? currencyDigits : (m_style == Style::Percent) ? 0 : 3;
-
     m_notation = intlOption<IntlNotation>(globalObject, options, Identifier::fromString(vm, "notation"_s), { { "standard"_s, IntlNotation::Standard }, { "scientific"_s, IntlNotation::Scientific }, { "engineering"_s, IntlNotation::Engineering }, { "compact"_s, IntlNotation::Compact } }, "notation must be either \"standard\", \"scientific\", \"engineering\", or \"compact\""_s, IntlNotation::Standard);
     RETURN_IF_EXCEPTION(scope, void());
+
+    unsigned minimumFractionDigitsDefault;
+    unsigned maximumFractionDigitsDefault;
+    if (m_style == Style::Currency && m_notation == IntlNotation::Standard) {
+        minimumFractionDigitsDefault = currencyDigits;
+        maximumFractionDigitsDefault = currencyDigits;
+    } else {
+        minimumFractionDigitsDefault = 0;
+        maximumFractionDigitsDefault = m_style == Style::Percent ? 0 : 3;
+    }
 
     setNumberFormatDigitOptions(globalObject, this, options, minimumFractionDigitsDefault, maximumFractionDigitsDefault, m_notation);
     RETURN_IF_EXCEPTION(scope, void());
@@ -692,7 +699,7 @@ static Vector<IntlNumberFormatField> flattenFields(Vector<IntlNumberFormatField>
     //     H:    (14, 15) endRange   group ","
     //     I:    (15, 18) endRange   integer
 
-    std::sort(fields.begin(), fields.end(), [](auto& lhs, auto& rhs) {
+    std::ranges::sort(fields, [](auto& lhs, auto& rhs) {
         if (lhs.m_range.begin() < rhs.m_range.begin())
             return true;
         if (lhs.m_range.begin() > rhs.m_range.begin())

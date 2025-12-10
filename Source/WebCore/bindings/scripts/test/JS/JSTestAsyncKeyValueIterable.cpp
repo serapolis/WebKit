@@ -203,9 +203,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static TestAsyncKeyValueIterableIterator* create(JSC::VM& vm, JSC::Structure* structure, JSTestAsyncKeyValueIterable& iteratedObject, IterationKind kind)
+    static TestAsyncKeyValueIterableIterator* create(JSC::VM& vm, JSC::Structure* structure, JSTestAsyncKeyValueIterable& iteratedObject, IterationKind kind, InternalIterator&& iterator)
     {
-        auto* instance = new (NotNull, JSC::allocateCell<TestAsyncKeyValueIterableIterator>(vm)) TestAsyncKeyValueIterableIterator(structure, iteratedObject, kind);
+        auto* instance = new (NotNull, JSC::allocateCell<TestAsyncKeyValueIterableIterator>(vm)) TestAsyncKeyValueIterableIterator(structure, iteratedObject, kind, WTFMove(iterator));
         instance->finishCreation(vm);
         return instance;
     }
@@ -214,8 +214,8 @@ public:
     JSC::JSBoundFunction* createOnFulfilledFunction(JSC::JSGlobalObject*);
     JSC::JSBoundFunction* createOnRejectedFunction(JSC::JSGlobalObject*);
 private:
-    TestAsyncKeyValueIterableIterator(JSC::Structure* structure, JSTestAsyncKeyValueIterable& iteratedObject, IterationKind kind)
-        : Base(structure, iteratedObject, kind)
+    TestAsyncKeyValueIterableIterator(JSC::Structure* structure, JSTestAsyncKeyValueIterable& iteratedObject, IterationKind kind, InternalIterator&& iterator)
+        : Base(structure, iteratedObject, kind, WTFMove(iterator))
     {
     }
 };
@@ -230,9 +230,12 @@ const JSC::ClassInfo TestAsyncKeyValueIterableIterator::s_info = { "TestAsyncKey
 template<>
 const JSC::ClassInfo TestAsyncKeyValueIterableIteratorPrototype::s_info = { "TestAsyncKeyValueIterable Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TestAsyncKeyValueIterableIteratorPrototype) };
 
-static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSTestAsyncKeyValueIterable* thisObject)
+static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_entriesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    return JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, IterationKind::Entries));
+    UNUSED_PARAM(callFrame);
+    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, *lexicalGlobalObject, throwScope, IterationKind::Entries)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_entries, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -240,9 +243,12 @@ JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_entries, (
     return IDLOperation<JSTestAsyncKeyValueIterable>::call<jsTestAsyncKeyValueIterablePrototypeFunction_entriesCaller>(*lexicalGlobalObject, *callFrame, "entries");
 }
 
-static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_keysCaller(JSGlobalObject*, CallFrame*, JSTestAsyncKeyValueIterable* thisObject)
+static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_keysCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    return JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, IterationKind::Keys));
+    UNUSED_PARAM(callFrame);
+    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, *lexicalGlobalObject, throwScope, IterationKind::Keys)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_keys, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -250,9 +256,12 @@ JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_keys, (JSC
     return IDLOperation<JSTestAsyncKeyValueIterable>::call<jsTestAsyncKeyValueIterablePrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSTestAsyncKeyValueIterable* thisObject)
+static inline EncodedJSValue jsTestAsyncKeyValueIterablePrototypeFunction_valuesCaller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTestAsyncKeyValueIterable* thisObject)
 {
-    return JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, IterationKind::Values));
+    UNUSED_PARAM(callFrame);
+    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(iteratorCreate<TestAsyncKeyValueIterableIterator>(*thisObject, *lexicalGlobalObject, throwScope, IterationKind::Values)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTestAsyncKeyValueIterablePrototypeFunction_values, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -306,7 +315,7 @@ extern "C" { extern void (*const __identifier("??_7TestAsyncKeyValueIterable@Web
 extern "C" { extern void* _ZTVN7WebCore25TestAsyncKeyValueIterableE[]; }
 #endif
 template<std::same_as<TestAsyncKeyValueIterable> T>
-static inline void verifyVTable(TestAsyncKeyValueIterable* ptr) 
+static inline void verifyVTable(TestAsyncKeyValueIterable* ptr)
 {
     if constexpr (std::is_polymorphic_v<T>) {
         const void* actualVTablePointer = getVTablePointer<T>(ptr);
@@ -326,8 +335,9 @@ static inline void verifyVTable(TestAsyncKeyValueIterable* ptr)
 #endif
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestAsyncKeyValueIterable>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<TestAsyncKeyValueIterable>&& impl)
 {
+    UNUSED_PARAM(lexicalGlobalObject);
 #if ENABLE(BINDING_INTEGRITY)
     verifyVTable<TestAsyncKeyValueIterable>(impl.ptr());
 #endif

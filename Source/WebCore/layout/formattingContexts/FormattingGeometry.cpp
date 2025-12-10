@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -87,7 +87,7 @@ template<FormattingGeometry::HeightType heightType> std::optional<LayoutUnit> Fo
             return { };
     }
     if (auto fixedHeight = height.tryFixed())
-        return LayoutUnit { fixedHeight->value };
+        return LayoutUnit { fixedHeight->resolveZoom(layoutBox.style().usedZoomForLength()) };
 
     if (!containingBlockHeight) {
         if (layoutState().inQuirksMode()) {
@@ -95,25 +95,25 @@ template<FormattingGeometry::HeightType heightType> std::optional<LayoutUnit> Fo
             // Use heightValueOfNearestContainingBlockWithFixedHeight;
             ASSERT_NOT_IMPLEMENTED_YET();
         } else {
-            auto nonAnonymousContainingBlockLogicalHeight = [&]() -> Style::PreferredSize {
+            auto [nonAnonymousContainingBlockLogicalHeight, nonAnonymousContainingBlockUsedZoom] = [&]() -> std::pair<Style::PreferredSize, Style::ZoomFactor> {
                 // When the block level box is a direct child of an inline level box (<span><div></div></span>) and we wrap it into a continuation,
                 // the containing block (anonymous wrapper) is not the box we need to check for fixed height.
                 for (auto& containingBlock : containingBlockChain(layoutBox)) {
                     if (containingBlock.isAnonymous())
                         continue;
-                    return containingBlock.style().logicalHeight();
+                    return { containingBlock.style().logicalHeight(), containingBlock.style().usedZoomForLength() };
                 }
                 ASSERT_NOT_REACHED();
-                return CSS::Keyword::Auto { };
-            };
-            containingBlockHeight = fixedValue(nonAnonymousContainingBlockLogicalHeight());
+                return { CSS::Keyword::Auto { }, Style::ZoomFactor { 1.0f, layoutBox.style().deviceScaleFactor() } };
+            }();
+            containingBlockHeight = fixedValue(nonAnonymousContainingBlockLogicalHeight, nonAnonymousContainingBlockUsedZoom);
         }
     }
 
     if (!containingBlockHeight)
         return { };
 
-    return Style::evaluate(height, *containingBlockHeight, 1.0f /* FIXME FIND ZOOM */);
+    return Style::evaluate<LayoutUnit>(height, *containingBlockHeight, layoutBox.style().usedZoomForLength());
 }
 
 std::optional<LayoutUnit> FormattingGeometry::computedHeight(const Box& layoutBox, std::optional<LayoutUnit> containingBlockHeight) const
@@ -140,7 +140,7 @@ template<FormattingGeometry::WidthType widthType> std::optional<LayoutUnit> Form
         else if constexpr (widthType == WidthType::Max)
             return layoutBox.style().logicalMaxWidth();
     }();
-    if (auto computedValue = this->computedValue(width, containingBlockWidth))
+    if (auto computedValue = this->computedValue(width, containingBlockWidth, layoutBox.style().usedZoomForLength()))
         return computedValue;
 
     if (width.isMinContent() || width.isMaxContent() || width.isFitContent()) {
@@ -177,7 +177,7 @@ std::optional<LayoutUnit> FormattingGeometry::computedWidth(const Box& layoutBox
     if (auto computedWidth = computedWidthValue<WidthType::Normal>(layoutBox, containingBlockWidth)) {
         auto& style = layoutBox.style();
         // Non-quantitative values such as auto and min-content are not influenced by the box-sizing property.
-        if (style.boxSizing() == BoxSizing::ContentBox || style.width().isIntrinsicOrLegacyIntrinsicOrAuto())
+        if (style.boxSizing() == BoxSizing::ContentBox || !style.width().isSpecified())
             return computedWidth;
         auto& boxGeometry = formattingContext().geometryForBox(layoutBox);
         return *computedWidth - boxGeometry.horizontalBorderAndPadding();
@@ -344,8 +344,8 @@ VerticalGeometry FormattingGeometry::outOfFlowNonReplacedVerticalGeometry(const 
     auto containingBlockHeight = verticalConstraints.logicalHeight;
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
 
-    auto top = computedValue(style.logicalTop(), containingBlockWidth);
-    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+    auto top = computedValue(style.logicalTop(), containingBlockWidth, style.usedZoomForLength());
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth, style.usedZoomForLength());
     auto height = overriddenVerticalValues.height ? overriddenVerticalValues.height.value() : computedHeight(layoutBox, containingBlockHeight);
     auto computedVerticalMargin = FormattingGeometry::computedVerticalMargin(layoutBox, horizontalConstraints);
     UsedVerticalMargin::NonCollapsedValues usedVerticalMargin; 
@@ -464,8 +464,8 @@ HorizontalGeometry FormattingGeometry::outOfFlowNonReplacedHorizontalGeometry(co
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
     auto isLeftToRightDirection = FormattingContext::containingBlock(layoutBox).writingMode().isBidiLTR();
     
-    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
-    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth, style.usedZoomForLength());
+    auto right = computedValue(style.logicalRight(), containingBlockWidth, style.usedZoomForLength());
     auto width = overriddenHorizontalValues.width ? overriddenHorizontalValues.width : computedWidth(layoutBox, containingBlockWidth);
     auto computedHorizontalMargin = FormattingGeometry::computedHorizontalMargin(layoutBox, horizontalConstraints);
     UsedHorizontalMargin usedHorizontalMargin;
@@ -591,8 +591,8 @@ VerticalGeometry FormattingGeometry::outOfFlowReplacedVerticalGeometry(const Ele
     auto containingBlockHeight = verticalConstraints.logicalHeight;
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
 
-    auto top = computedValue(style.logicalTop(), containingBlockWidth);
-    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+    auto top = computedValue(style.logicalTop(), containingBlockWidth, style.usedZoomForLength());
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth, style.usedZoomForLength());
     auto height = inlineReplacedContentHeightAndMargin(replacedBox, horizontalConstraints, verticalConstraints, overriddenVerticalValues).contentHeight;
     auto computedVerticalMargin = FormattingGeometry::computedVerticalMargin(replacedBox, horizontalConstraints);
     std::optional<LayoutUnit> usedMarginBefore = computedVerticalMargin.before;
@@ -676,8 +676,8 @@ HorizontalGeometry FormattingGeometry::outOfFlowReplacedHorizontalGeometry(const
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
     auto isLeftToRightDirection = FormattingContext::containingBlock(replacedBox).writingMode().isBidiLTR();
 
-    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
-    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth, style.usedZoomForLength());
+    auto right = computedValue(style.logicalRight(), containingBlockWidth, style.usedZoomForLength());
     auto computedHorizontalMargin = FormattingGeometry::computedHorizontalMargin(replacedBox, horizontalConstraints);
     std::optional<LayoutUnit> usedMarginStart = computedHorizontalMargin.start;
     std::optional<LayoutUnit> usedMarginEnd = computedHorizontalMargin.end;
@@ -1013,8 +1013,8 @@ LayoutSize FormattingGeometry::inFlowPositionedPositionOffset(const Box& layoutB
     auto& style = layoutBox.style();
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
 
-    auto top = computedValue(style.logicalTop(), containingBlockWidth);
-    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth);
+    auto top = computedValue(style.logicalTop(), containingBlockWidth, style.usedZoomForLength());
+    auto bottom = computedValue(style.logicalBottom(), containingBlockWidth, style.usedZoomForLength());
 
     if (!top && !bottom) {
         // #1
@@ -1041,8 +1041,8 @@ LayoutSize FormattingGeometry::inFlowPositionedPositionOffset(const Box& layoutB
     //    If the 'direction' property of the containing block is 'ltr', the value of 'left' wins and 'right' becomes -'left'.
     //    If 'direction' of the containing block is 'rtl', 'right' wins and 'left' is ignored.
 
-    auto left = computedValue(style.logicalLeft(), containingBlockWidth);
-    auto right = computedValue(style.logicalRight(), containingBlockWidth);
+    auto left = computedValue(style.logicalLeft(), containingBlockWidth, style.usedZoomForLength());
+    auto right = computedValue(style.logicalRight(), containingBlockWidth, style.usedZoomForLength());
 
     if (!left && !right) {
         // #1
@@ -1084,8 +1084,14 @@ BoxGeometry::Edges FormattingGeometry::computedBorder(const Box& layoutBox) cons
     auto& style = layoutBox.style();
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Border] -> layoutBox: " << &layoutBox);
     return {
-        { LayoutUnit(Style::evaluate(style.borderLeftWidth(), 1.0f /* FIXME FIND ZOOM */)), LayoutUnit(Style::evaluate(style.borderRightWidth(), 1.0f /* FIXME FIND ZOOM */)) },
-        { LayoutUnit(Style::evaluate(style.borderTopWidth(), 1.0f /* FIXME FIND ZOOM */)), LayoutUnit(Style::evaluate(style.borderBottomWidth(), 1.0f /* FIXME FIND ZOOM */)) },
+        {
+            Style::evaluate<LayoutUnit>(style.borderLeftWidth(), Style::ZoomNeeded { }),
+            Style::evaluate<LayoutUnit>(style.borderRightWidth(), Style::ZoomNeeded { })
+        },
+        {
+            Style::evaluate<LayoutUnit>(style.borderTopWidth(), Style::ZoomNeeded { }),
+            Style::evaluate<LayoutUnit>(style.borderBottomWidth(), Style::ZoomNeeded { })
+        },
     };
 }
 
@@ -1095,36 +1101,46 @@ BoxGeometry::Edges FormattingGeometry::computedPadding(const Box& layoutBox, con
         return { };
 
     auto& style = layoutBox.style();
+    auto usedZoom = style.usedZoomForLength();
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[Padding] -> layoutBox: " << &layoutBox);
     return {
-        { Style::evaluate(style.paddingStart(), containingBlockWidth, 1.0f /* FIXME FIND ZOOM */), Style::evaluate(style.paddingEnd(), containingBlockWidth, 1.0f /* FIXME FIND ZOOM */) },
-        { Style::evaluate(style.paddingBefore(), containingBlockWidth, 1.0f /* FIXME FIND ZOOM */), Style::evaluate(style.paddingAfter(), containingBlockWidth, 1.0f /* FIXME FIND ZOOM */) }
+        {
+            Style::evaluate<LayoutUnit>(style.paddingStart(), containingBlockWidth, usedZoom),
+            Style::evaluate<LayoutUnit>(style.paddingEnd(), containingBlockWidth, usedZoom)
+        },
+        {
+            Style::evaluate<LayoutUnit>(style.paddingBefore(), containingBlockWidth, usedZoom),
+            Style::evaluate<LayoutUnit>(style.paddingAfter(), containingBlockWidth, usedZoom)
+        }
     };
 }
 
 ComputedHorizontalMargin FormattingGeometry::computedHorizontalMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
 {
     auto& style = layoutBox.style();
+    const auto& zoomFactor = style.usedZoomForLength();
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
     if (usedWritingMode(layoutBox).isHorizontal())
-        return { computedValue(style.marginLeft(), containingBlockWidth), computedValue(style.marginRight(), containingBlockWidth) };
-    return { computedValue(style.marginTop(), containingBlockWidth), computedValue(style.marginBottom(), containingBlockWidth) };
+        return { computedValue(style.marginLeft(), containingBlockWidth, zoomFactor), computedValue(style.marginRight(), containingBlockWidth, zoomFactor) };
+    return { computedValue(style.marginTop(), containingBlockWidth, zoomFactor), computedValue(style.marginBottom(), containingBlockWidth, zoomFactor) };
 }
 
 ComputedVerticalMargin FormattingGeometry::computedVerticalMargin(const Box& layoutBox, const HorizontalConstraints& horizontalConstraints) const
 {
     auto& style = layoutBox.style();
+    const auto& zoomFactor = style.usedZoomForLength();
     auto containingBlockWidth = horizontalConstraints.logicalWidth;
     if (usedWritingMode(layoutBox).isHorizontal())
-        return { computedValue(style.marginTop(), containingBlockWidth), computedValue(style.marginBottom(), containingBlockWidth) };
-    return { computedValue(style.marginLeft(), containingBlockWidth), computedValue(style.marginRight(), containingBlockWidth) };
+        return { computedValue(style.marginTop(), containingBlockWidth, zoomFactor), computedValue(style.marginBottom(), containingBlockWidth, zoomFactor) };
+    return { computedValue(style.marginLeft(), containingBlockWidth, zoomFactor), computedValue(style.marginRight(), containingBlockWidth, zoomFactor) };
 }
 
 IntrinsicWidthConstraints FormattingGeometry::constrainByMinMaxWidth(const Box& layoutBox, IntrinsicWidthConstraints intrinsicWidth) const
 {
     auto& style = layoutBox.style();
-    auto minWidth = fixedValue(style.logicalMinWidth());
-    auto maxWidth = fixedValue(style.logicalMaxWidth());
+    auto zoomFactor = style.usedZoomForLength();
+    auto minWidth = fixedValue(style.logicalMinWidth(), zoomFactor);
+    auto maxWidth = fixedValue(style.logicalMaxWidth(), zoomFactor);
     if (!minWidth && !maxWidth)
         return intrinsicWidth;
 

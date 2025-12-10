@@ -63,7 +63,7 @@ public:
 
     RefPtr<PointerEvent> pointerEventForMouseEvent(const MouseEvent&, PointerID, const String& pointerType);
 
-#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE))
+#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE) || PLATFORM(GTK))
     void dispatchEventForTouchAtIndex(EventTarget&, const PlatformTouchEvent&, unsigned, bool isPrimary, WindowProxy&, const DoublePoint&);
 #endif
 
@@ -73,6 +73,9 @@ public:
     void dispatchEvent(PointerEvent&, EventTarget*);
     WEBCORE_EXPORT void cancelPointer(PointerID, const IntPoint&, PointerEvent* existingCancelEvent = nullptr);
     void processPendingPointerCapture(PointerID);
+    // Used for mouse presses that trigger contextmenu, causing
+    // the matching release to be suppressed.
+    WEBCORE_EXPORT void clearUnmatchedMouseDown(PointerID);
 
 private:
     struct CapturingData : public RefCounted<CapturingData> {
@@ -84,12 +87,12 @@ private:
         WeakPtr<Document, WeakPtrImplWithEventTargetData> activeDocument;
         RefPtr<Element> pendingTargetOverride;
         RefPtr<Element> targetOverride;
-#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE))
+#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE) || PLATFORM(GTK))
         RefPtr<Element> previousTarget;
 #endif
         bool hasAnyElement() const {
             return pendingTargetOverride || targetOverride
-#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE))
+#if ENABLE(TOUCH_EVENTS) && (PLATFORM(IOS_FAMILY) || PLATFORM(WPE) || PLATFORM(GTK))
                 || previousTarget
 #endif
                 ;

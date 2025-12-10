@@ -99,11 +99,12 @@
 #include <wtf/URL.h>
 #include <wtf/UniStdExtras.h>
 #include <wtf/WallTime.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
-#include <wtf/text/AtomString.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/WTFString.h>
 
 #if USE(GSTREAMER_MPEGTS)
 #define GST_USE_UNSTABLE_API
@@ -159,24 +160,24 @@ MediaLogObserver& mediaLogObserverSingleton()
 }
 #endif // GST_DISABLE_GST_DEBUG
 
-MediaPlayerPrivateGStreamer::MediaPlayerPrivateGStreamer(MediaPlayer* player)
+MediaPlayerPrivateGStreamer::MediaPlayerPrivateGStreamer(MediaPlayer& player)
     : m_notifier(MainThreadNotifier<MainThreadNotification>::create())
     , m_player(player)
-    , m_referrer(player->referrer())
+    , m_referrer(player.referrer())
     , m_cachedDuration(MediaTime::invalidTime())
     , m_timeOfOverlappingSeek(MediaTime::invalidTime())
     , m_fillTimer(*this, &MediaPlayerPrivateGStreamer::fillTimerFired)
     , m_maxTimeLoaded(MediaTime::zeroTime())
-    , m_preload(player->preload())
+    , m_preload(player.preload())
     , m_maxTimeLoadedAtLastDidLoadingProgress(MediaTime::zeroTime())
     , m_drawTimer(RunLoop::mainSingleton(), "MediaPlayerPrivateGStreamer::DrawTimer"_s, this, &MediaPlayerPrivateGStreamer::repaint)
     , m_pausedTimerHandler(RunLoop::mainSingleton(), "MediaPlayerPrivateGStreamer::PausedTimerHandler"_s, this, &MediaPlayerPrivateGStreamer::pausedTimerFired)
 #if !RELEASE_LOG_DISABLED
-    , m_logger(player->mediaPlayerLogger())
-    , m_logIdentifier(player->mediaPlayerLogIdentifier())
+    , m_logger(player.mediaPlayerLogger())
+    , m_logIdentifier(player.mediaPlayerLogIdentifier())
 #endif
     , m_startTime(MediaTime::invalidTime())
-    , m_loader(player->mediaResourceLoader())
+    , m_loader(player.mediaResourceLoader())
 {
 
 #if !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
@@ -193,7 +194,7 @@ MediaPlayerPrivateGStreamer::MediaPlayerPrivateGStreamer(MediaPlayer* player)
 #endif
     m_isPlayerShuttingDown.store(false);
 
-    if (player->isGStreamerHolePunchingEnabled()) {
+    if (player.isGStreamerHolePunchingEnabled()) {
         m_quirksManagerForTesting = GStreamerQuirksManager::createForTesting();
         m_quirksManagerForTesting->setHolePunchEnabledForTesting(true);
     }
@@ -204,7 +205,6 @@ MediaPlayerPrivateGStreamer::MediaPlayerPrivateGStreamer(MediaPlayer* player)
 
     ensureGStreamerInitialized();
     m_audioSink = createAudioSink();
-    ensureSeekFlags();
 }
 
 MediaPlayerPrivateGStreamer::~MediaPlayerPrivateGStreamer()
@@ -298,10 +298,12 @@ bool MediaPlayerPrivateGStreamer::isAvailable()
 }
 
 class MediaPlayerFactoryGStreamer final : public MediaPlayerFactory {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(MediaPlayerFactoryGStreamer);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlayerFactoryGStreamer);
 private:
     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::GStreamer; };
 
-    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer* player) const final
+    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer& player) const final
     {
         return adoptRef(*new MediaPlayerPrivateGStreamer(player));
     }
@@ -346,6 +348,11 @@ void MediaPlayerPrivateGStreamer::load(const String& urlString)
 {
     URL url { urlString };
     if (url.protocolIsAbout()) {
+        loadingFailed(MediaPlayer::NetworkState::FormatError, MediaPlayer::ReadyState::HaveNothing, true);
+        return;
+    }
+
+    if (!isProtocolAllowed(url)) {
         loadingFailed(MediaPlayer::NetworkState::FormatError, MediaPlayer::ReadyState::HaveNothing, true);
         return;
     }
@@ -479,9 +486,10 @@ void MediaPlayerPrivateGStreamer::play()
 #endif
         RefPtr player = m_player.get();
         if (player) {
-            if (player->isLooping()) {
+            if (isSeamlessSeekingEnabled() && !m_initialSegmentSeekDone) {
                 GST_DEBUG_OBJECT(pipeline(), "Scheduling initial SEGMENT seek");
-                doSeek(SeekTarget { playbackPosition() }, m_playbackRate, true);
+                doSeek(SeekTarget { playbackPosition() }, m_playbackRate, true, true);
+                m_initialSegmentSeekDone = true;
             } else
                 updateDownloadBufferingFlag();
         }
@@ -555,9 +563,18 @@ bool MediaPlayerPrivateGStreamer::paused() const
     return !m_isPipelinePlaying;
 }
 
-bool MediaPlayerPrivateGStreamer::doSeek(const SeekTarget& target, float rate, bool isAsync)
+struct AsyncSeekData {
+    GRefPtr<GstEvent> event;
+    bool isSegmentSeek;
+    bool isSeamlessSeekingEnabled;
+};
+WEBKIT_DEFINE_ASYNC_DATA_STRUCT(AsyncSeekData);
+
+bool MediaPlayerPrivateGStreamer::doSeek(const SeekTarget& target, float rate, bool isAsync, bool isSegment)
 {
     RefPtr player = m_player.get();
+    if (!player)
+        return false;
 
     // Default values for rate >= 0.
     MediaTime startTime = target.time, endTime = MediaTime::invalidTime();
@@ -576,12 +593,16 @@ bool MediaPlayerPrivateGStreamer::doSeek(const SeekTarget& target, float rate, b
         g_object_set(m_downloadBuffer.get(), "high-percent", 0, nullptr);
     }
 
-    if (paused() && !m_isEndReached && player && player->isLooping()) {
+    auto flag = (player->isLooping() && isSegment) ? GST_SEEK_FLAG_SEGMENT : GST_SEEK_FLAG_FLUSH;
+    if (paused() && !m_isEndReached && player->isLooping()) {
         GST_DEBUG_OBJECT(pipeline(), "Segment non-flushing seek attempt not supported on a paused pipeline, enabling flush");
-        m_seekFlags = static_cast<GstSeekFlags>((m_seekFlags | GST_SEEK_FLAG_FLUSH) & ~GST_SEEK_FLAG_SEGMENT);
+        m_isSegmentSeekAllowed = false;
+        flag = GST_SEEK_FLAG_FLUSH;
     }
+    auto seekFlags = static_cast<GstSeekFlags>(flag | GST_SEEK_FLAG_ACCURATE);
 
     if (rate >= 0.0 && startTime >= duration()) {
+        GST_DEBUG_OBJECT(pipeline(), "Seek requested beyond duration, triggering EOS handler");
         didEnd();
         return false;
     }
@@ -589,7 +610,7 @@ bool MediaPlayerPrivateGStreamer::doSeek(const SeekTarget& target, float rate, b
     // Stream mode. Seek will automatically deplete buffer level, so we always want to pause the pipeline and wait until the
     // buffer is replenished. But we don't want this behaviour on immediate seeks that only change the playback rate.
     // We restrict this behaviour to protocols that use NetworkProcess.
-    if (!isSeamlessSeekingEnabled() && !m_downloadBuffer && !m_isChangingRate && m_url.protocolIsInHTTPFamily() && currentTime() != startTime) {
+    if (!player->isLooping() && !m_downloadBuffer && !m_isChangingRate && m_url.protocolIsInHTTPFamily() && currentTime() != startTime) {
         GST_DEBUG_OBJECT(pipeline(), "[Buffering] Pausing pipeline, resetting buffering level to 0 and forcing m_isBuffering true before seeking on stream mode");
 
         auto& quirksManager = GStreamerQuirksManager::singleton();
@@ -603,20 +624,45 @@ bool MediaPlayerPrivateGStreamer::doSeek(const SeekTarget& target, float rate, b
 
     auto seekStart = toGstClockTime(startTime);
     auto seekStop = toGstClockTime(endTime);
-    GstEvent* event = gst_event_new_seek(rate, GST_FORMAT_TIME, m_seekFlags, GST_SEEK_TYPE_SET, seekStart, GST_SEEK_TYPE_SET, seekStop);
+    auto event = adoptGRef(gst_event_new_seek(rate, GST_FORMAT_TIME, seekFlags, GST_SEEK_TYPE_SET, seekStart, GST_SEEK_TYPE_SET, seekStop));
 
     GST_DEBUG_OBJECT(pipeline(), "[Seek] Performing actual seek to %" GST_TIMEP_FORMAT " (endTime: %" GST_TIMEP_FORMAT ") at rate %f", &seekStart, &seekStop, rate);
 
     if (isAsync) {
+        auto data = createAsyncSeekData();
+        data->event = WTFMove(event);
+        data->isSegmentSeek = isSegment;
+        data->isSeamlessSeekingEnabled = isSeamlessSeekingEnabled();
         gst_element_call_async(m_pipeline.get(), reinterpret_cast<GstElementCallAsyncFunc>(+[](GstElement* pipeline, gpointer userData) {
-            GstEvent* event = static_cast<GstEvent*>(userData);
-            gst_element_send_event(pipeline, event);
-        }), event, nullptr);
+            auto data = reinterpret_cast<AsyncSeekData*>(userData);
+
+            gdouble rate;
+            GstFormat format;
+            GstSeekFlags flags;
+            GstSeekType startType, stopType;
+            int64_t start, stop;
+            gst_event_parse_seek(data->event.get(), &rate, &format, &flags, &startType, &start, &stopType, &stop);
+            if (!gst_element_send_event(pipeline, data->event.leakRef()))
+                return;
+
+            if (data->isSegmentSeek || !data->isSeamlessSeekingEnabled)
+                return;
+
+            GST_DEBUG_OBJECT(pipeline, "Resuming segment playback");
+            flags = static_cast<GstSeekFlags>(GST_SEEK_FLAG_SEGMENT | GST_SEEK_FLAG_ACCURATE);
+            gst_element_send_event(pipeline, gst_event_new_seek(rate, format, flags, startType, start, stopType, stop));
+        }), data, reinterpret_cast<GDestroyNotify>(destroyAsyncSeekData));
 
         return true;
     }
 
-    return gst_element_send_event(m_pipeline.get(), event);
+    auto result = gst_element_send_event(m_pipeline.get(), event.leakRef());
+    if (isSegment || !isSeamlessSeekingEnabled() || !result)
+        return result;
+
+    GST_DEBUG_OBJECT(m_pipeline.get(), "Resuming segment playback");
+    seekFlags = static_cast<GstSeekFlags>(GST_SEEK_FLAG_SEGMENT | GST_SEEK_FLAG_ACCURATE);
+    return gst_element_send_event(m_pipeline.get(), gst_event_new_seek(rate, GST_FORMAT_TIME, seekFlags, GST_SEEK_TYPE_SET, seekStart, GST_SEEK_TYPE_SET, seekStop));
 }
 
 void MediaPlayerPrivateGStreamer::seekToTarget(const SeekTarget& inTarget)
@@ -651,9 +697,10 @@ void MediaPlayerPrivateGStreamer::seekToTarget(const SeekTarget& inTarget)
     MediaTelemetryReport::singleton().reportPlaybackState(MediaTelemetryReport::AVPipelineState::SeekStart, makeString(toString(playbackPosition()), "->"_s, toString(target.time)));
 #endif
 
-    if (m_isSeeking) {
+    if (!isSeamlessSeekingEnabled() && m_isSeeking) {
         m_timeOfOverlappingSeek = target.time;
         if (m_isSeekPending) {
+            GST_DEBUG_OBJECT(pipeline(), "[Seek] A seek is pending already, letting it finish");
             m_seekTarget = target;
             return;
         }
@@ -663,23 +710,6 @@ void MediaPlayerPrivateGStreamer::seekToTarget(const SeekTarget& inTarget)
     GstStateChangeReturn getStateResult = gst_element_get_state(m_pipeline.get(), &state, nullptr, 0);
     if (getStateResult == GST_STATE_CHANGE_FAILURE || getStateResult == GST_STATE_CHANGE_NO_PREROLL) {
         GST_DEBUG_OBJECT(pipeline(), "[Seek] cannot seek, current state change is %s", gst_element_state_change_return_get_name(getStateResult));
-        return;
-    }
-
-    if (player->isLooping()) {
-        if (isSeamlessSeekingEnabled() && state > GST_STATE_PAUSED) {
-            // Segment seeking is synchronous, the pipeline state has not changed, no flush is done.
-            GST_DEBUG_OBJECT(pipeline(), "Performing segment seek");
-            m_isSeeking = true;
-            if (!doSeek(target, player->rate())) {
-                GST_DEBUG_OBJECT(pipeline(), "[Seek] seeking to %s failed", toString(target.time).utf8().data());
-                return;
-            }
-        }
-        m_isEndReached = false;
-        m_isSeeking = false;
-        m_cachedPosition = MediaTime::zeroTime();
-        timeChanged(target.time);
         return;
     }
 
@@ -1178,21 +1208,21 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
     using TrackType = TrackPrivateBaseGStreamer::TrackType;
     Variant<TrackIDHashMap<Ref<AudioTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<VideoTrackPrivateGStreamer>>*, TrackIDHashMap<Ref<InbandTextTrackPrivateGStreamer>>*> variantTracks = static_cast<TrackIDHashMap<Ref<TrackPrivateType>>*>(0);
     auto type(static_cast<TrackType>(variantTracks.index()));
-    const char* typeName;
+    ASCIILiteral typeName;
     bool* hasType;
     switch (type) {
     case TrackType::Audio:
-        typeName = "audio";
+        typeName = "audio"_s;
         hasType = &m_hasAudio;
         variantTracks = &m_audioTracks;
         break;
     case TrackType::Video:
-        typeName = "video";
+        typeName = "video"_s;
         hasType = &m_hasVideo;
         variantTracks = &m_videoTracks;
         break;
     case TrackType::Text:
-        typeName = "text";
+        typeName = "text"_s;
         hasType = nullptr;
         variantTracks = &m_textTracks;
         break;
@@ -1206,11 +1236,10 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
         return;
 
     unsigned numberOfTracks = 0;
-    StringPrintStream numberOfTracksProperty;
-    numberOfTracksProperty.printf("n-%s", typeName);
-    g_object_get(m_pipeline.get(), numberOfTracksProperty.toCString().data(), &numberOfTracks, nullptr);
+    auto numberOfTracksProperty = makeString("n-"_s, typeName);
+    g_object_get(m_pipeline.get(), numberOfTracksProperty.ascii().data(), &numberOfTracks, nullptr);
 
-    GST_INFO_OBJECT(pipeline(), "Media has %d %s tracks", numberOfTracks, typeName);
+    GST_INFO_OBJECT(pipeline(), "Media has %d %s tracks", numberOfTracks, typeName.characters());
 
     if (hasType) {
         bool oldHasType = *hasType;
@@ -1223,13 +1252,12 @@ void MediaPlayerPrivateGStreamer::notifyPlayerOfTrack()
     }
 
     Vector<TrackID> validStreams;
-    StringPrintStream getPadProperty;
-    getPadProperty.printf("get-%s-pad", typeName);
+    auto getPadProperty = makeString("get-"_s, typeName, "-pad"_s);
 
     bool changed = false;
     for (unsigned i = 0; i < numberOfTracks; ++i) {
         GRefPtr<GstPad> pad;
-        g_signal_emit_by_name(m_pipeline.get(), getPadProperty.toCString().data(), i, &pad.outPtr(), nullptr);
+        g_signal_emit_by_name(m_pipeline.get(), getPadProperty.ascii().data(), i, &pad.outPtr(), nullptr);
         ASSERT(pad);
         if (!pad)
             continue;
@@ -1335,7 +1363,7 @@ void MediaPlayerPrivateGStreamer::elementIdChanged(const String& elementId) cons
         return;
 
     GUniquePtr<char> objectName(gst_object_get_name(GST_OBJECT_CAST(m_pipeline.get())));
-    auto currentName = String::fromUTF8(objectName.get());
+    auto currentName = String(byteCast<Latin1Character>(unsafeSpan(objectName.get())));
     auto tokens = currentName.split('-');
     auto newName = makeString(tokens[0], '-', elementId, '-', tokens.last());
     GST_DEBUG_OBJECT(m_pipeline.get(), "Renaming to %s", newName.utf8().data());
@@ -1596,11 +1624,16 @@ MediaTime MediaPlayerPrivateGStreamer::playbackPosition() const
         return MediaTime::zeroTime();
 #endif
 
-    if (m_isSeeking)
+    if (m_isSeeking) {
+        GST_TRACE_OBJECT(pipeline(), "Seek in progress, returning target time %s", m_seekTarget.toString().ascii().data());
         return m_seekTarget.time;
+    }
 
-    if (m_isEndReached)
-        return m_playbackRate > 0 ? duration() : MediaTime::zeroTime();
+    if (m_isEndReached) {
+        auto position = m_playbackRate > 0 ? this->duration() : MediaTime::zeroTime();
+        GST_TRACE_OBJECT(pipeline(), "End reached at rate %f, returning %s", m_playbackRate, position.toString().ascii().data());
+        return position;
+    }
 
     if (m_isCachedPositionValid) {
         GST_TRACE_OBJECT(pipeline(), "Returning cached position: %s", m_cachedPosition.toString().utf8().data());
@@ -1687,17 +1720,17 @@ void MediaPlayerPrivateGStreamer::playbin3SendSelectStreamsIfAppropriate()
     if (m_wantedVideoStreamId) {
         auto track = m_videoTracks.get(m_wantedVideoStreamId.value());
         m_requestedVideoStreamId = m_wantedVideoStreamId;
-        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().utf8().data()));
     }
     if (m_wantedAudioStreamId) {
         auto track = m_audioTracks.get(m_wantedAudioStreamId.value());
         m_requestedAudioStreamId = m_wantedAudioStreamId;
-        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().utf8().data()));
     }
     if (m_wantedTextStreamId) {
         auto track = m_textTracks.get(m_wantedTextStreamId.value());
         m_requestedTextStreamId = m_wantedTextStreamId;
-        streams = g_list_append(streams, g_strdup(track->gstStreamId().string().utf8().data()));
+        streams = g_list_append(streams, g_strdup(track->gstStreamId().utf8().data()));
     }
 
     if (!streams)
@@ -1849,14 +1882,16 @@ bool MediaPlayerPrivateGStreamer::handleNeedContextMessage(GstMessage* message)
 {
     ASSERT(GST_MESSAGE_TYPE(message) == GST_MESSAGE_NEED_CONTEXT);
 
-    const gchar* contextType;
-    if (!gst_message_parse_context_type(message, &contextType))
+    const gchar* contextTypeChars;
+    if (!gst_message_parse_context_type(message, &contextTypeChars))
         return false;
 
-    GST_DEBUG_OBJECT(pipeline(), "Handling %s need-context message for %s", contextType, GST_MESSAGE_SRC_NAME(message));
+    auto contextType = CStringView::unsafeFromUTF8(contextTypeChars);
 
-    if (!g_strcmp0(contextType, WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME)) {
-        auto context = adoptGRef(gst_context_new(WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME, FALSE));
+    GST_DEBUG_OBJECT(pipeline(), "Handling %s need-context message for %s", contextType.utf8(), GST_MESSAGE_SRC_NAME(message));
+
+    if (contextType == WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME) {
+        auto context = adoptGRef(gst_context_new(WEBKIT_WEB_SRC_RESOURCE_LOADER_CONTEXT_TYPE_NAME.characters(), FALSE));
         GstStructure* contextStructure = gst_context_writable_structure(context.get());
 
         gst_structure_set(contextStructure, "loader", G_TYPE_POINTER, m_loader.ptr(), nullptr);
@@ -1865,16 +1900,17 @@ bool MediaPlayerPrivateGStreamer::handleNeedContextMessage(GstMessage* message)
     }
 
 #if ENABLE(ENCRYPTED_MEDIA)
-    if (!g_strcmp0(contextType, "drm-preferred-decryption-system-id")) {
+    if (contextType == "drm-preferred-decryption-system-id"_s) {
         initializationDataEncountered(parseInitDataFromProtectionMessage(message));
         bool isCDMAttached = waitForCDMAttachment();
         if (isCDMAttached && !isPlayerShuttingDown() && !m_cdmInstance->keySystem().isEmpty()) {
-            const char* preferredKeySystemUuid = GStreamerEMEUtilities::keySystemToUuid(m_cdmInstance->keySystem());
-            GST_INFO_OBJECT(pipeline(), "working with key system %s, continuing with key system %s on %s", m_cdmInstance->keySystem().utf8().data(), preferredKeySystemUuid, GST_MESSAGE_SRC_NAME(message));
+            ASCIILiteral preferredKeySystemUuid = GStreamerEMEUtilities::keySystemToUuid(m_cdmInstance->keySystem());
+            GST_INFO_OBJECT(pipeline(), "working with key system %s, continuing with key system %s on %s",
+                m_cdmInstance->keySystem().ascii().data(), preferredKeySystemUuid.characters(), GST_MESSAGE_SRC_NAME(message));
 
             GRefPtr<GstContext> context = adoptGRef(gst_context_new("drm-preferred-decryption-system-id", FALSE));
             GstStructure* contextStructure = gst_context_writable_structure(context.get());
-            gst_structure_set(contextStructure, "decryption-system-id", G_TYPE_STRING, preferredKeySystemUuid, nullptr);
+            gst_structure_set(contextStructure, "decryption-system-id", G_TYPE_STRING, preferredKeySystemUuid.characters(), nullptr);
             gst_element_set_context(GST_ELEMENT(GST_MESSAGE_SRC(message)), context.get());
             return true;
         }
@@ -1884,8 +1920,15 @@ bool MediaPlayerPrivateGStreamer::handleNeedContextMessage(GstMessage* message)
     }
 #endif // ENABLE(ENCRYPTED_MEDIA)
 
-    GST_DEBUG_OBJECT(pipeline(), "Unhandled %s need-context message for %s", contextType, GST_MESSAGE_SRC_NAME(message));
+    GST_DEBUG_OBJECT(pipeline(), "Unhandled %s need-context message for %s", contextType.utf8(), GST_MESSAGE_SRC_NAME(message));
     return false;
+}
+
+void MediaPlayerPrivateGStreamer::handleSyncErrorMessage(GstMessage*)
+{
+    GST_DEBUG_OBJECT(pipeline(), "Accounting queued sync error");
+    // This attribute is decremented later from handleMessage() in the main thread.
+    m_queuedSyncErrors.exchangeAdd(1);
 }
 
 // Returns the size of the video.
@@ -2056,51 +2099,67 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
     GST_LOG_OBJECT(pipeline(), "Message %s received from element %s", GST_MESSAGE_TYPE_NAME(message), GST_MESSAGE_SRC_NAME(message));
     switch (GST_MESSAGE_TYPE(message)) {
     case GST_MESSAGE_ERROR:
-        gst_message_parse_error(message, &err.outPtr(), &debug.outPtr());
-        GST_ERROR_OBJECT(pipeline(), "%s (url=%s) (code=%d)", err->message, m_url.string().utf8().data(), err->code);
+        {
+            auto onScopeExit = makeScopeExit([this] {
+                GST_DEBUG_OBJECT(pipeline(), "Decreasing m_queuedSyncErrors");
+                m_queuedSyncErrors.exchangeSub(1);
+            });
 
-        if (m_shouldResetPipeline || m_didErrorOccur || m_ignoreErrors)
-            break;
+            gst_message_parse_error(message, &err.outPtr(), &debug.outPtr());
 
-        m_errorMessage = String::fromLatin1(err->message);
+            if (m_shouldResetPipeline || m_didErrorOccur || m_ignoreErrors) {
+                GST_WARNING_OBJECT(pipeline(), "Ignoring error: %s (url=%s) (code=%d)", err->message, m_url.string().utf8().data(), err->code);
+                // Deferred reset of m_ignoreErrors because there were queued sync errors not yet processed and
+                // we're processing the last one now.
+                if (m_ignoreErrors && m_queuedSyncErrors.loadFullyFenced() == 1) {
+                    m_ignoreErrors = false;
+                    GST_DEBUG_OBJECT(pipeline(), "Last queued error processed while on ignoring state. Not ignoring errors anymore.");
+                }
+                break;
+            }
+
+            GST_ERROR_OBJECT(pipeline(), "%s (url=%s) (code=%d)", err->message, m_url.string().utf8().data(), err->code);
+
+            m_errorMessage = String(byteCast<char8_t>(unsafeSpan(err->message)));
 #if ENABLE(MEDIA_TELEMETRY)
-        MediaTelemetryReport::singleton().reportPlaybackState(MediaTelemetryReport::AVPipelineState::PlaybackError,
-            m_errorMessage);
+            MediaTelemetryReport::singleton().reportPlaybackState(MediaTelemetryReport::AVPipelineState::PlaybackError,
+                m_errorMessage);
 #endif
 
-        error = MediaPlayer::NetworkState::Empty;
-        if (g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_CODEC_NOT_FOUND)
-            || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECRYPT)
-            || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECRYPT_NOKEY)
-            || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE)
-            || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_FAILED)
-            || g_error_matches(err.get(), GST_CORE_ERROR, GST_CORE_ERROR_MISSING_PLUGIN)
-            || g_error_matches(err.get(), GST_CORE_ERROR, GST_CORE_ERROR_PAD)
-            || g_error_matches(err.get(), GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND))
-            error = MediaPlayer::NetworkState::FormatError;
-        else if (g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_TYPE_NOT_FOUND)) {
-            GST_ERROR_OBJECT(pipeline(), "Decode error, let the Media element emit a stalled event.");
-            m_loadingStalled = true;
-            error = MediaPlayer::NetworkState::DecodeError;
-            attemptNextLocation = true;
-        } else if (err->domain == GST_STREAM_ERROR
-            || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECODE)) {
-            error = MediaPlayer::NetworkState::DecodeError;
-            attemptNextLocation = true;
-        } else if (err->domain == GST_RESOURCE_ERROR)
-            error = MediaPlayer::NetworkState::NetworkError;
+            error = MediaPlayer::NetworkState::Empty;
+            if (g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_CODEC_NOT_FOUND)
+                || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECRYPT)
+                || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECRYPT_NOKEY)
+                || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE)
+                || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_FAILED)
+                || g_error_matches(err.get(), GST_CORE_ERROR, GST_CORE_ERROR_MISSING_PLUGIN)
+                || g_error_matches(err.get(), GST_CORE_ERROR, GST_CORE_ERROR_PAD)
+                || g_error_matches(err.get(), GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND))
+                error = MediaPlayer::NetworkState::FormatError;
+            else if (g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_TYPE_NOT_FOUND)) {
+                GST_ERROR_OBJECT(pipeline(), "Decode error, let the Media element emit a stalled event.");
+                m_loadingStalled = true;
+                error = MediaPlayer::NetworkState::DecodeError;
+                attemptNextLocation = true;
+            } else if (err->domain == GST_STREAM_ERROR
+                || g_error_matches(err.get(), GST_STREAM_ERROR, GST_STREAM_ERROR_DECODE)) {
+                error = MediaPlayer::NetworkState::DecodeError;
+                attemptNextLocation = true;
+            } else if (err->domain == GST_RESOURCE_ERROR)
+                error = MediaPlayer::NetworkState::NetworkError;
 
-        if (attemptNextLocation)
-            issueError = !loadNextLocation();
-        if (issueError) {
-            m_didErrorOccur = true;
-            if (m_networkState != error) {
-                m_networkState = error;
-                if (player)
-                    player->networkStateChanged();
+            if (attemptNextLocation)
+                issueError = !loadNextLocation();
+            if (issueError) {
+                m_didErrorOccur = true;
+                if (m_networkState != error) {
+                    m_networkState = error;
+                    if (player)
+                        player->networkStateChanged();
+                }
             }
+            break;
         }
-        break;
     case GST_MESSAGE_WARNING:
         gst_message_parse_warning(message, &err.outPtr(), &debug.outPtr());
         GST_WARNING_OBJECT(pipeline(), "%s (url=%s) (code=%d)", err->message, m_url.string().utf8().data(), err->code);
@@ -2160,8 +2219,8 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
                 // the videoSink based on its metadata.
                 GstElement* element = GST_ELEMENT(GST_MESSAGE_SRC(message));
                 if (GST_OBJECT_FLAG_IS_SET(element, GST_ELEMENT_FLAG_SINK)) {
-                    const gchar* klassStr = gst_element_get_metadata(element, "klass");
-                    if (strstr(klassStr, "Sink") && strstr(klassStr, "Video")) {
+                    auto klassStr = CStringView::unsafeFromUTF8(gst_element_get_metadata(element, "klass"));
+                    if (contains(klassStr.span(), "Sink"_s)  && contains(klassStr.span(), "Video"_s)) {
                         m_videoSink = element;
 
                         // Ensure that there's a buffer with the transparent rectangle available when playback is going to start.
@@ -2176,8 +2235,8 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
             // Detect an audio sink element and store reference to it if it supersedes what we currently have.
             GstElement* element = GST_ELEMENT(GST_MESSAGE_SRC(message));
             if (GST_OBJECT_FLAG_IS_SET(element, GST_ELEMENT_FLAG_SINK)) {
-                const gchar* klassStr = gst_element_get_metadata(element, "klass");
-                if (g_strrstr(klassStr, "Sink") && g_strrstr(klassStr, "Audio")
+                auto klassStr = CStringView::unsafeFromUTF8(gst_element_get_metadata(element, "klass"));
+                if (contains(klassStr.span(), "Sink"_s) && contains(klassStr.span(), "Audio"_s)
                     && (!m_audioSink || (m_audioSink.get() != element && GST_STATE(m_audioSink.get()) == GST_STATE_NULL)))
                     m_audioSink = element;
             }
@@ -2240,7 +2299,7 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
         if (gst_structure_has_name(structure, "http-headers")) {
             GST_DEBUG_OBJECT(pipeline(), "Processing HTTP headers: %" GST_PTR_FORMAT, structure);
             if (auto uri = gstStructureGetString(structure, "uri"_s)) {
-                URL url { makeString(uri) };
+                URL url { uri.span() };
 
                 if (url != m_url) {
                     GST_DEBUG_OBJECT(pipeline(), "Ignoring HTTP response headers for non-main URI.");
@@ -2265,7 +2324,7 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
                     // handle it here, until we remove the webkit+ protocol
                     // prefix from webkitwebsrc.
                     if (auto contentLengthValue = gstStructureGetString(responseHeaders.get(), contentLengthHeaderName)) {
-                        if (auto parsedContentLength = parseInteger<uint64_t>(contentLengthValue))
+                        if (auto parsedContentLength = parseInteger<uint64_t>(contentLengthValue.span()))
                             contentLength = *parsedContentLength;
                     }
                 } else
@@ -2454,12 +2513,12 @@ void MediaPlayerPrivateGStreamer::processMpegTsSection(GstMpegtsSection* section
     if (section->section_type == GST_MPEGTS_SECTION_PMT) {
         const GstMpegtsPMT* pmt = gst_mpegts_section_get_pmt(section);
         m_metadataTracks.clear();
-        for (unsigned i = 0; i < pmt->streams->len; ++i) {
-            const GstMpegtsPMTStream* stream = static_cast<const GstMpegtsPMTStream*>(g_ptr_array_index(pmt->streams, i));
+        GRefPtr<GPtrArray> streams = pmt->streams;
+        for (auto stream : span<GstMpegtsPMTStream*>(streams)) {
             if (stream->stream_type == 0x05 || stream->stream_type >= 0x80) {
-                AtomString pid = AtomString::number(stream->pid);
+                TrackID pid = stream->pid;
                 RefPtr<InbandMetadataTextTrackPrivateGStreamer> track = InbandMetadataTextTrackPrivateGStreamer::create(
-                    InbandTextTrackPrivate::Kind::Metadata, InbandTextTrackPrivate::CueFormat::Data, pid);
+                    InbandTextTrackPrivate::Kind::Metadata, InbandTextTrackPrivate::CueFormat::Data, String::number(pid));
 
                 // 4.7.10.12.2 Sourcing in-band text tracks
                 // If the new text track's kind is metadata, then set the text track in-band metadata track dispatch
@@ -2473,29 +2532,26 @@ void MediaPlayerPrivateGStreamer::processMpegTsSection(GstMpegtsSection* section
                 // expressed in hexadecimal using uppercase ASCII hex digits.
                 StringBuilder inbandMetadataTrackDispatchType;
                 inbandMetadataTrackDispatchType.append(hex(stream->stream_type, 2));
-                for (unsigned j = 0; j < stream->descriptors->len; ++j) {
-                    const GstMpegtsDescriptor* descriptor = static_cast<const GstMpegtsDescriptor*>(g_ptr_array_index(stream->descriptors, j));
+                GRefPtr<GPtrArray> descriptors = stream->descriptors;
+                for (auto descriptor : span<GstMpegtsDescriptor*>(descriptors)) {
+                    auto descriptorData = unsafeMakeSpan(descriptor->data, descriptor->length);
                     for (unsigned k = 0; k < descriptor->length; ++k)
-                        inbandMetadataTrackDispatchType.append(hex(descriptor->data[k], 2));
+                        inbandMetadataTrackDispatchType.append(hex(descriptorData[k], 2));
                 }
-                track->setInBandMetadataTrackDispatchType(inbandMetadataTrackDispatchType.toAtomString());
+                track->setInBandMetadataTrackDispatchType(inbandMetadataTrackDispatchType.toString());
 
-                m_metadataTracks.add(pid, track);
+                m_metadataTracks.add(stream->pid, track);
                 if (RefPtr player = m_player.get())
                     player->addTextTrack(*track);
             }
         }
     } else {
-        AtomString pid = AtomString::number(section->pid);
-        RefPtr<InbandMetadataTextTrackPrivateGStreamer> track = m_metadataTracks.get(pid);
+        RefPtr<InbandMetadataTextTrackPrivateGStreamer> track = m_metadataTracks.get(section->pid);
         if (!track)
             return;
 
-        GRefPtr<GBytes> data = gst_mpegts_section_get_data(section);
-        gsize size;
-        const void* bytes = g_bytes_get_data(data.get(), &size);
-
-        track->addDataCue(currentTime(), currentTime(), { static_cast<const uint8_t*>(bytes), size });
+        GRefPtr<GBytes> data = adoptGRef(gst_mpegts_section_get_data(section));
+        track->addDataCue(currentTime(), currentTime(), span(data));
     }
 }
 #endif
@@ -2553,6 +2609,12 @@ void MediaPlayerPrivateGStreamer::processTableOfContentsEntry(GstTocEntry* entry
 
 void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
 {
+    g_signal_connect(parsebin, "autoplug-continue", G_CALLBACK(+[](GstElement*, GstPad*, GstCaps* caps, gpointer userData) -> gboolean {
+        auto player = reinterpret_cast<MediaPlayerPrivateGStreamer*>(userData);
+        player->determineContainerTypeFromCaps(caps);
+        return TRUE;
+    }), this);
+
     // We can save some overhead by not parsing again streams that are already parsed and that
     // the caps match the decoder's. In that case, we can skip creating a parser element in parsebin.
     g_signal_connect(parsebin, "autoplug-select",
@@ -2579,7 +2641,7 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
             static auto exposeAutoPlug = *gstGetAutoplugSelectResult("expose"_s);
             auto& scanner = GStreamerRegistryScanner::singleton();
             GUniquePtr<char> gstCodecName(gst_codec_utils_caps_get_mime_codec(caps));
-            auto codecName = String::fromUTF8(gstCodecName.get());
+            auto codecName = String(byteCast<Latin1Character>(unsafeSpan(gstCodecName.get())));
             auto result = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
             if (!result.isSupported)
                 return tryAutoPlug;
@@ -2595,9 +2657,23 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
         }), this);
 }
 
+void MediaPlayerPrivateGStreamer::determineContainerTypeFromCaps(const GstCaps* caps)
+{
+    GST_LOG_OBJECT(m_pipeline.get(), "Determining container type from %" GST_PTR_FORMAT, caps);
+    auto name = gstStructureGetName(gst_caps_get_structure(caps, 0));
+    if (endsWith(name.span(), "/ogg"_s))
+        m_containerType = ContainerType::Ogg;
+}
+
 void MediaPlayerPrivateGStreamer::configureUriDecodebin2(GstElement* element)
 {
     ASSERT(m_isLegacyPlaybin);
+    g_signal_connect(element, "autoplug-continue", G_CALLBACK(+[](GstElement*, GstPad*, GstCaps* caps, gpointer userData) -> gboolean {
+        auto player = reinterpret_cast<MediaPlayerPrivateGStreamer*>(userData);
+        player->determineContainerTypeFromCaps(caps);
+        return TRUE;
+    }), this);
+
 #if ENABLE(ENCRYPTED_MEDIA) && ENABLE(THUNDER)
     if (CDMFactoryThunder::singleton().supportedKeySystems().isEmpty())
         return;
@@ -2610,8 +2686,6 @@ void MediaPlayerPrivateGStreamer::configureUriDecodebin2(GstElement* element)
             return skipAutoPlug;
         return tryAutoPlug;
     }), nullptr);
-#else
-    UNUSED_PARAM(element);
 #endif
 }
 
@@ -2629,7 +2703,7 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
     // might not auto-plug hardware decoders.
     bool isBlob = m_url.protocolIs("blob"_s);
     auto nameView = StringView::fromLatin1(elementName.get());
-    if (webkitGstCheckVersion(1, 22, 0) && nameView.startsWith("urisourcebin"_s) && (isBlob || isMediaSource() || isMediaStreamPlayer()))
+    if (gst_check_version(1, 22, 0) && nameView.startsWith("urisourcebin"_s) && (isBlob || isMediaSource() || isMediaStreamPlayer()))
         g_object_set(element, "use-buffering", FALSE, "parse-streams", !isMediaStreamPlayer(), nullptr);
 
     if (nameView.startsWith("parsebin"_s))
@@ -2675,7 +2749,7 @@ void MediaPlayerPrivateGStreamer::configureElement(GstElement* element)
         return;
     }
 
-    if (!g_strcmp0(G_OBJECT_TYPE_NAME(G_OBJECT(element)), "GstQueue2"))
+    if (equal(unsafeSpan(G_OBJECT_TYPE_NAME(G_OBJECT(element))), "GstQueue2"_s))
         g_object_set(G_OBJECT(element), "high-watermark", 0.10, nullptr);
 }
 
@@ -2729,7 +2803,7 @@ void MediaPlayerPrivateGStreamer::configureDownloadBuffer(GstElement* element)
     g_object_set(element, "temp-template", newDownloadTemplate.get(), nullptr);
     GST_DEBUG_OBJECT(pipeline(), "Reconfigured file download template from '%s' to '%s'", oldDownloadTemplate.get(), newDownloadTemplate.get());
 
-    auto newDownloadPrefixPath = makeStringByReplacingAll(String::fromLatin1(newDownloadTemplate.get()), "XXXXXX"_s, ""_s);
+    auto newDownloadPrefixPath = makeStringByReplacingAll(byteCast<char8_t>(unsafeSpan(newDownloadTemplate.get())), "XXXXXX"_s, ""_s);
     purgeOldDownloadFiles(newDownloadPrefixPath);
 }
 
@@ -2903,6 +2977,11 @@ void MediaPlayerPrivateGStreamer::updateStates()
             GST_INFO_OBJECT(pipeline(), "Requested state change to %s was completed", gst_element_state_get_name(m_currentState));
         }
 
+        if (player && player->isLooping() && m_oldState == GST_STATE_PAUSED && m_currentState == GST_STATE_PLAYING) {
+            GST_DEBUG_OBJECT(pipeline(), "Starting a new iteration of a looping media, clearing EOS flag.");
+            m_isEndReached = false;
+        }
+
         // Emit play state change notification only when going to PLAYING so that
         // the media element gets a chance to enable its page sleep disabler.
         // Emitting this notification in more cases triggers unwanted code paths
@@ -2918,6 +2997,13 @@ void MediaPlayerPrivateGStreamer::updateStates()
     case GST_STATE_CHANGE_ASYNC:
         GST_DEBUG_OBJECT(pipeline(), "Async: State: %s, pending: %s", gst_element_state_get_name(m_currentState), gst_element_state_get_name(pending));
         // Change in progress.
+
+        if (m_currentState == GST_STATE_PAUSED && m_isBuffering) {
+            // If we are buffering, we could miss HaveCurrentData state if buffering finished before the transition completes.
+            GST_DEBUG_OBJECT(pipeline(), "Async: [Buffering] still buffering, so force HaveCurrentData.");
+            m_readyState = MediaPlayer::ReadyState::HaveCurrentData;
+            m_networkState = MediaPlayer::NetworkState::Loading;
+        }
 
         // Delay the m_isBuffering change by returning it to its previous value. Without this, the false --> true change
         // would go unnoticed by the code that should trigger a pause.
@@ -3019,7 +3105,7 @@ bool MediaPlayerPrivateGStreamer::loadNextLocation()
         return false;
 
     const GValue* locations = gst_structure_get_value(m_mediaLocations.get(), "locations");
-    StringView newLocation;
+    CStringView newLocation;
 
     if (!locations) {
         // Fallback on new-location string.
@@ -3028,7 +3114,7 @@ bool MediaPlayerPrivateGStreamer::loadNextLocation()
             return false;
     }
 
-    if (!newLocation) {
+    if (newLocation.isEmpty()) {
         if (m_mediaLocationCurrentIndex < 0) {
             m_mediaLocations.reset();
             return false;
@@ -3045,17 +3131,16 @@ bool MediaPlayerPrivateGStreamer::loadNextLocation()
         newLocation = gstStructureGetString(structure, "new-location"_s);
     }
 
-    if (newLocation) {
+    if (!newLocation.isEmpty()) {
         // Found a candidate. new-location is not always an absolute url
         // though. We need to take the base of the current url and
         // append the value of new-location to it.
-        auto locationString = makeString(newLocation);
-        URL baseURL = gst_uri_is_valid(locationString.utf8().data()) ? URL() : m_url;
-        URL newURL = URL(baseURL, WTFMove(locationString));
+        URL baseURL = gst_uri_is_valid(newLocation.utf8()) ? URL() : m_url;
+        URL newURL = URL(baseURL, newLocation.span());
 
         GUniqueOutPtr<gchar> playbinURLStr;
         g_object_get(m_pipeline.get(), "current-uri", &playbinURLStr.outPtr(), nullptr);
-        URL playbinURL { String::fromLatin1(playbinURLStr.get()) };
+        URL playbinURL { String(byteCast<char8_t>(unsafeSpan(playbinURLStr.get()))) };
 
         if (playbinURL == newURL) {
             GST_DEBUG_OBJECT(pipeline(), "Playbin already handled redirection.");
@@ -3144,6 +3229,10 @@ void MediaPlayerPrivateGStreamer::recalculateDurationIfNeeded() const
 
 void MediaPlayerPrivateGStreamer::didEnd()
 {
+    RefPtr player = m_player.get();
+    if (!player) [[unlikely]]
+        return;
+
     invalidateCachedPosition();
     GST_INFO_OBJECT(pipeline(), "Playback ended");
     m_isEndReached = true;
@@ -3163,8 +3252,7 @@ void MediaPlayerPrivateGStreamer::didEnd()
     // until we get the initial STREAMS_SELECTED message one more time.
     m_waitingForStreamsSelectedEvent = true;
 
-    RefPtr player = m_player.get();
-    if (player && !player->isLooping() && !isMediaSource()) {
+    if (!player->isLooping() && !isMediaSource()) {
         m_isPaused = true;
         changePipelineState(GST_STATE_PAUSED);
         m_didDownloadFinish = false;
@@ -3368,7 +3456,7 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
     }
 
 #if !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
-    auto identifier = makeString(hex(LOGIDENTIFIER.objectIdentifier));
+    auto identifier = makeString(LOGIDENTIFIER.objectIdentifier);
     GST_INFO_OBJECT(m_pipeline.get(), "WebCore logs identifier for this pipeline is: %s", identifier.convertToASCIIUppercase().ascii().data());
 #endif
     registerActivePipeline(m_pipeline);
@@ -3418,10 +3506,14 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
         player->handleStreamCollectionMessage(message);
     }), this);
 
+    g_signal_connect_swapped(bus.get(), "sync-message::error", G_CALLBACK(+[](MediaPlayerPrivateGStreamer* player, GstMessage* message) {
+        player->handleSyncErrorMessage(message);
+    }), this);
+
     g_object_set(m_pipeline.get(), "mute", static_cast<gboolean>(player->muted()), nullptr);
 
     // From GStreamer 1.22.0, uridecodebin3 is created in playbin3's _init(), so "element-setup" isn't called with it.
-    if (!m_isLegacyPlaybin && webkitGstCheckVersion(1, 22, 0)) {
+    if (!m_isLegacyPlaybin && gst_check_version(1, 22, 0)) {
         if (auto uriDecodeBin3 = adoptGRef(gst_bin_get_by_name(GST_BIN_CAST(m_pipeline.get()), "uridecodebin3")))
             configureElement(uriDecodeBin3.get());
     }
@@ -3533,10 +3625,17 @@ void MediaPlayerPrivateGStreamer::configureVideoDecoder(GstElement* decoder)
         GST_INFO_OBJECT(pipeline(), "the decoder %s does not have a src pad, probably because it's a hardware decoder sink, can't get decoder stats", name.get());
         return;
     }
-    gst_pad_add_probe(pad.get(), static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM | GST_PAD_PROBE_TYPE_BUFFER), [](GstPad*, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
+    gst_pad_add_probe(pad.get(), static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM | GST_PAD_PROBE_TYPE_BUFFER), [](GstPad* pad, GstPadProbeInfo* info, gpointer userData) -> GstPadProbeReturn {
         auto* player = static_cast<MediaPlayerPrivateGStreamer*>(userData);
         if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
             player->incrementDecodedVideoFramesCount();
+
+            auto decoder = adoptGRef(gst_pad_get_parent_element(pad));
+            auto processingTime = webkitGstBufferGetProcessingTime(gst_pad_probe_info_get_buffer(info), decoder.get());
+            if (processingTime.isInvalid())
+                return GST_PAD_PROBE_OK;
+
+            player->m_totalVideoDecodeTime += processingTime;
             return GST_PAD_PROBE_OK;
         }
 
@@ -3547,12 +3646,14 @@ void MediaPlayerPrivateGStreamer::configureVideoDecoder(GstElement* decoder)
                 gst_structure_set(structure, "frames-decoded", G_TYPE_UINT64, player->decodedVideoFramesCount(), nullptr);
 
                 if (player->updateVideoSinkStatistics())
-                    gst_structure_set(structure, "frames-dropped", G_TYPE_UINT64, player->m_droppedVideoFrames, nullptr);
+                    gst_structure_set(structure, "frames-dropped", G_TYPE_UINT64, player->m_droppedVideoFrames, "frames-per-second", G_TYPE_DOUBLE, player->m_averageFrameRate, nullptr);
 
                 auto naturalSize = roundedIntSize(player->naturalSize());
                 if (naturalSize.width() && naturalSize.height())
                     gst_structure_set(structure, "frame-width", G_TYPE_UINT, naturalSize.width(), "frame-height", G_TYPE_UINT, naturalSize.height(), nullptr);
 
+                if (player->m_totalVideoDecodeTime.isValid())
+                    gst_structure_set(structure, "total-decode-time", G_TYPE_DOUBLE, player->m_totalVideoDecodeTime.toDouble(), nullptr);
                 GST_PAD_PROBE_INFO_DATA(info) = query;
                 return GST_PAD_PROBE_HANDLED;
             }
@@ -3627,9 +3728,10 @@ bool MediaPlayerPrivateGStreamer::performTaskAtTime(Function<void(const MediaTim
 
 void MediaPlayerPrivateGStreamer::isLoopingChanged()
 {
+#ifndef GST_DISABLE_GST_DEBUG
     RefPtr player = m_player.get();
     GST_DEBUG_OBJECT(m_pipeline.get(), "Looping attribute changed to: %s", player ? boolForPrinting(player->isLooping()) : nullptr);
-    ensureSeekFlags();
+#endif
 }
 
 #if USE(COORDINATED_GRAPHICS)
@@ -3777,33 +3879,14 @@ void MediaPlayerPrivateGStreamer::updateVideoSizeAndOrientationFromCaps(const Gs
     GST_DEBUG_OBJECT(pipeline(), "Original video size: %dx%d, orientation: %u", originalSize.width(), originalSize.height(), static_cast<unsigned>(orientation));
     GST_DEBUG_OBJECT(pipeline(), "Applying pixel aspect ratio: %d/%d", pixelAspectRatioNumerator, pixelAspectRatioDenominator);
 
-    // Calculate DAR based on PAR and video size.
-    int displayWidth = originalSize.width() * pixelAspectRatioNumerator;
-    int displayHeight = originalSize.height() * pixelAspectRatioDenominator;
-
-    // Divide display width and height by their GCD to avoid possible overflows.
-    int displayAspectRatioGCD = gst_util_greatest_common_divisor(displayWidth, displayHeight);
-    displayWidth /= displayAspectRatioGCD;
-    displayHeight /= displayAspectRatioGCD;
-
-    // Apply DAR to original video size. This is the same behavior as in xvimagesink's setcaps function.
-    uint64_t width = 0, height = 0;
-    if (!(originalSize.height() % displayHeight)) {
-        GST_DEBUG_OBJECT(pipeline(), "Keeping video original height");
-        width = gst_util_uint64_scale_int(originalSize.height(), displayWidth, displayHeight);
-        height = originalSize.height();
-    } else if (!(originalSize.width() % displayWidth)) {
-        GST_DEBUG_OBJECT(pipeline(), "Keeping video original width");
-        height = gst_util_uint64_scale_int(originalSize.width(), displayHeight, displayWidth);
-        width = originalSize.width();
-    } else {
-        GST_DEBUG_OBJECT(pipeline(), "Approximating while keeping original video height");
-        width = gst_util_uint64_scale_int(originalSize.height(), displayWidth, displayHeight);
-        height = originalSize.height();
+    auto computedSize = getDisplaySize(originalSize, pixelAspectRatioNumerator, pixelAspectRatioDenominator);
+    if (!computedSize.has_value()) {
+        GST_WARNING_OBJECT(pipeline(), "Failed to get the size after applying the display aspect-ratio");
+        return;
     }
 
-    GST_DEBUG_OBJECT(pipeline(), "Saving natural size: %" G_GUINT64_FORMAT "x%" G_GUINT64_FORMAT, width, height);
-    m_videoSize = FloatSize(static_cast<int>(width), static_cast<int>(height));
+    GST_DEBUG_OBJECT(pipeline(), "Saving natural size: %u" "x%u", computedSize.value().width(), computedSize.value().height());
+    m_videoSize = FloatSize(computedSize.value().width(), computedSize.value().height());
 }
 
 void MediaPlayerPrivateGStreamer::setCachedPosition(const MediaTime& cachedPosition) const
@@ -3827,11 +3910,24 @@ void MediaPlayerPrivateGStreamer::invalidateCachedPositionOnNextIteration() cons
     });
 }
 
-void MediaPlayerPrivateGStreamer::ensureSeekFlags()
+bool MediaPlayerPrivateGStreamer::isSeamlessSeekingEnabled() const
 {
     RefPtr player = m_player.get();
-    auto flag = (player && player->isLooping()) ? GST_SEEK_FLAG_SEGMENT : GST_SEEK_FLAG_FLUSH;
-    m_seekFlags = static_cast<GstSeekFlags>(flag | GST_SEEK_FLAG_ACCURATE);
+    if (!player) [[unlikely]]
+        return false;
+
+    // Seamless seeking makes more sense for videos, in order to avoid a frame flushing when looping
+    // back to the beginning of the media.
+    if (!player->isVideoPlayer())
+        return false;
+
+    // The GStreamer oggdemux element doesn't handle segment seeks.
+    if (m_containerType == ContainerType::Ogg) {
+        GST_DEBUG_OBJECT(m_pipeline.get(), "Seamless seeking not supported for media muxed in Ogg container");
+        return false;
+    }
+
+    return player->isLooping() && m_isSegmentSeekAllowed;
 }
 
 void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
@@ -3978,8 +4074,8 @@ void MediaPlayerPrivateGStreamer::setVisibleInViewport(bool isVisible)
 
     // Some layout tests (webgl) expect playback of invisible videos to not be suspended, so allow
     // this using an environment variable, set from the webkitpy glib port sub-classes.
-    const char* allowPlaybackOfInvisibleVideos = g_getenv("WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS");
-    if (!isVisible && allowPlaybackOfInvisibleVideos && !strcmp(allowPlaybackOfInvisibleVideos, "1"))
+    auto allowPlaybackOfInvisibleVideos = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_ALLOW_PLAYBACK_OF_INVISIBLE_VIDEOS"));
+    if (!isVisible && allowPlaybackOfInvisibleVideos == "1"_s)
         return;
 
     if (!m_pipeline)
@@ -4044,8 +4140,8 @@ void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRec
     if (!presentationSize)
         return;
 
-    auto frame = VideoFrameGStreamer::create(WTFMove(sample), { IntSize(*presentationSize), { *m_videoInfo } });
-    frame->draw(context, rect, m_videoSourceOrientation, false);
+    Ref frame = VideoFrameGStreamer::create(WTFMove(sample), { IntSize(*presentationSize), { *m_videoInfo } });
+    context.drawVideoFrame(frame, rect, m_videoSourceOrientation, false);
 }
 
 DestinationColorSpace MediaPlayerPrivateGStreamer::colorSpace()
@@ -4130,15 +4226,15 @@ MediaPlayer::MovieLoadType MediaPlayerPrivateGStreamer::movieLoadType() const
 #if USE(GSTREAMER_GL)
 GstElement* MediaPlayerPrivateGStreamer::createVideoSinkGL()
 {
-    const char* disableGLSink = g_getenv("WEBKIT_GST_DISABLE_GL_SINK");
-    if (disableGLSink && !strcmp(disableGLSink, "1")) {
+    auto disableGLSink = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_DISABLE_GL_SINK"));
+    if (disableGLSink == "1"_s) {
         GST_INFO("Disabling hardware-accelerated rendering per user request.");
         return nullptr;
     }
 
-    const char* desiredVideoSink = g_getenv("WEBKIT_GST_CUSTOM_VIDEO_SINK");
+    auto desiredVideoSink = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_CUSTOM_VIDEO_SINK"));
     if (desiredVideoSink)
-        return makeGStreamerElement(ASCIILiteral::fromLiteralUnsafe(desiredVideoSink));
+        return makeGStreamerElement(desiredVideoSink);
 
     if (!webKitGLVideoSinkProbePlatform()) {
         g_warning("WebKit wasn't able to find the GL video sink dependencies. Hardware-accelerated zero-copy video rendering can't be enabled without this plugin.");
@@ -4200,7 +4296,7 @@ GstElement* MediaPlayerPrivateGStreamer::createVideoSink()
 {
     acceleratedRenderingStateChanged();
 
-    // Ensure the sink has the max-lateness property set.
+    // Ensure the sink has the some additional properties configured, such as max-lateness and qos.
     auto exit = makeScopeExit([this] {
         if (!m_videoSink || isMediaStreamPlayer())
             return;
@@ -4211,9 +4307,12 @@ GstElement* MediaPlayerPrivateGStreamer::createVideoSink()
             GValue value = G_VALUE_INIT;
             auto result = gst_iterator_next(iter.get(), &value);
             ASSERT_UNUSED(result, result == GST_ITERATOR_OK);
-            sink = GST_ELEMENT(g_value_get_object(&value));
+            sink = GST_ELEMENT_CAST(g_value_get_object(&value));
             g_value_unset(&value);
         }
+
+        if (gstObjectHasProperty(sink, "qos")) [[likely]]
+            g_object_set(sink, "qos", TRUE, nullptr);
 
         if (gstObjectHasProperty(sink, "max-lateness"_s)) {
             uint64_t maxLateness = 100 * GST_MSECOND;
@@ -4304,8 +4403,9 @@ bool MediaPlayerPrivateGStreamer::updateVideoSinkStatistics()
 
     auto totalVideoFrames = gstStructureGet<uint64_t>(stats.get(), "rendered"_s);
     auto droppedVideoFrames = gstStructureGet<uint64_t>(stats.get(), "dropped"_s);
+    auto averageRate = gstStructureGet<double>(stats.get(), "average-rate"_s);
 
-    if (!totalVideoFrames || !droppedVideoFrames)
+    if (!totalVideoFrames || !droppedVideoFrames || !averageRate)
         return false;
 
     // Caching is required so that metrics queries performed after EOS still return valid values.
@@ -4313,6 +4413,12 @@ bool MediaPlayerPrivateGStreamer::updateVideoSinkStatistics()
         m_totalVideoFrames = *totalVideoFrames;
     if (*droppedVideoFrames)
         m_droppedVideoFrames = *droppedVideoFrames;
+
+    if (*averageRate && m_videoInfo) {
+        double frameRate;
+        gst_util_fraction_to_double(GST_VIDEO_INFO_FPS_N(&m_videoInfo->info), GST_VIDEO_INFO_FPS_D(&m_videoInfo->info), &frameRate);
+        m_averageFrameRate = *averageRate * frameRate;
+    }
     return true;
 }
 
@@ -4368,13 +4474,13 @@ InitData MediaPlayerPrivateGStreamer::parseInitDataFromProtectionMessage(GstMess
         // which of the UUIDs it is, so we just overwrite it. This is
         // a quirk of how GStreamer provides protection events, and
         // it's not very robust, so be careful here!
-        systemId = GStreamerEMEUtilities::uuidToKeySystem(String::fromLatin1(eventKeySystemId));
+        systemId = GStreamerEMEUtilities::uuidToKeySystem(CStringView::unsafeFromUTF8(eventKeySystemId));
         InitData initData { systemId, data };
         payloadBuilder.append(*initData.payload());
         m_handledProtectionEvents.add(GST_EVENT_SEQNUM(event.get()));
     }
 
-    return { systemId, payloadBuilder.takeAsContiguous() };
+    return { systemId, payloadBuilder.takeBufferAsContiguous() };
 }
 
 bool MediaPlayerPrivateGStreamer::waitForCDMAttachment()
@@ -4491,7 +4597,7 @@ void MediaPlayerPrivateGStreamer::handleProtectionEvent(GstEvent* event)
     const char* eventKeySystemUUID = nullptr;
     GstBuffer* initData = nullptr;
     gst_event_parse_protection(event, &eventKeySystemUUID, &initData, nullptr);
-    initializationDataEncountered({ GStreamerEMEUtilities::uuidToKeySystem(String::fromLatin1(eventKeySystemUUID)), initData });
+    initializationDataEncountered({ GStreamerEMEUtilities::uuidToKeySystem(CStringView::unsafeFromUTF8(eventKeySystemUUID)), initData });
 }
 
 bool MediaPlayerPrivateGStreamer::waitingForKey() const

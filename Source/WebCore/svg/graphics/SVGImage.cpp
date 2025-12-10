@@ -33,8 +33,10 @@
 #include "CommonVM.h"
 #include "ContainerNodeInlines.h"
 #include "DOMParser.h"
+#include "DocumentInlines.h"
 #include "DocumentLoader.h"
 #include "DocumentSVG.h"
+#include "DocumentView.h"
 #include "EditorClient.h"
 #include "FrameLoader.h"
 #include "ImageBuffer.h"
@@ -43,13 +45,13 @@
 #include "JSDOMWindowBase.h"
 #include "LegacyRenderSVGRoot.h"
 #include "LocalDOMWindow.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "NativeImage.h"
 #include "Page.h"
 #include "PageConfiguration.h"
 #include "RenderSVGRoot.h"
-#include "RenderStyle.h"
+#include "RenderStyleInlines.h"
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGFEImageElement.h"
@@ -304,7 +306,11 @@ ImageDrawResult SVGImage::draw(GraphicsContext& context, const FloatRect& dstRec
         context.setCompositeOperation(CompositeOperator::SourceOver, BlendMode::Normal);
     }
 
-    // FIXME: We should honor options.orientation(), since ImageBitmap's flipY handling relies on it. https://bugs.webkit.org/show_bug.cgi?id=231001
+    auto orientation = options.orientation();
+    // SVG images don't have intrinsic orientation metadata like EXIF, so FromImage defaults to None.
+    if (orientation == ImageOrientation::Orientation::FromImage)
+        orientation = ImageOrientation::Orientation::None;
+
     FloatSize scale(dstRect.size() / srcRect.size());
     
     // We can only draw the entire frame, clipped to the rect we want. So compute where the top left
@@ -314,6 +320,13 @@ ImageDrawResult SVGImage::draw(GraphicsContext& context, const FloatRect& dstRec
 
     context.translate(destOffset);
     context.scale(scale);
+
+    // Apply orientation transformation if needed.
+    if (orientation != ImageOrientation::Orientation::None) {
+        auto containerSizeForTransform = containerSize();
+        auto orientationTransform = ImageOrientation(orientation).transformFromDefault(FloatSize(containerSizeForTransform));
+        context.concatCTM(orientationTransform);
+    }
 
     view->resize(containerSize());
 
@@ -494,6 +507,7 @@ EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
                 m_page->settings().fontGenericFamilies() = parentSettings->fontGenericFamilies();
                 m_page->settings().setCSSDPropertyEnabled(parentSettings->cssDPropertyEnabled());
             }
+            m_page->setUseColorAppearance(observer->useSystemDarkAppearance(), false);
         }
 
         RefPtr localMainFrame = m_page->localMainFrame();

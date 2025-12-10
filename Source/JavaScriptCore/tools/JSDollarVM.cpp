@@ -40,6 +40,8 @@
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "GetterSetter.h"
+#include "HeapProfiler.h"
+#include "HeapSnapshotBuilder.h"
 #include "InterpreterInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
@@ -2150,7 +2152,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
-static JSC_DECLARE_HOST_FUNCTION(functionIsNeverInline);
 static JSC_DECLARE_HOST_FUNCTION(functionTriggerMemoryPressure);
 static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
@@ -2167,6 +2168,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpStack);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpRegisters);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpCell);
+static JSC_DECLARE_HOST_FUNCTION(functionDumpHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(functionIndexingMode);
 static JSC_DECLARE_HOST_FUNCTION(functionInlineCapacity);
 static JSC_DECLARE_HOST_FUNCTION(functionClearLinkBufferStats);
@@ -2377,13 +2379,13 @@ JSC_DEFINE_HOST_FUNCTION(functionOMGTrue, (JSGlobalObject* globalObject, CallFra
             allFramesAreValid = false;
             return Wasm::CompilationMode::IPIntMode;
         }
-        return static_cast<Wasm::Callee*>(visitor->callee().asNativeCallee())->compilationMode();
+        return uncheckedDowncast<Wasm::Callee>(visitor->callee().asNativeCallee())->compilationMode();
     };
 
     auto expectWasmToJS = [&](StackVisitor& visitor) {
         if (visitor->codeType() != StackVisitor::Frame::Wasm
             || !visitor->callee().isNativeCallee()
-            || !isAnyWasmToJS(static_cast<Wasm::Callee*>(visitor->callee().asNativeCallee())->compilationMode())) {
+            || !isAnyWasmToJS(uncheckedDowncast<Wasm::Callee>(visitor->callee().asNativeCallee())->compilationMode())) {
             allFramesAreValid = false;
             return;
         }
@@ -2614,24 +2616,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNoInline, (JSGlobalObject*, CallFrame* callFram
         executable->setNeverInline(true);
     
     return JSValue::encode(jsUndefined());
-}
-
-// Check that the argument function is never inlined (set by $vm.noInline or the @neverInline attribute)
-// Usage:
-// function f() {}
-// $vm.isNeverInline(f);
-JSC_DEFINE_HOST_FUNCTION(functionIsNeverInline, (JSGlobalObject*, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-    if (callFrame->argumentCount() < 1)
-        return JSValue::encode(jsBoolean(false));
-
-    JSValue theFunctionValue = callFrame->uncheckedArgument(0);
-
-    if (FunctionExecutable* executable = getExecutableForFunction(theFunctionValue))
-        return JSValue::encode(jsBoolean(executable->neverInline()));
-
-    return JSValue::encode(jsBoolean(false));
 }
 
 // Runs a full GC synchronously.
@@ -2897,6 +2881,29 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpCell, (JSGlobalObject*, CallFrame* callFram
         return encodedJSUndefined();
     
     VMInspector::dumpCellMemory(value.asCell());
+    return encodedJSUndefined();
+}
+
+// Dumps a json of the current JS GC heap.
+// Usage: $vm.dumpHeapSnapshot()
+JSC_DEFINE_HOST_FUNCTION(functionDumpHeapSnapshot, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    DollarVMAssertScope assertScope;
+
+    sanitizeStackForVM(vm);
+
+    {
+        DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with the full GC that the snapshot does.
+
+        HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler(), HeapSnapshotBuilder::SnapshotType::GCDebuggingSnapshot);
+        snapshotBuilder.buildSnapshot();
+        PrintStream& out = WTF::dataFile();
+        snapshotBuilder.dumpToStream(out);
+        out.println();
+        out.flush();
+    }
+
     return encodedJSUndefined();
 }
 
@@ -3934,7 +3941,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRejectPromiseAsHandled, (JSGlobalObject* global
     DollarVMAssertScope assertScope;
     JSPromise* promise = jsCast<JSPromise*>(callFrame->uncheckedArgument(0));
     JSValue reason = callFrame->uncheckedArgument(1);
-    promise->rejectAsHandled(globalObject, reason);
+    promise->rejectAsHandled(globalObject->vm(), globalObject, reason);
     return JSValue::encode(jsUndefined());
 }
 
@@ -4373,7 +4380,6 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, "baselineJITTrue"_s, functionBaselineJITTrue, 0);
 
     addFunction(vm, "noInline"_s, functionNoInline, 1);
-    addFunction(vm, "isNeverInline"_s, functionIsNeverInline, 1);
 
     addFunction(vm, "triggerMemoryPressure"_s, functionTriggerMemoryPressure, 0);
     addFunction(vm, "gc"_s, functionGC, 0);
@@ -4394,6 +4400,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, "dumpRegisters"_s, functionDumpRegisters, 1);
 
     addFunction(vm, "dumpCell"_s, functionDumpCell, 1);
+
+    addFunction(vm, "dumpHeapSnapshot"_s, functionDumpHeapSnapshot, 0);
 
     addFunction(vm, "indexingMode"_s, functionIndexingMode, 1);
     addFunction(vm, "inlineCapacity"_s, functionInlineCapacity, 1);
@@ -4553,7 +4561,7 @@ void JSDollarVM::addConstructibleFunction(VM& vm, JSGlobalObject* globalObject, 
     putDirect(vm, identifier, JSFunction::create(vm, globalObject, arguments, identifier.string(), function, ImplementationVisibility::Public, NoIntrinsic, function), jsDollarVMPropertyAttributes);
 }
 
-void JSDollarVM::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode)
+void JSDollarVM::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode)
 {
     Base::getOwnPropertyNames(object, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
 }

@@ -80,7 +80,7 @@ class WebCoreAVFResourceLoader;
 
 class MediaPlayerPrivateAVFoundationObjC final : public MediaPlayerPrivateAVFoundation {
 public:
-    explicit MediaPlayerPrivateAVFoundationObjC(MediaPlayer*);
+    explicit MediaPlayerPrivateAVFoundationObjC(MediaPlayer&);
     virtual ~MediaPlayerPrivateAVFoundationObjC();
 
     static void registerMediaEngine(MediaEngineRegistrar);
@@ -158,9 +158,6 @@ private:
     void tracksChanged() final;
 
     void cancelLoad() final;
-
-    void beginSimulatedHDCPError() final { outputObscuredDueToInsufficientExternalProtectionChanged(true); }
-    void endSimulatedHDCPError() final { outputObscuredDueToInsufficientExternalProtectionChanged(false); }
 
     void notifyTrackModeChanged() final;
     void synchronizeTextTrackState() final;
@@ -313,7 +310,7 @@ private:
     MediaPlayer::WirelessPlaybackTargetType wirelessPlaybackTargetType() const final;
     bool wirelessVideoPlaybackDisabled() const final;
     void setWirelessVideoPlaybackDisabled(bool) final;
-    bool canPlayToWirelessPlaybackTarget() const final { return true; }
+    OptionSet<MediaPlaybackTargetType> supportedPlaybackTargetTypes() const final;
     void updateDisableExternalPlayback();
 #endif
 
@@ -376,10 +373,10 @@ private:
     void setVideoTarget(const PlatformVideoTarget&) final;
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-    const String& defaultSpatialTrackingLabel() const;
+    String defaultSpatialTrackingLabel() const;
     void setDefaultSpatialTrackingLabel(const String&) final;
 
-    const String& spatialTrackingLabel() const;
+    String spatialTrackingLabel() const;
     void setSpatialTrackingLabel(const String&) final;
 
     void updateSpatialTrackingLabel();
@@ -521,8 +518,8 @@ private:
     std::optional<VideoFrameMetadata> m_videoFrameMetadata;
     mutable std::optional<NSTimeInterval> m_cachedSeekableTimeRangesLastModifiedTime;
     mutable std::optional<NSTimeInterval> m_cachedLiveUpdateInterval;
-    std::unique_ptr<Observer<void()>> m_currentImageChangedObserver;
-    std::unique_ptr<Observer<void()>> m_waitForVideoOutputMediaDataWillChangeObserver;
+    RefPtr<Observer<void()>> m_currentImageChangedObserver;
+    RefPtr<Observer<void()>> m_waitForVideoOutputMediaDataWillChangeObserver;
     ProcessIdentity m_resourceOwner;
     PlatformTimeRanges m_buffered;
     TrackID m_currentTextTrackID { 0 };

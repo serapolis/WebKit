@@ -340,9 +340,6 @@ static bool consumeSubgridNameRepeatFunction(CSSParserTokenRange& range, CSS::Pr
 
 RefPtr<CSSValue> consumeGridTrackList(CSSParserTokenRange& range, CSS::PropertyParserState& state, TrackListType trackListType)
 {
-    if (state.context.itemPackCollapseDisplayGridEnabled && range.peek().id() == CSSValueMasonry)
-        return consumeIdent(range);
-
     bool seenAutoRepeat = false;
     if (trackListType == GridTemplate && range.peek().id() == CSSValueSubgrid) {
         consumeIdent(range);
@@ -405,8 +402,6 @@ RefPtr<CSSValue> consumeGridTemplatesRowsOrColumns(CSSParserTokenRange& range, C
 
     if (range.peek().id() == CSSValueNone)
         return consumeIdent(range);
-    if (state.context.itemPackCollapseDisplayGridEnabled && range.peek().id() == CSSValueMasonry)
-        return consumeIdent(range);
     return consumeGridTrackList(range, state, GridTemplate);
 }
 
@@ -429,18 +424,17 @@ RefPtr<CSSValue> consumeGridTemplateAreas(CSSParserTokenRange& range, CSS::Prope
 
 RefPtr<CSSValue> consumeGridAutoFlow(CSSParserTokenRange& range, CSS::PropertyParserState&)
 {
-    auto rowOrColumnValue = consumeIdent<CSSValueRow, CSSValueColumn>(range);
+    auto rowOrColumnValue = consumeIdent<CSSValueRow, CSSValueColumn, CSSValueNormal>(range);
     auto denseAlgorithm = consumeIdent<CSSValueDense>(range);
     if (!rowOrColumnValue) {
         rowOrColumnValue = consumeIdent<CSSValueRow, CSSValueColumn>(range);
         if (!rowOrColumnValue && !denseAlgorithm)
             return nullptr;
     }
+
     CSSValueListBuilder parsedValues;
     if (rowOrColumnValue) {
-        CSSValueID value = rowOrColumnValue->valueID();
-        if (value == CSSValueColumn || (value == CSSValueRow && !denseAlgorithm))
-            parsedValues.append(rowOrColumnValue.releaseNonNull());
+        parsedValues.append(rowOrColumnValue.releaseNonNull());
     }
     if (denseAlgorithm)
         parsedValues.append(denseAlgorithm.releaseNonNull());

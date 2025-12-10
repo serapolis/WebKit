@@ -33,11 +33,13 @@
 #import "WebPage.h"
 #import "WebPageProxyMessages.h"
 #import <WebCore/CachedImage.h>
-#import <WebCore/Document.h>
+#import <WebCore/ContainerNodeInlines.h>
+#import <WebCore/DocumentPage.h>
 #import <WebCore/DragController.h>
 #import <WebCore/Editor.h>
 #import <WebCore/ElementInlines.h>
-#import <WebCore/FrameDestructionObserver.h>
+#import <WebCore/FrameDestructionObserverInlines.h>
+#import <WebCore/FrameIdentifier.h>
 #import <WebCore/FrameView.h>
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/LegacyWebArchive.h>
@@ -68,7 +70,7 @@ using DragImage = CGImageRef;
 
 static RefPtr<ShareableBitmap> convertDragImageToBitmap(DragImage image, const IntSize& size, Frame& frame)
 {
-    auto bitmap = ShareableBitmap::create({ size, screenColorSpace(frame.protectedMainFrame()->virtualView()) });
+    auto bitmap = ShareableBitmap::create({ size, screenColorSpace(frame.protectedMainFrame()->protectedVirtualView().get()) });
     if (!bitmap)
         return nullptr;
 

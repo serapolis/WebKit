@@ -118,10 +118,8 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncDateFromFields, (JSGlobalO
     JSObject* options = intlGetOptionsObject(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
-    TemporalOverflow overflow = toTemporalOverflow(globalObject, options);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    ISO8601::PlainDate plainDate = calendar->isoDateFromFields(globalObject, asObject(value), overflow);
+    auto overflow = TemporalOverflow::Constrain;
+    ISO8601::PlainDate plainDate = calendar->isoDateFromFields(globalObject, asObject(value), TemporalDateFormat::Date, options, overflow);
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTFMove(plainDate))));
@@ -141,19 +139,16 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncDateAdd, (JSGlobalObject* 
     if (!calendar->isISO8601())
         return throwVMRangeError(globalObject, scope, "unimplemented: non-ISO8601 calendar"_s);
 
-    auto* date = TemporalPlainDate::from(globalObject, callFrame->argument(0), std::nullopt);
+    auto* date = TemporalPlainDate::from(globalObject, callFrame->argument(0), TemporalOverflow::Constrain);
     RETURN_IF_EXCEPTION(scope, { });
 
     auto duration = TemporalDuration::toISO8601Duration(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
-    JSObject* options = intlGetOptionsObject(globalObject, callFrame->argument(2));
+    TemporalOverflow overflow = toTemporalOverflow(globalObject, callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, { });
 
-    TemporalOverflow overflow = toTemporalOverflow(globalObject, options);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    ISO8601::PlainDate plainDate = calendar->isoDateAdd(globalObject, date->plainDate(), duration, overflow);
+    ISO8601::PlainDate plainDate = calendar->addDurationToDate(globalObject, date->plainDate(), duration, overflow);
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTFMove(plainDate))));
@@ -173,10 +168,10 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncDateUntil, (JSGlobalObject
     if (!calendar->isISO8601())
         return throwVMRangeError(globalObject, scope, "unimplemented: non-ISO8601 calendar"_s);
 
-    auto* date1 = TemporalPlainDate::from(globalObject, callFrame->argument(0), std::nullopt);
+    auto* date1 = TemporalPlainDate::from(globalObject, callFrame->argument(0), TemporalOverflow::Constrain);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto* date2 = TemporalPlainDate::from(globalObject, callFrame->argument(1), std::nullopt);
+    auto* date2 = TemporalPlainDate::from(globalObject, callFrame->argument(1), TemporalOverflow::Constrain);
     RETURN_IF_EXCEPTION(scope, { });
 
     JSObject* options = intlGetOptionsObject(globalObject, callFrame->argument(2));
@@ -186,8 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncDateUntil, (JSGlobalObject
     RETURN_IF_EXCEPTION(scope, { });
     TemporalUnit largestUnit = largest.value_or(TemporalUnit::Day);
 
-    auto result = TemporalCalendar::isoDateDifference(globalObject, date1->plainDate(), date2->plainDate(), largestUnit);
-    RETURN_IF_EXCEPTION(scope, { });
+    auto result = TemporalCalendar::calendarDateUntil(date1->plainDate(), date2->plainDate(), largestUnit);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(TemporalDuration::tryCreateIfValid(globalObject, WTFMove(result), globalObject->durationStructure())));
 }
@@ -242,7 +236,7 @@ static JSObject* defaultMergeFields(JSGlobalObject* globalObject, JSObject* fiel
     auto* merged = constructEmptyObject(globalObject);
 
     {
-        PropertyNameArray originalKeys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        PropertyNameArrayBuilder originalKeys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         fields->methodTable()->getOwnPropertyNames(fields, globalObject, originalKeys, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -261,7 +255,7 @@ static JSObject* defaultMergeFields(JSGlobalObject* globalObject, JSObject* fiel
 
     bool includesMonthOrMonthCode = false;
     {
-        PropertyNameArray newKeys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        PropertyNameArrayBuilder newKeys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         additionalFields->methodTable()->getOwnPropertyNames(additionalFields, globalObject, newKeys, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -327,7 +321,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncMergeFields, (JSGlobalObje
 
         auto* copied = constructEmptyObject(globalObject);
 
-        PropertyNameArray keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, globalObject, keys, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, { });
 
@@ -356,7 +350,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalCalendarPrototypeFuncMergeFields, (JSGlobalObje
     JSValue newEra = jsUndefined();
     JSValue newEraYear = jsUndefined();
     {
-        PropertyNameArray keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         additionalFieldsCopied->methodTable()->getOwnPropertyNames(additionalFieldsCopied, globalObject, keys, DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, { });
 

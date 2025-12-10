@@ -35,14 +35,13 @@
 #include "CookieListItem.h"
 #include "CookieStoreDeleteOptions.h"
 #include "CookieStoreGetOptions.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EventNames.h"
 #include "EventTargetInterfaces.h"
 #include "EventTargetInlines.h"
 #include "ExceptionOr.h"
 #include "JSCookieListItem.h"
 #include "JSDOMPromiseDeferred.h"
-#include "Page.h"
 #include "PublicSuffixStore.h"
 #include "ScriptExecutionContext.h"
 #include "ScriptExecutionContextIdentifier.h"
@@ -115,7 +114,7 @@ void CookieStore::MainThreadBridge::ensureOnMainThread(Function<void(ScriptExecu
         return;
     }
 
-    downcast<WorkerGlobalScope>(*context).protectedThread()->checkedWorkerLoaderProxy()->postTaskToLoader(WTFMove(task));
+    downcast<WorkerGlobalScope>(*context).thread()->checkedWorkerLoaderProxy()->postTaskToLoader(WTFMove(task));
 }
 
 void CookieStore::MainThreadBridge::ensureOnContextThread(Function<void(CookieStore&)>&& task)

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "XRGPUBinding.h"
 
-#if ENABLE(WEBXR_LAYERS)
+#if ENABLE(WEBXR_LAYERS) && ENABLE(WEBGPU)
 
 #include "GPUDevice.h"
 #include "WebGPUXRBinding.h"
@@ -119,7 +119,8 @@ ExceptionOr<Ref<XRGPUSubImage>> XRGPUBinding::getSubImage(XRProjectionLayer& pro
     auto viewport = setupData->viewports[eyeIndex];
     if (eyeIndex)
         viewport.move(-setupData->viewports[0].width(), 0);
-    RefPtr subImage = m_backing->getViewSubImage(projectionLayer.backing());
+
+    RefPtr subImage = m_backing->getViewSubImage(static_cast<WebGPU::XRProjectionLayer&>(projectionLayer.backing()));
     return XRGPUSubImage::create(subImage.releaseNonNull(), convertToBacking(eye), WTFMove(physicalSize), WTFMove(viewport), m_device);
 }
 
@@ -140,5 +141,5 @@ GPUTextureFormat XRGPUBinding::getPreferredColorFormat()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEBXR_LAYERS)
+#endif // ENABLE(WEBXR_LAYERS) && ENABLE(WEBGPU)
 

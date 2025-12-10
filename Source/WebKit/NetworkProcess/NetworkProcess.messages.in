@@ -49,6 +49,8 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     DestroySession(PAL::SessionID sessionID) -> ()
     EnsureSessionWithDataStoreIdentifierRemoved(WTF::UUID identifier) -> ()
 
+    FetchWebsitesWithUserInteractions(PAL::SessionID sessionID) -> (HashSet<WebCore::RegistrableDomain> websites)
+
     FetchWebsiteData(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, OptionSet<WebKit::WebsiteDataFetchOption> fetchOptions) -> (struct WebKit::WebsiteData websiteData)
     DeleteWebsiteData(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, WallTime modifiedSince, HashSet<WebCore::ProcessIdentifier> activeWebProcesses) -> ()
     DeleteWebsiteDataForOrigins(PAL::SessionID sessionID, OptionSet<WebKit::WebsiteDataType> websiteDataTypes, Vector<WebCore::SecurityOriginData> origins, Vector<String> cookieHostNames, Vector<String> HSTSCacheHostNames, Vector<WebCore::RegistrableDomain> registrableDomains) -> ()
@@ -82,6 +84,7 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     SetCacheModelSynchronouslyForTesting(enum:uint8_t WebKit::CacheModel cacheModel) -> () Synchronous
 
     ProcessWillSuspendImminentlyForTestingSync() -> () Synchronous
+    IsStorageSuspendedForTesting(PAL::SessionID sessionID) -> (bool isStorageSuspended)
     PrepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime) -> ()
     ProcessDidResume(bool forForegroundActivity)
 
@@ -110,6 +113,7 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     HadUserInteraction(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
     IsRelationshipOnlyInDatabaseOnce(PAL::SessionID sessionID, WebCore::RegistrableDomain subDomain, WebCore::RegistrableDomain topDomain) -> (bool hadUserInteraction)
     HasLocalStorage(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
+    HasLocalStorageOrCookies(PAL::SessionID sessionID, WebCore::RegistrableDomain resourceDomain) -> (bool hadUserInteraction)
     GetAllStorageAccessEntries(PAL::SessionID sessionID) -> (Vector<String> domains)
     IsRegisteredAsRedirectingTo(PAL::SessionID sessionID, WebCore::RegistrableDomain redirectedFromDomain, WebCore::RegistrableDomain redirectedToDomain) -> (bool isRedirectingTo)
     IsRegisteredAsSubFrameUnder(PAL::SessionID sessionID, WebCore::RegistrableDomain subFrameDomain, WebCore::RegistrableDomain topFrameDomain) -> (bool isSubframeUnder)
@@ -185,6 +189,7 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     StoreServiceWorkerRegistrations(PAL::SessionID sessionID) -> ()
 
     StorePrivateClickMeasurement(PAL::SessionID sessionID, WebCore::PrivateClickMeasurement privateClickMeasurement)
+    SimulatePrivateClickMeasurementConversion(PAL::SessionID sessionID, int priority, int triggerData, URL sourceURL, URL destinationURL)
     DumpPrivateClickMeasurement(PAL::SessionID sessionID) -> (String privateClickMeasurementState)
     ClearPrivateClickMeasurement(PAL::SessionID sessionID) -> ()
     SetPrivateClickMeasurementOverrideTimerForTesting(PAL::SessionID sessionID, bool value) -> ()

@@ -33,7 +33,6 @@
 #include <wtf/MainThread.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
-#include <wtf/StringExtras.h>
 #include <wtf/WorkQueue.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuffer.h>
@@ -110,7 +109,7 @@ static String readContentsOfFile(const String& path)
     if (!buffer)
         return emptyString();
 
-    String result = byteCast<Latin1Character>(buffer->span());
+    String result = buffer->span();
     if (result.endsWith('\n'))
         return result.left(result.length() - 1);
 

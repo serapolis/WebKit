@@ -93,7 +93,7 @@ public:
 
     URL posterImageURL() const;
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) final;
-    bool isReplaced(const RenderStyle&) const final { return true; }
+    bool isReplaced(const RenderStyle* = nullptr) const final { return true; }
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     enum class VideoPresentationMode { Inline, Fullscreen, PictureInPicture, InWindow };
@@ -120,7 +120,7 @@ public:
     void exitToFullscreenModeWithoutAnimationIfPossible(HTMLMediaElementEnums::VideoFullscreenMode fromMode, HTMLMediaElementEnums::VideoFullscreenMode toMode);
 #endif
 
-    inline RenderVideo* renderer() const; // Defined in RenderVideo.h.
+    inline RenderVideo* renderer() const; // Defined in RenderVideoInlines.h.
     void acceleratedRenderingStateChanged();
     bool supportsAcceleratedRendering() const;
 

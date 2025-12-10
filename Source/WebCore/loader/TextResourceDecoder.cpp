@@ -345,7 +345,7 @@ bool TextResourceDecoder::hasEqualEncodingForCharset(const String& charset) cons
 // Returns the position of the encoding string.
 static size_t findXMLEncoding(std::span<const uint8_t> string, size_t& encodingLength)
 {
-    size_t position = find(string, byteCast<uint8_t>("encoding"_span8));
+    size_t position = find(string, byteCast<uint8_t>("encoding"_span));
     if (position == notFound)
         return notFound;
     position += 8;
@@ -442,7 +442,7 @@ bool TextResourceDecoder::checkForCSSCharset(std::span<const uint8_t> data, bool
 
     data = m_buffer.span();
 
-    if (skipCharactersExactly(data, byteCast<uint8_t>("@charset \""_span8))) {
+    if (skipCharactersExactly(data, byteCast<uint8_t>("@charset \""_span))) {
         size_t index = 0;
         while (index < data.size() && data[index] != '"')
             ++index;

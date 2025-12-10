@@ -162,7 +162,7 @@ void MemoryCache::revalidationSucceeded(CachedResource& revalidatingResource, co
     // one.
     std::pair key { resource->url(), resource->cachePartition() };
     if (auto* existingResources = sessionResourceMap(resource->sessionID())) {
-        if (CachedResourceHandle existingResource = existingResources->get(key).get())
+        if (CachedResourceHandle existingResource = existingResources->get(key))
             remove(*existingResource);
     }
 
@@ -209,7 +209,7 @@ CachedResource* MemoryCache::resourceForRequestImpl(const ResourceRequest& reque
     URL url = removeFragmentIdentifierIfNeeded(request.url());
 
     auto key = std::make_pair(WTFMove(url), request.cachePartition());
-    return resources.get(key).get();
+    return resources.get(key);
 }
 
 unsigned MemoryCache::deadCapacity() const 
@@ -691,7 +691,7 @@ void MemoryCache::adjustSize(bool live, long long delta)
 void MemoryCache::removeRequestFromSessionCaches(ScriptExecutionContext& context, const ResourceRequest& request)
 {
     if (auto* globalScope = dynamicDowncast<WorkerGlobalScope>(context)) {
-        auto* workerLoaderProxy = globalScope->thread().workerLoaderProxy();
+        auto* workerLoaderProxy = globalScope->thread()->workerLoaderProxy();
         if (!workerLoaderProxy)
             return;
         workerLoaderProxy->postTaskToLoader([request = request.isolatedCopy()] (ScriptExecutionContext& context) {

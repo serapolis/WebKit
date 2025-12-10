@@ -218,7 +218,7 @@ void EventSource::didReceiveResponse(ScriptExecutionContextIdentifier, std::opti
         return;
     }
 
-    m_eventStreamOrigin = SecurityOriginData::fromURL(response.url()).toString();
+    m_eventStreamOrigin = SecurityOrigin::create(response.url());
     m_state = OPEN;
     dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
@@ -447,7 +447,7 @@ void EventSource::dispatchMessageEvent()
     String data(m_data.subspan(0, m_data.size() - 1));
     m_data = { };
 
-    dispatchEvent(MessageEvent::create(name, WTFMove(data), m_eventStreamOrigin, m_lastEventId));
+    dispatchEvent(MessageEvent::create(name, WTFMove(data), m_eventStreamOrigin.copyRef(), m_lastEventId));
 }
 
 } // namespace WebCore

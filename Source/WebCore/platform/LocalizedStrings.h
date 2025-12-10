@@ -231,6 +231,7 @@ namespace WebCore {
     String AXOutputText();
     String AXSearchFieldCancelButtonText();
     String AXAttachmentRoleText();
+    String AXRemovedText();
     String AXDetailsText();
     String AXSummaryText();
     String AXFeedText();
@@ -355,6 +356,7 @@ namespace WebCore {
 #if ENABLE(VIDEO)
     String trackNoLabelText();
     String textTrackOffMenuItemText();
+    String textTrackOnMenuItemText();
     String textTrackAutomaticMenuItemText();
 #if PLATFORM(COCOA)
     String addTrackLabelAsSuffix(const String&, const String&);
@@ -434,6 +436,11 @@ namespace WebCore {
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     WEBCORE_EXPORT String fullscreenControllerViewSpatial();
     WEBCORE_EXPORT String fullscreenControllerViewImmersive();
+#endif
+
+#if ENABLE(SPATIAL_IMAGE_CONTROLS)
+    WEBCORE_EXPORT String imageControlsLabelSpatial();
+    WEBCORE_EXPORT String imageControlsLabelPanorama();
 #endif
 
 #if PLATFORM(COCOA)

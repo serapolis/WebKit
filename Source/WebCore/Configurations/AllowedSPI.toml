@@ -52,12 +52,6 @@ symbols = [
     "nw_resolver_create_with_path",
 ]
 
-[[staging]]
-symbols = [
-    "MACaptionAppearanceCopyActiveProfileID",
-]
-requires = ["!HAVE_MEDIA_ACCESSIBILITY_PROFILES_API"]
-
 [[temporary-usage]]
 request = "rdar://159806937"
 cleanup = "rdar://159806845"
@@ -71,4 +65,18 @@ cleanup = "rdar://159948141"
 selectors = [
     { name = "_enumerateAllDeclaredTypesUsingBlock:", class = "UTType" },
     { name = "_parentTypes", class = "UTType" },
+]
+
+[[temporary-usage]]
+request = "rdar://161241270"
+cleanup = "rdar://161241477"
+symbols = [
+    "CTFontGetUIFontType",
+]
+
+[[temporary-usage]]
+request = "rdar://161402565"
+cleanup = "rdar://161402756"
+symbols = [
+    "FPFontCreateMemorySafeFontsFromData",
 ]

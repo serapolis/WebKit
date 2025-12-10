@@ -73,7 +73,7 @@ public:
 
     // Native channel data access.
     RefPtr<Float32Array> channelData(unsigned channelIndex);
-    std::span<float> rawChannelData(unsigned channelIndex);
+    std::span<float> rawChannelData(unsigned channelIndex) LIFETIME_BOUND;
     void zero();
 
     // Because an AudioBuffer has a JavaScript wrapper, which will be garbage collected, it may take a while for this object to be deleted.

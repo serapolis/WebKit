@@ -69,6 +69,7 @@ public:
     // ActiveDOMObject.
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
+    USING_CAN_MAKE_WEAKPTR(HTMLElement);
 
     void formOwnerRemovedFromTree(const Node& formRoot);
 
@@ -195,7 +196,7 @@ private:
 
     void didAttachRenderers() override;
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    bool isReplaced(const RenderStyle&) const final;
+    bool isReplaced(const RenderStyle* = nullptr) const final;
     void setBestFitURLAndDPRFromImageCandidate(const ImageCandidate&);
 
     bool canStartSelection() const override;
@@ -245,7 +246,7 @@ private:
     void setSourceElement(HTMLSourceElement*);
 
     IntersectionObserverData& ensureIntersectionObserverData() final;
-    IntersectionObserverData* intersectionObserverDataIfExists() final;
+    IntersectionObserverData* intersectionObserverDataIfExists() const final;
 
     const std::unique_ptr<HTMLImageLoader> m_imageLoader;
     std::unique_ptr<IntersectionObserverData> m_intersectionObserverData;

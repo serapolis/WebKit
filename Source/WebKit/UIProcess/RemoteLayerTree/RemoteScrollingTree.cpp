@@ -31,6 +31,7 @@
 
 #include "RemoteLayerTreeHost.h"
 #include "RemoteScrollingCoordinatorProxy.h"
+#include <WebCore/AcceleratedTimeline.h>
 #include <WebCore/ScrollingTreeFixedNodeCocoa.h>
 #include <WebCore/ScrollingTreeFrameHostingNode.h>
 #include <WebCore/ScrollingTreeFrameScrollingNode.h>
@@ -38,6 +39,7 @@
 #include <WebCore/ScrollingTreePluginHostingNode.h>
 #include <WebCore/ScrollingTreePluginScrollingNode.h>
 #include <WebCore/ScrollingTreePositionedNodeCocoa.h>
+#include <WebCore/ScrollingTreeScrollingNode.h>
 #include <WebCore/ScrollingTreeStickyNodeCocoa.h>
 
 namespace WebKit {
@@ -297,6 +299,41 @@ void RemoteScrollingTree::tryToApplyLayerPositions()
     applyLayerPositionsInternal();
 }
 
+#if ENABLE(THREADED_ANIMATIONS)
+void RemoteScrollingTree::updateTimelinesRegistration(WebCore::ProcessIdentifier processIdentifier, const WebCore::AcceleratedTimelinesUpdate& timelinesUpdate)
+{
+    if (!m_progressBasedTimelineRegistry)
+        m_progressBasedTimelineRegistry = makeUnique<RemoteProgressBasedTimelineRegistry>();
+    m_progressBasedTimelineRegistry->update(*this, processIdentifier, timelinesUpdate);
+    if (m_progressBasedTimelineRegistry->isEmpty())
+        m_progressBasedTimelineRegistry = nullptr;
+}
+
+RefPtr<const RemoteAnimationTimeline> RemoteScrollingTree::timeline(const TimelineID& timelineID) const
+{
+    if (m_progressBasedTimelineRegistry)
+        return m_progressBasedTimelineRegistry->get(timelineID);
+    return nullptr;
+}
+
+bool RemoteScrollingTree::hasTimelineForNode(const WebCore::ScrollingTreeScrollingNode& node) const
+{
+    return m_progressBasedTimelineRegistry && m_progressBasedTimelineRegistry->hasTimelineForNode(node);
+}
+
+void RemoteScrollingTree::updateProgressBasedTimelinesForNode(const WebCore::ScrollingTreeScrollingNode& node)
+{
+    if (m_progressBasedTimelineRegistry)
+        m_progressBasedTimelineRegistry->updateTimelinesForNode(node);
+}
+
+HashSet<Ref<RemoteProgressBasedTimeline>> RemoteScrollingTree::timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID scrollingNodeID) const
+{
+    if (m_progressBasedTimelineRegistry)
+        return m_progressBasedTimelineRegistry->timelinesForScrollingNodeIDForTesting(scrollingNodeID);
+    return { };
+}
+#endif
 
 } // namespace WebKit
 

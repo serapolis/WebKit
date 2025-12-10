@@ -97,17 +97,6 @@ struct WebViewRepresentable {
         }
         #endif
 
-        let preferencesContext = environment.webViewWebPreferenceContext
-        if !preferencesContext.isEmpty {
-            let wkPreferences = webView.configuration.preferences
-
-            for feature in WKPreferences._features() {
-                if let value = preferencesContext.get(feature.key, as: Bool.self) {
-                    wkPreferences._setEnabled(value, for: feature)
-                }
-            }
-        }
-
         if EquatableScrollBounceBehavior(environment.verticalScrollBounceBehavior) == .always
             || EquatableScrollBounceBehavior(environment.verticalScrollBounceBehavior) == .automatic
         {
@@ -303,7 +292,10 @@ struct EquatableScrollBounceBehavior: Equatable {
     let behavior: ScrollBounceBehavior
 
     static func == (lhs: EquatableScrollBounceBehavior, rhs: EquatableScrollBounceBehavior) -> Bool {
-        unsafeBitCast(lhs.behavior, to: Int8.self) == unsafeBitCast(rhs.behavior, to: Int8.self)
+        // Safety: ScrollBounceBehavior is opaque, but stores data, so is guaranteed
+        // to be at least 1 byte long. We will compare just that first byte.
+        // This is a temporary workaround for rdar://145030632.
+        unsafe unsafeBitCast(lhs.behavior, to: Int8.self) == unsafeBitCast(rhs.behavior, to: Int8.self)
     }
 }
 

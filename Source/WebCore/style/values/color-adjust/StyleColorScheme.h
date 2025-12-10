@@ -38,6 +38,9 @@ namespace WebCore {
 namespace Style {
 
 struct ColorScheme {
+    ColorScheme(CSS::Keyword::Normal) : schemes { }, only { std::nullopt } { }
+    ColorScheme(SpaceSeparatedVector<CustomIdentifier>&& schemes, std::optional<CSS::Keyword::Only> only) : schemes { WTFMove(schemes) }, only { only } { }
+
     SpaceSeparatedVector<CustomIdentifier> schemes;
     std::optional<CSS::Keyword::Only> only;
 

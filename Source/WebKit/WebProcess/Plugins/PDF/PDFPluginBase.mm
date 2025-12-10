@@ -58,15 +58,19 @@
 #import <WebCore/ColorSerialization.h>
 #import <WebCore/ContainerNodeInlines.h>
 #import <WebCore/Cursor.h>
-#import <WebCore/Document.h>
+#import <WebCore/DocumentPage.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/EventNames.h>
 #import <WebCore/FocusController.h>
 #import <WebCore/Frame.h>
+#import <WebCore/FrameDestructionObserverInlines.h>
 #import <WebCore/FrameLoader.h>
 #import <WebCore/GraphicsContext.h>
+#import <WebCore/GraphicsLayer.h>
 #import <WebCore/HTMLPlugInElement.h>
 #import <WebCore/LegacyNSPasteboardTypes.h>
 #import <WebCore/LoaderNSURLExtras.h>
+#import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/MouseEvent.h>
 #import <WebCore/PageIdentifier.h>
@@ -425,14 +429,16 @@ bool PDFPluginBase::getByteRanges(CFMutableArrayRef dataBuffersArray, std::span<
         RELEASE_ASSERT(range.location >= 0);
         RELEASE_ASSERT(range.length >= 0);
 
-        if (haveStreamedDataForRange(range.location, range.length))
-            return true;
-
         uint64_t rangeLocation = range.location;
         uint64_t rangeLength = range.length;
 
         uint64_t dataLength = CFDataGetLength(m_data.get());
-        if (rangeLocation + rangeLength > dataLength)
+        bool rangeExtentIsSmallerThanBufferSize = isSumSmallerThanOrEqual(rangeLocation, rangeLength, dataLength);
+
+        if (haveStreamedDataForRange(rangeLocation, rangeLength))
+            return rangeExtentIsSmallerThanBufferSize;
+
+        if (!rangeExtentIsSmallerThanBufferSize)
             return false;
 
         return m_validRanges.contains({ rangeLocation, rangeLocation + rangeLength - 1 });
@@ -760,7 +766,7 @@ void PDFPluginBase::visibilityDidChange(bool)
 
 FloatSize PDFPluginBase::pdfDocumentSizeForPrinting() const
 {
-    return FloatSize { [[m_pdfDocument pageAtIndex:0] boundsForBox:kPDFDisplayBoxCropBox].size };
+    return FloatSize { [retainPtr([m_pdfDocument pageAtIndex:0]) boundsForBox:kPDFDisplayBoxCropBox].size };
 }
 
 void PDFPluginBase::invalidateRect(const IntRect& rect)

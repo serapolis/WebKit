@@ -756,16 +756,16 @@ public:
             if (m_isRegistered) {
                 String str(buffer);
                 if (m_isPrivate)
-                    symbol = static_cast<SymbolImpl*>(&vm.privateSymbolRegistry().symbolForKey(str).leakRef());
+                    symbol = static_cast<SymbolImpl*>(&vm.checkedPrivateSymbolRegistry()->symbolForKey(str).leakRef());
                 else
-                    symbol = static_cast<SymbolImpl*>(&vm.symbolRegistry().symbolForKey(str).leakRef());
+                    symbol = static_cast<SymbolImpl*>(&vm.checkedSymbolRegistry()->symbolForKey(str).leakRef());
             } else if (m_isWellKnownSymbol)
                 symbol = vm.propertyNames->builtinNames().lookUpWellKnownSymbol(buffer);
             else
                 symbol = vm.propertyNames->builtinNames().lookUpPrivateName(buffer);
             RELEASE_ASSERT(symbol);
             String str = symbol;
-            StringImpl* impl = str.releaseImpl().get();
+            StringImpl* impl = str.releaseImpl().unsafeGet();
             ASSERT(impl->isSymbol());
             if (m_isWellKnownSymbol)
                 ASSERT(!static_cast<SymbolImpl*>(impl)->isPrivate());
@@ -783,8 +783,8 @@ public:
         return m_is8Bit ? create(span8()) : create(span16());
     }
 
-    std::span<const Latin1Character> span8() const { return { this->template buffer<Latin1Character>(), m_length }; }
-    std::span<const char16_t> span16() const { return { this->template buffer<char16_t>(), m_length }; }
+    std::span<const Latin1Character> span8() const LIFETIME_BOUND { return { this->template buffer<Latin1Character>(), m_length }; }
+    std::span<const char16_t> span16() const LIFETIME_BOUND { return { this->template buffer<char16_t>(), m_length }; }
 
 private:
     bool m_is8Bit : 1;
@@ -890,6 +890,7 @@ public:
     {
         m_min = jumpTable.m_min;
         m_defaultOffset = jumpTable.m_defaultOffset;
+        m_isList = jumpTable.m_isList;
         m_branchOffsets.encode(encoder, jumpTable.m_branchOffsets);
     }
 
@@ -897,12 +898,14 @@ public:
     {
         jumpTable.m_min = m_min;
         jumpTable.m_defaultOffset = m_defaultOffset;
+        jumpTable.m_isList = m_isList;
         m_branchOffsets.decode(decoder, jumpTable.m_branchOffsets);
     }
 
 private:
     int32_t m_min;
     int32_t m_defaultOffset;
+    int32_t m_isList;
     CachedVector<int32_t> m_branchOffsets;
 };
 

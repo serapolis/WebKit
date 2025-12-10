@@ -45,14 +45,9 @@
 #include <wtf/GetPtr.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/NotFound.h>
-#include <wtf/StringExtras.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/TypeTraits.h>
 #include <wtf/Variant.h>
-
-namespace WTF {
-struct Latin1Character;
-}
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -104,6 +99,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // WTF_CONCAT: concatenate two symbols into one, even expandable macros
 #define WTF_CONCAT_INTERNAL_DONT_USE(a, b) a ## b
 #define WTF_CONCAT(a, b) WTF_CONCAT_INTERNAL_DONT_USE(a, b)
+
 
 /*
  * The reinterpret_cast<Type1*>([pointer to Type2]) expressions - where
@@ -539,6 +535,9 @@ template<typename T> concept HasSwitchOn = requires(T t) {
     t.switchOn([](const auto&) {});
 };
 
+template<typename Derived, typename Base>
+concept DerivedFromOrConvertibleTo = std::is_base_of_v<Base, Derived> || std::is_convertible_v<Derived, Base>;
+
 #ifdef _LIBCPP_VERSION
 
 // Single-variant switch-based visit function adapted from https://www.reddit.com/r/cpp/comments/kst2pu/comment/giilcxv/.
@@ -566,7 +565,7 @@ template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto swit
 
 #else
 
-template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
+template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE constexpr auto switchOn(V&& v, F&&... f) -> decltype(WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
 {
     return WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v)));
 }
@@ -676,7 +675,7 @@ template<size_t I, typename V> constexpr bool holdsAlternative(const V& v)
     }                                                                                \
     template<typename T> friend const T&& get(const Self&& self)                     \
     {                                                                                \
-        return std::get<T>(WTFMove(self.name));                                      \
+        return std::get<T>(std::move(self.name));                                    \
     }                                                                                \
     template<typename T> friend std::add_pointer_t<T> get_if(Self* self)             \
     {                                                                                \
@@ -868,7 +867,7 @@ ALWAYS_INLINE constexpr typename remove_reference<T>::type&& move(T&& value)
 namespace WTF {
 
 template<class T, class... Args>
-ALWAYS_INLINE decltype(auto) makeUnique(Args&&... args)
+[[nodiscard]] ALWAYS_INLINE decltype(auto) makeUnique(Args&&... args)
 {
     static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "T should use FastMalloc (WTF_DEPRECATED_MAKE_FAST_ALLOCATED)");
     static_assert(!HasRefPtrMemberFunctions<T>::value, "T should not be RefCounted");
@@ -880,14 +879,14 @@ ALWAYS_INLINE decltype(auto) makeUnique(Args&&... args)
 // case of reassignment, ref-counting forwarding wouldn't be safe. This function is commonly used
 // with `lazyInitialize()` to initialize a const data member.
 template<class T, class U = T, class... Args>
-ALWAYS_INLINE const std::unique_ptr<U> makeUniqueWithoutRefCountedCheck(Args&&... args)
+[[nodiscard]] ALWAYS_INLINE const std::unique_ptr<U> makeUniqueWithoutRefCountedCheck(Args&&... args)
 {
     static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "T should use FastMalloc (WTF_DEPRECATED_MAKE_FAST_ALLOCATED)");
     return std::unique_ptr<U>(std::make_unique<T>(std::forward<Args>(args)...));
 }
 
 template<class T, class... Args>
-ALWAYS_INLINE decltype(auto) makeUniqueWithoutFastMallocCheck(Args&&... args)
+[[nodiscard]] ALWAYS_INLINE decltype(auto) makeUniqueWithoutFastMallocCheck(Args&&... args)
 {
     static_assert(!HasRefPtrMemberFunctions<T>::value, "T should not be RefCounted");
     return std::make_unique<T>(std::forward<Args>(args)...);
@@ -1060,24 +1059,49 @@ std::strong_ordering compareSpans(std::span<T, TExtent> a, std::span<U, UExtent>
     return std::strong_ordering::equal;
 }
 
+template<typename T, typename U>
+concept TriviallyComparableCodeUnits = std::is_same_v<std::remove_const_t<T>, std::remove_const_t<U>> || (!std::is_same_v<std::remove_const_t<T>, char8_t> && !std::is_same_v<std::remove_const_t<U>, char8_t>);
+
+template<typename T>
+concept CanBeConstByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<T, bool>) || std::same_as<T, std::byte>);
+
+template<typename T, typename U>
+concept TriviallyComparableOneByteCodeUnits = TriviallyComparableCodeUnits<T, U> && CanBeConstByteType<T> && CanBeConstByteType<U>;
+
 // Returns the index of the first occurrence of |needed| in |haystack| or notFound if not present.
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
+    requires(TriviallyComparableOneByteCodeUnits<T, U>)
 size_t find(std::span<T, TExtent> haystack, std::span<U, UExtent> needle)
 {
-    static_assert(sizeof(T) == 1);
-    static_assert(sizeof(T) == sizeof(U));
+    if (needle.empty())
+        return 0;
+
+#if !HAVE(MEMMEM)
+    if (haystack.size() < needle.size())
+        return notFound;
+
+    size_t lastPossiblePosition = haystack.size() - needle.size();
+
+    for (size_t i = 0; i <= lastPossiblePosition; ++i) {
+        auto candidateSpan = haystack.subspan(i, needle.size());
+        if (equalSpans(candidateSpan, needle))
+            return i;
+    }
+
+    return notFound;
+#else
     auto* result = static_cast<T*>(memmem(haystack.data(), haystack.size(), needle.data(), needle.size())); // NOLINT
     if (!result)
         return notFound;
     return result - haystack.data();
+#endif
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
+    requires(TriviallyComparableOneByteCodeUnits<T, U>)
 size_t contains(std::span<T, TExtent> haystack, std::span<U, UExtent> needle)
 {
-    static_assert(sizeof(T) == 1);
-    static_assert(sizeof(T) == sizeof(U));
-    return !!memmem(haystack.data(), haystack.size(), needle.data(), needle.size()); // NOLINT
+    return find(haystack, needle) != notFound;
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
@@ -1199,10 +1223,11 @@ bool spansOverlap(std::span<T, TExtent> a, std::span<U, UExtent> b)
 /* SAFE_PRINTF */
 
 // https://gist.github.com/sehe/3374327
-template <class T> inline typename std::enable_if<std::is_integral<T>::value, T>::type safePrintfType(T arg) { return arg; }
-template <class T> inline typename std::enable_if<std::is_floating_point<T>::value, T>::type safePrintfType(T arg) { return arg; }
-template <class T> inline typename std::enable_if<std::is_pointer<T>::value, T>::type safePrintfType(T arg) {
-    static_assert(!std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, char>, "char* is not bounds safe; please use a null terminated string type");
+template<std::integral T> inline T safePrintfType(T arg) { return arg; }
+template<std::floating_point T> inline T safePrintfType(T arg) { return arg; }
+template<typename T> requires (std::is_pointer_v<T>) inline T safePrintfType(T arg)
+{
+    static_assert(!std::same_as<std::remove_cv_t<std::remove_pointer_t<T>>, char>, "char* is not bounds safe; please use a null terminated string type");
     return arg;
 }
 
@@ -1231,40 +1256,31 @@ template <class T> inline typename std::enable_if<std::is_pointer<T>::value, T>:
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 template<typename T>
-concept IsByte = (sizeof(T) == 1 && std::is_integral_v<T> && !std::same_as<std::remove_const_t<T>, bool>) || std::same_as<std::remove_const_t<T>, std::byte> || std::same_as<std::remove_const_t<T>, WTF::Latin1Character>;
-
-template<typename T>
-concept IsMutableByte = IsByte<T> && !std::is_const_v<T>;
+concept NonConstByteType = CanBeConstByteType<T> && !std::is_const_v<T>;
 
 template<typename> struct ByteCastTraits;
 
-template<IsByte T>
-struct ByteCastTraits<T> {
-    template<IsByte U> static constexpr U cast(T character) { return static_cast<U>(character); }
+template<NonConstByteType T> struct ByteCastTraits<T> {
+    template<NonConstByteType U> static constexpr U cast(T character) { return static_cast<U>(character); }
 };
 
-template<IsMutableByte T>
-struct ByteCastTraits<T*> {
-    template<IsMutableByte U> static constexpr auto cast(T* pointer) { return std::bit_cast<U*>(pointer); }
+template<NonConstByteType T> struct ByteCastTraits<T*> {
+    template<NonConstByteType U> static constexpr auto cast(T* pointer) { return std::bit_cast<U*>(pointer); }
 };
 
-template<IsMutableByte T>
-struct ByteCastTraits<const T*> {
-    template<IsMutableByte U> static constexpr auto cast(const T* pointer) { return std::bit_cast<const U*>(pointer); }
+template<NonConstByteType T> struct ByteCastTraits<const T*> {
+    template<NonConstByteType U> static constexpr auto cast(const T* pointer) { return std::bit_cast<const U*>(pointer); }
 };
 
-template<IsMutableByte T, size_t Extent>
-struct ByteCastTraits<std::span<T, Extent>> {
-    template<IsMutableByte U> static constexpr auto cast(std::span<T, Extent> span) { return spanReinterpretCast<U>(span); }
+template<NonConstByteType T, size_t Extent> struct ByteCastTraits<std::span<T, Extent>> {
+    template<NonConstByteType U> static constexpr auto cast(std::span<T, Extent> span) { return spanReinterpretCast<U>(span); }
 };
 
-template<IsMutableByte T, size_t Extent>
-struct ByteCastTraits<std::span<const T, Extent>> {
-    template<IsMutableByte U> static constexpr auto cast(std::span<const T, Extent> span) { return spanReinterpretCast<const U>(span); }
+template<NonConstByteType T, size_t Extent> struct ByteCastTraits<std::span<const T, Extent>> {
+    template<NonConstByteType U> static constexpr auto cast(std::span<const T, Extent> span) { return spanReinterpretCast<const U>(span); }
 };
 
-template<IsByte T, typename U>
-constexpr auto byteCast(const U& value)
+template<NonConstByteType T, typename U> constexpr auto byteCast(const U& value)
 {
     return ByteCastTraits<U>::template cast<T>(value);
 }
@@ -1495,11 +1511,11 @@ template<typename Object, typename Allocator = FastMalloc> void destroyWithTrail
     Allocator::free(object);
 }
 
-template<typename T, typename U>
-ALWAYS_INLINE void lazyInitialize(const std::unique_ptr<T>& ptr, const std::unique_ptr<U>&& obj)
+template<typename T, typename TDeleter, typename U, typename UDeleter>
+ALWAYS_INLINE void lazyInitialize(const std::unique_ptr<T, TDeleter>& ptr, const std::unique_ptr<U, UDeleter>&& obj)
 {
     RELEASE_ASSERT(!ptr);
-    const_cast<std::unique_ptr<T>&>(ptr) = std::move(const_cast<std::unique_ptr<U>&&>(obj));
+    const_cast<std::unique_ptr<T, TDeleter>&>(ptr) = std::move(const_cast<std::unique_ptr<U, UDeleter>&&>(obj)); // NOLINT.
 }
 
 ALWAYS_INLINE std::optional<double> stringToDouble(std::span<const char> buffer, size_t& parsedLength)
@@ -1523,6 +1539,26 @@ ALWAYS_INLINE std::weak_ordering weakOrderingCast(std::partial_ordering ordering
         return std::weak_ordering::equivalent;
     return is_lt(ordering) ? std::weak_ordering::less : std::weak_ordering::greater;
 }
+
+template<size_t> struct SizedUnsignedTrait;
+template<>
+struct SizedUnsignedTrait<1> {
+    using Type = uint8_t;
+};
+template<>
+struct SizedUnsignedTrait<2> {
+    using Type = uint16_t;
+};
+template<>
+struct SizedUnsignedTrait<4> {
+    using Type = uint32_t;
+};
+template<>
+struct SizedUnsignedTrait<8> {
+    using Type = uint64_t;
+};
+template<typename T>
+using SameSizeUnsignedInteger = SizedUnsignedTrait<sizeof(T)>::Type;
 
 } // namespace WTF
 
@@ -1596,6 +1632,8 @@ using WTF::weakOrderingCast;
 using WTF::zeroBytes;
 using WTF::zeroSpan;
 using WTF::Invocable;
+using WTF::SameSizeUnsignedInteger;
+using WTF::SizedUnsignedTrait;
 using WTF::VariantWrapper;
 using WTF::VariantOrSingle;
 

@@ -69,10 +69,12 @@ private:
 class TextTrackCue : public RefCounted<TextTrackCue>, public EventTarget, public ActiveDOMObject {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(TextTrackCue);
 public:
+    static ExceptionOr<Ref<TextTrackCue>> create(Document&, double start, double end, DocumentFragment&);
+
+    // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
-
-    static ExceptionOr<Ref<TextTrackCue>> create(Document&, double start, double end, DocumentFragment&);
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     void didMoveToNewDocument(Document&);
 
@@ -153,7 +155,6 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     using EventTarget::dispatchEvent;
-    void dispatchEvent(Event&) final;
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::TextTrackCue; }
     ScriptExecutionContext* scriptExecutionContext() const final;
 

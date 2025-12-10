@@ -24,6 +24,7 @@
 
 #include "BorderShape.h"
 #include "ButtonPart.h"
+#include "CSSContrastColorResolver.h"
 #include "CSSPropertyNames.h"
 #include "CSSValueKeywords.h"
 #include "ColorBlending.h"
@@ -77,6 +78,7 @@
 #include "SpinButtonElement.h"
 #include "StringTruncator.h"
 #include "StylePadding.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "SwitchThumbPart.h"
 #include "SwitchTrackPart.h"
 #include "TextAreaPart.h"
@@ -497,17 +499,20 @@ StyleAppearance RenderTheme::autoAppearanceForElement(RenderStyle& style, const 
 }
 
 #if ENABLE(APPLE_PAY)
-static void updateApplePayButtonPartForRenderer(ApplePayButtonPart& applePayButtonPart, const RenderObject& renderer)
+static void updateApplePayButtonPartForRenderer(ApplePayButtonPart& applePayButtonPart, const RenderElement& renderer)
 {
     CheckedRef style = renderer.style();
 
-    String locale = style->computedLocale();
-    if (locale.isEmpty())
-        locale = defaultLanguage(ShouldMinimizeLanguages::No);
+    auto platformLocale = [&] -> String {
+        auto locale = style->computedLocale();
+        if (locale.isAuto())
+            return defaultLanguage(ShouldMinimizeLanguages::No);
+        return Style::toPlatform(locale);
+    }();
 
     applePayButtonPart.setButtonType(style->applePayButtonType());
     applePayButtonPart.setButtonStyle(style->applePayButtonStyle());
-    applePayButtonPart.setLocale(locale);
+    applePayButtonPart.setLocale(WTFMove(platformLocale));
 }
 #endif
 
@@ -540,9 +545,9 @@ static void updateProgressBarPartForRenderer(ProgressBarPart& progressBarPart, c
     progressBarPart.setAnimationStartTime(renderProgress.animationStartTime().secondsSinceEpoch());
 }
 
-static void updateSliderTrackPartForRenderer(SliderTrackPart& sliderTrackPart, const RenderObject& renderer)
+static void updateSliderTrackPartForRenderer(SliderTrackPart& sliderTrackPart, const RenderElement& renderer)
 {
-    Ref input = downcast<HTMLInputElement>(*renderer.node());
+    Ref input = downcast<HTMLInputElement>(*renderer.element());
     ASSERT(input->isRangeControl());
 
     IntSize thumbSize;
@@ -551,8 +556,8 @@ static void updateSliderTrackPartForRenderer(SliderTrackPart& sliderTrackPart, c
 
         auto fixedWidth = thumbStyle.width().tryFixed();
         auto fixedHeight = thumbStyle.height().tryFixed();
-        auto thumbWidth = fixedWidth ? static_cast<int>(fixedWidth->value) : 0;
-        auto thumbHeight = fixedHeight ? static_cast<int>(fixedHeight->value) : 0;
+        auto thumbWidth = fixedWidth ? static_cast<int>(fixedWidth->resolveZoom(thumbStyle.usedZoomForLength())) : 0;
+        auto thumbHeight = fixedHeight ? static_cast<int>(fixedHeight->resolveZoom(thumbStyle.usedZoomForLength())) : 0;
 
         thumbSize = { thumbWidth, thumbHeight };
     }
@@ -592,7 +597,7 @@ static void updateSliderTrackPartForRenderer(SliderTrackPart& sliderTrackPart, c
     sliderTrackPart.setTickRatios(WTFMove(tickRatios));
 }
 
-static void updateSwitchThumbPartForRenderer(SwitchThumbPart& switchThumbPart, const RenderObject& renderer)
+static void updateSwitchThumbPartForRenderer(SwitchThumbPart& switchThumbPart, const RenderElement& renderer)
 {
     Ref input = downcast<HTMLInputElement>(*renderer.protectedNode()->shadowHost());
     ASSERT(input->isSwitch());
@@ -601,7 +606,7 @@ static void updateSwitchThumbPartForRenderer(SwitchThumbPart& switchThumbPart, c
     switchThumbPart.setProgress(input->switchAnimationVisuallyOnProgress());
 }
 
-static void updateSwitchTrackPartForRenderer(SwitchTrackPart& switchTrackPart, const RenderObject& renderer)
+static void updateSwitchTrackPartForRenderer(SwitchTrackPart& switchTrackPart, const RenderElement& renderer)
 {
     Ref input = downcast<HTMLInputElement>(*renderer.protectedNode()->shadowHost());
     ASSERT(input->isSwitch());
@@ -610,7 +615,7 @@ static void updateSwitchTrackPartForRenderer(SwitchTrackPart& switchTrackPart, c
     switchTrackPart.setProgress(input->switchAnimationVisuallyOnProgress());
 }
 
-RefPtr<ControlPart> RenderTheme::createControlPart(const RenderObject& renderer) const
+RefPtr<ControlPart> RenderTheme::createControlPart(const RenderElement& renderer) const
 {
     auto appearance = renderer.style().usedAppearance();
 
@@ -713,7 +718,7 @@ RefPtr<ControlPart> RenderTheme::createControlPart(const RenderObject& renderer)
     return nullptr;
 }
 
-void RenderTheme::updateControlPartForRenderer(ControlPart& part, const RenderObject& renderer) const
+void RenderTheme::updateControlPartForRenderer(ControlPart& part, const RenderElement& renderer) const
 {
     if (auto* meterPart = dynamicDowncast<MeterPart>(part)) {
         updateMeterPartForRenderer(*meterPart, downcast<RenderMeter>(renderer));
@@ -824,7 +829,7 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
     return { };
 }
 
-ControlStyle RenderTheme::extractControlStyleForRenderer(const RenderObject& renderObject) const
+ControlStyle RenderTheme::extractControlStyleForRenderer(const RenderElement& renderObject) const
 {
     CheckedPtr renderer = effectiveRendererForAppearance(renderObject);
     if (!renderer)
@@ -837,7 +842,7 @@ ControlStyle RenderTheme::extractControlStyleForRenderer(const RenderObject& ren
         style->usedZoom(),
         style->usedAccentColor(renderObject.styleColorOptions()),
         style->visitedDependentColorWithColorFilter(CSSPropertyColor),
-        Style::evaluate(style->borderWidth(), 1.0f /* FIXME FIND ZOOM */)
+        Style::evaluate<FloatBoxExtent>(style->borderWidth(), Style::ZoomNeeded { })
     };
 }
 
@@ -1197,7 +1202,7 @@ bool RenderTheme::isControlStyled(const RenderStyle& style) const
     }
 }
 
-bool RenderTheme::supportsFocusRing(const RenderObject&, const RenderStyle& style) const
+bool RenderTheme::supportsFocusRing(const RenderElement&, const RenderStyle& style) const
 {
     return style.hasUsedAppearance()
         && style.usedAppearance() != StyleAppearance::TextField
@@ -1206,34 +1211,34 @@ bool RenderTheme::supportsFocusRing(const RenderObject&, const RenderStyle& styl
         && style.usedAppearance() != StyleAppearance::Listbox;
 }
 
-bool RenderTheme::isWindowActive(const RenderObject& renderer) const
+bool RenderTheme::isWindowActive(const RenderElement& renderer) const
 {
     return renderer.page().focusController().isActive();
 }
 
-bool RenderTheme::isChecked(const RenderObject& renderer) const
+bool RenderTheme::isChecked(const RenderElement& renderer) const
 {
-    RefPtr element = dynamicDowncast<HTMLInputElement>(renderer.node());
+    RefPtr element = dynamicDowncast<HTMLInputElement>(renderer.element());
     return element && element->matchesCheckedPseudoClass();
 }
 
-bool RenderTheme::isIndeterminate(const RenderObject& renderer) const
+bool RenderTheme::isIndeterminate(const RenderElement& renderer) const
 {
     // This does not currently support multiple elements and therefore radio buttons are excluded.
     // FIXME: However, what about <progress>?
-    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.node());
+    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.element());
     return input && input->isCheckbox() && input->matchesIndeterminatePseudoClass();
 }
 
-bool RenderTheme::isEnabled(const RenderObject& renderer) const
+bool RenderTheme::isEnabled(const RenderElement& renderer) const
 {
-    RefPtr element = dynamicDowncast<Element>(renderer.node());
+    RefPtr element = renderer.element();
     return element && !element->isDisabledFormControl();
 }
 
-bool RenderTheme::isFocused(const RenderObject& renderer) const
+bool RenderTheme::isFocused(const RenderElement& renderer) const
 {
-    RefPtr element = dynamicDowncast<Element>(renderer.node());
+    RefPtr element = renderer.element();
     if (!element)
         return false;
 
@@ -1247,55 +1252,55 @@ bool RenderTheme::isFocused(const RenderObject& renderer) const
     return delegate == document->focusedElement() && frame && frame->checkedSelection()->isFocusedAndActive();
 }
 
-bool RenderTheme::isPressed(const RenderObject& renderer) const
+bool RenderTheme::isPressed(const RenderElement& renderer) const
 {
-    RefPtr element = dynamicDowncast<Element>(renderer.node());
+    RefPtr element = renderer.element();
     return element && element->active();
 }
 
-bool RenderTheme::isSpinUpButtonPartPressed(const RenderObject& renderer) const
+bool RenderTheme::isSpinUpButtonPartPressed(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.node()))
+    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->active() && spinButton->upDownState() == SpinButtonElement::Up;
     return false;
 }
 
-bool RenderTheme::isReadOnlyControl(const RenderObject& renderer) const
+bool RenderTheme::isReadOnlyControl(const RenderElement& renderer) const
 {
-    if (RefPtr element = dynamicDowncast<Element>(renderer.node()))
+    if (RefPtr element = renderer.element())
         return is<HTMLFormControlElement>(*element) && !element->matchesReadWritePseudoClass();
     return false;
 }
 
-bool RenderTheme::isHovered(const RenderObject& renderer) const
+bool RenderTheme::isHovered(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.node()))
+    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->hovered() && spinButton->upDownState() != SpinButtonElement::Indeterminate;
-    if (RefPtr element = dynamicDowncast<Element>(renderer.node()))
+    if (RefPtr element = renderer.element())
         return element->hovered();
     return false;
 }
 
-bool RenderTheme::isSpinUpButtonPartHovered(const RenderObject& renderer) const
+bool RenderTheme::isSpinUpButtonPartHovered(const RenderElement& renderer) const
 {
-    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.node()))
+    if (RefPtr spinButton = dynamicDowncast<SpinButtonElement>(renderer.element()))
         return spinButton->upDownState() == SpinButtonElement::Up;
     return false;
 }
 
-bool RenderTheme::isPresenting(const RenderObject& renderer) const
+bool RenderTheme::isPresenting(const RenderElement& renderer) const
 {
-    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.node());
+    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.element());
     return input && input->isPresentingAttachedView();
 }
 
-bool RenderTheme::isDefault(const RenderObject& o) const
+bool RenderTheme::isDefault(const RenderElement& renderer) const
 {
     // A button should only have the default appearance if the page is active
-    if (!isWindowActive(o))
+    if (!isWindowActive(renderer))
         return false;
 
-    return o.style().usedAppearance() == StyleAppearance::DefaultButton;
+    return renderer.style().usedAppearance() == StyleAppearance::DefaultButton;
 }
 
 bool RenderTheme::hasListButton(const RenderElement& renderer) const
@@ -1394,27 +1399,26 @@ void RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle
     if (!style.writingMode().isHorizontal() && supportsVerticalWritingMode(appearance))
         borderBox = Style::LineWidthBox { borderBox.left(), borderBox.top(), borderBox.right(), borderBox.bottom() };
 
-    /* FIXME: FIND ZOOM */
-    if (Style::evaluate(borderBox.top(), 1.0f) != static_cast<int>(Style::evaluate(style.borderTopWidth(), 1.0f))) {
+    if (Style::evaluate<float>(borderBox.top(), Style::ZoomNeeded { }) != Style::evaluate<int>(style.borderTopWidth(), Style::ZoomNeeded { })) {
         if (!borderBox.top().isZero())
             style.setBorderTopWidth(borderBox.top());
         else
             style.resetBorderTop();
     }
-    if (Style::evaluate(borderBox.right(), 1.0f) != static_cast<int>(Style::evaluate(style.borderRightWidth(), 1.0f))) {
+    if (Style::evaluate<float>(borderBox.right(), Style::ZoomNeeded { }) != Style::evaluate<int>(style.borderRightWidth(), Style::ZoomNeeded { })) {
         if (!borderBox.right().isZero())
             style.setBorderRightWidth(borderBox.right());
         else
             style.resetBorderRight();
     }
-    if (Style::evaluate(borderBox.bottom(), 1.0f) != static_cast<int>(Style::evaluate(style.borderBottomWidth(), 1.0f))) {
+    if (Style::evaluate<float>(borderBox.bottom(), Style::ZoomNeeded { }) != Style::evaluate<int>(style.borderBottomWidth(), Style::ZoomNeeded { })) {
         style.setBorderBottomWidth(borderBox.bottom());
         if (!borderBox.bottom().isZero())
             style.setBorderBottomWidth(borderBox.bottom());
         else
             style.resetBorderBottom();
     }
-    if (Style::evaluate(borderBox.left(), 1.0f) != static_cast<int>(Style::evaluate(style.borderLeftWidth(), 1.0f))) {
+    if (Style::evaluate<float>(borderBox.left(), Style::ZoomNeeded { }) != Style::evaluate<int>(style.borderLeftWidth(), Style::ZoomNeeded { })) {
         style.setBorderLeftWidth(borderBox.left());
         if (!borderBox.left().isZero())
             style.setBorderLeftWidth(borderBox.left());
@@ -1436,60 +1440,62 @@ void RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle
     // Width / Height
     // The width and height here are affected by the zoom.
     // FIXME: Check is flawed, since it doesn't take min-width/max-width into account.
-    auto controlSize = this->controlSize(appearance, fontCascade.get(), { style.width(), style.height() }, style.usedZoom());
+    auto zoomForDeterminingControlSize = Style::ZoomFactor { usedZoomForComputedStyle(style), style.deviceScaleFactor() };
+    auto controlSize = this->controlSize(appearance, fontCascade.get(), { style.width(), style.height() }, zoomForDeterminingControlSize.value);
     if (controlSize.width() != style.width())
         style.setWidth(Style::PreferredSize { controlSize.width() });
     if (controlSize.height() != style.height())
         style.setHeight(Style::PreferredSize { controlSize.height() });
 
     // Min-Width / Min-Height
-    auto minimumControlSize = this->minimumControlSize(appearance, fontCascade.get(), { style.minWidth(), style.minHeight() }, { style.width(), style.height() }, style.usedZoom());
+    auto minimumControlSize = this->minimumControlSize(appearance, fontCascade.get(), { style.minWidth(), style.minHeight() }, { style.width(), style.height() }, zoomForDeterminingControlSize.value);
 
     // FIXME: The min-width/min-heigh value should use `calc-size()` when supported to make non-specified overrides work.
 
+    auto usedZoomForLength = style.usedZoomForLength();
     if (auto fixedOverrideMinWidth = minimumControlSize.width().tryFixed()) {
         if (auto fixedOriginalMinWidth = style.minWidth().tryFixed()) {
-            if (fixedOverrideMinWidth->value > fixedOriginalMinWidth->value)
+            if (fixedOverrideMinWidth->resolveZoom(usedZoomForLength) > fixedOriginalMinWidth->resolveZoom(usedZoomForLength))
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         } else if (auto percentageOriginalMinWidth = style.minWidth().tryPercentage()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (fixedOverrideMinWidth->value > percentageOriginalMinWidth->value)
+            if (fixedOverrideMinWidth->resolveZoom(usedZoomForLength) > percentageOriginalMinWidth->value)
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
-        } else if (fixedOverrideMinWidth->value > 0) {
+        } else if (fixedOverrideMinWidth->isPositive()) {
             style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         }
     } else if (auto percentageOverrideMinWidth = minimumControlSize.width().tryPercentage()) {
         if (auto fixedOriginalMinWidth = style.minWidth().tryFixed()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (percentageOverrideMinWidth->value > fixedOriginalMinWidth->value)
+            if (percentageOverrideMinWidth->value > fixedOriginalMinWidth->resolveZoom(usedZoomForLength))
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         } else if (auto percentageOriginalMinWidth = style.minWidth().tryPercentage()) {
             if (percentageOverrideMinWidth->value > percentageOriginalMinWidth->value)
                 style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
-        } else if (percentageOverrideMinWidth->value > 0) {
+        } else if (percentageOverrideMinWidth->isPositive()) {
             style.setMinWidth(Style::MinimumSize(minimumControlSize.width()));
         }
     }
     if (auto fixedOverrideMinHeight = minimumControlSize.height().tryFixed()) {
         if (auto fixedOriginalMinHeight = style.minHeight().tryFixed()) {
-            if (fixedOverrideMinHeight->value > fixedOriginalMinHeight->value)
+            if (fixedOverrideMinHeight->resolveZoom(usedZoomForLength) > fixedOriginalMinHeight->resolveZoom(usedZoomForLength))
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         } else if (auto percentageOriginalMinHeight = style.minHeight().tryPercentage()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (fixedOverrideMinHeight->value > percentageOriginalMinHeight->value)
+            if (fixedOverrideMinHeight->resolveZoom(usedZoomForLength) > percentageOriginalMinHeight->value)
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
-        } else if (fixedOverrideMinHeight->value > 0) {
+        } else if (fixedOverrideMinHeight->isPositive()) {
             style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         }
     } else if (auto percentageOverrideMinHeight = minimumControlSize.height().tryPercentage()) {
         if (auto fixedOriginalMinHeight = style.minHeight().tryFixed()) {
             // FIXME: This really makes no sense but matches existing behavior. Should use a `calc(max(override, original))` here instead.
-            if (percentageOverrideMinHeight->value > fixedOriginalMinHeight->value)
+            if (percentageOverrideMinHeight->value > fixedOriginalMinHeight->resolveZoom(usedZoomForLength))
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         } else if (auto percentageOriginalMinHeight = style.minHeight().tryPercentage()) {
             if (percentageOverrideMinHeight->value > percentageOriginalMinHeight->value)
                 style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
-        } else if (percentageOverrideMinHeight->value > 0) {
+        } else if (percentageOverrideMinHeight->isPositive()) {
             style.setMinHeight(Style::MinimumSize(minimumControlSize.height()));
         }
     }
@@ -1557,9 +1563,9 @@ String RenderTheme::attachmentStyleSheet() const
 
 #endif // ENABLE(ATTACHMENT_ELEMENT)
 
-void RenderTheme::paintSliderTicks(const RenderObject& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
+void RenderTheme::paintSliderTicks(const RenderElement& renderer, const PaintInfo& paintInfo, const FloatRect& rect)
 {
-    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.node());
+    RefPtr input = dynamicDowncast<HTMLInputElement>(renderer.element());
     if (!input || !input->isRangeControl())
         return;
 
@@ -1581,12 +1587,13 @@ void RenderTheme::paintSliderTicks(const RenderObject& renderer, const PaintInfo
         auto& thumbStyle = thumbRenderer->style();
 
         int thumbWidth = 0;
+        auto usedZoom = thumbStyle.usedZoomForLength();
         if (auto fixedWidth = thumbStyle.width().tryFixed())
-            thumbWidth = static_cast<int>(fixedWidth->value);
+            thumbWidth = static_cast<int>(fixedWidth->resolveZoom(usedZoom));
 
         int thumbHeight = 0;
         if (auto fixedHeight = thumbStyle.height().tryFixed())
-            thumbHeight = static_cast<int>(fixedHeight->value);
+            thumbHeight = static_cast<int>(fixedHeight->resolveZoom(usedZoom));
 
         thumbSize.setWidth(isHorizontal ? thumbWidth : thumbHeight);
         thumbSize.setHeight(isHorizontal ? thumbHeight : thumbWidth);
@@ -1718,7 +1725,7 @@ void RenderTheme::adjustSwitchStyle(RenderStyle& style, const Element*) const
     // FIXME: This probably has the same flaw as
     // RenderTheme::adjustButtonOrCheckboxOrColorWellOrInnerSpinButtonOrRadioStyle() by not taking
     // min-width/min-height into account.
-    auto controlSize = this->controlSize(StyleAppearance::Switch, style.checkedFontCascade().get(), { style.logicalWidth(), style.logicalHeight() }, style.usedZoom());
+    auto controlSize = this->controlSize(StyleAppearance::Switch, style.checkedFontCascade().get(), { style.logicalWidth(), style.logicalHeight() }, usedZoomForComputedStyle(style));
     style.setLogicalWidth(Style::PreferredSize { controlSize.width() });
     style.setLogicalHeight(Style::PreferredSize { controlSize.height() });
 
@@ -2032,17 +2039,25 @@ Color RenderTheme::platformTextSearchHighlightColor(OptionSet<StyleColorOptions>
     return Color::yellow;
 }
 
-Color RenderTheme::annotationHighlightColor(OptionSet<StyleColorOptions> options) const
+Color RenderTheme::annotationHighlightBackgroundColor(OptionSet<StyleColorOptions> options) const
 {
     auto& cache = colorCache(options);
-    if (!cache.annotationHighlightColor.isValid())
-        cache.annotationHighlightColor = transformSelectionBackgroundColor(platformAnnotationHighlightColor(options), options);
-    return cache.annotationHighlightColor;
+    if (!cache.annotationHighlightBackgroundColor.isValid())
+        cache.annotationHighlightBackgroundColor = transformSelectionBackgroundColor(platformAnnotationHighlightBackgroundColor(options), options);
+    return cache.annotationHighlightBackgroundColor;
 }
 
-Color RenderTheme::platformAnnotationHighlightColor(OptionSet<StyleColorOptions>) const
+Color RenderTheme::platformAnnotationHighlightBackgroundColor(OptionSet<StyleColorOptions>) const
 {
     return Color::yellow;
+}
+
+Color RenderTheme::annotationHighlightForegroundColor(OptionSet<StyleColorOptions> options) const
+{
+    auto& cache = colorCache(options);
+    if (!cache.annotationHighlightForegroundColor.isValid())
+        cache.annotationHighlightForegroundColor = resolve(CSS::ContrastColorResolver { annotationHighlightBackgroundColor(options) });
+    return cache.annotationHighlightForegroundColor;
 }
 
 Color RenderTheme::defaultButtonTextColor(OptionSet<StyleColorOptions> options) const

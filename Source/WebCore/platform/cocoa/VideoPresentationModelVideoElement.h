@@ -77,7 +77,7 @@ public:
     WEBCORE_EXPORT void setVideoLayerFrame(FloatRect) final;
     WEBCORE_EXPORT void setVideoLayerGravity(MediaPlayerEnums::VideoGravity) final;
     WEBCORE_EXPORT void setVideoFullscreenFrame(FloatRect) final;
-    WEBCORE_EXPORT void fullscreenModeChanged(HTMLMediaElementEnums::VideoFullscreenMode) final;
+    WEBCORE_EXPORT void fullscreenModeChanged(HTMLMediaElementEnums::VideoFullscreenMode, ShouldNotifyMediaElement) final;
     FloatSize videoDimensions() const final { return m_videoDimensions; }
     bool hasVideo() const final { return m_hasVideo; }
     bool isChildOfElementFullscreen() const final { return m_isChildOfElementFullscreen; }
@@ -137,6 +137,7 @@ private:
 
     // HTMLMediaElementClient
     void audioSessionCategoryChanged(AudioSessionCategory, AudioSessionMode, RouteSharingPolicy) final;
+    void routingContextUIDChanged(const String&) final;
 
     const Ref<VideoListener> m_videoListener;
     RefPtr<HTMLVideoElement> m_videoElement;

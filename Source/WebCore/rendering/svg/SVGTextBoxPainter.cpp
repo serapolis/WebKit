@@ -29,16 +29,18 @@
 #include "GraphicsContext.h"
 #include "GraphicsContextStateSaver.h"
 #include "LegacyRenderSVGResourceSolidColor.h"
+#include "OutlinePainter.h"
 #include "RenderInline.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
+#include "RenderStyleInlines.h"
 #include "SVGInlineTextBox.h"
 #include "SVGPaintServerHandling.h"
-#include "SVGRenderStyle.h"
 #include "SVGResourcesCache.h"
 #include "SVGTextFragment.h"
 #include "Settings.h"
+#include "StyleAppleColorFilter.h"
 #include "StyleTextShadow.h"
 #include "TextPainter.h"
 
@@ -189,19 +191,17 @@ void SVGTextBoxPainter<TextBoxPath>::paint()
 
     auto& style = parentRenderer.style();
 
-    const SVGRenderStyle& svgStyle = style.svgStyle();
-
-    bool hasFill = svgStyle.hasFill();
-    bool hasVisibleStroke = style.hasVisibleStroke();
+    bool hasFill = style.hasFill();
+    bool hasVisibleStroke = style.hasStroke() && style.strokeWidth().isPossiblyPositive();
 
     const RenderStyle* selectionStyle = &style;
     if (hasSelection && shouldPaintSelectionHighlight) {
-        selectionStyle = parentRenderer.getCachedPseudoStyle({ PseudoId::Selection });
+        selectionStyle = parentRenderer.getCachedPseudoStyle({ PseudoElementType::Selection });
         if (selectionStyle) {
             if (!hasFill)
-                hasFill = selectionStyle->svgStyle().hasFill();
+                hasFill = selectionStyle->hasFill();
             if (!hasVisibleStroke)
-                hasVisibleStroke = selectionStyle->hasVisibleStroke();
+                hasVisibleStroke = selectionStyle->hasStroke() && selectionStyle->strokeWidth().isPossiblyPositive();
         } else
             selectionStyle = &style;
     }
@@ -227,23 +227,23 @@ void SVGTextBoxPainter<TextBoxPath>::paint()
         if (decorations.hasOverline())
             paintDecoration(Style::TextDecorationLine::Flag::Overline, fragment);
 
-        for (auto type : RenderStyle::paintTypesForPaintOrder(style.paintOrder())) {
+        for (auto type : style.paintOrder()) {
             switch (type) {
-            case PaintType::Fill:
+            case Style::PaintType::Fill:
                 if (!hasFill)
                     continue;
                 m_paintingResourceMode = { RenderSVGResourceMode::ApplyToFill, RenderSVGResourceMode::ApplyToText };
                 ASSERT(selectionStyle);
                 paintText(style, *selectionStyle, fragment, hasSelection, paintSelectedTextOnly);
                 break;
-            case PaintType::Stroke:
+            case Style::PaintType::Stroke:
                 if (!hasVisibleStroke)
                     continue;
                 m_paintingResourceMode = { RenderSVGResourceMode::ApplyToStroke, RenderSVGResourceMode::ApplyToText };
                 ASSERT(selectionStyle);
                 paintText(style, *selectionStyle, fragment, hasSelection, paintSelectedTextOnly);
                 break;
-            case PaintType::Markers:
+            case Style::PaintType::Markers:
                 continue;
             }
         }
@@ -258,7 +258,7 @@ void SVGTextBoxPainter<TextBoxPath>::paint()
     // Finally, paint the outline if any.
     if (renderer().style().hasOutline()) {
         if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(parentRenderer))
-            renderInline->paintOutline(m_paintInfo, m_paintOffset);
+            OutlinePainter { m_paintInfo }.paintOutline(*renderInline, m_paintOffset);
     }
 
     ASSERT(!m_legacyPaintingResource);
@@ -283,7 +283,7 @@ bool SVGTextBoxPainter<TextBoxPath>::acquirePaintingResource(SVGPaintServerHandl
         context.save();
         context.setTextDrawingMode(TextDrawingMode::Stroke);
 
-        if (style.svgStyle().vectorEffect() == VectorEffect::NonScalingStroke) {
+        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
             if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
                 scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
             else
@@ -351,7 +351,7 @@ bool SVGTextBoxPainter<TextBoxPath>::acquireLegacyPaintingResource(GraphicsConte
     }
 
     if (paintingResourceMode().contains(RenderSVGResourceMode::ApplyToStroke)) {
-        if (style.svgStyle().vectorEffect() == VectorEffect::NonScalingStroke) {
+        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
             if (style.fontDescription().textRenderingMode() == TextRenderingMode::GeometricPrecision)
                 scalingFactor = 1.0 / RenderSVGInlineText::computeScalingFactorForRenderer(renderer);
             else
@@ -453,23 +453,21 @@ void SVGTextBoxPainter<TextBoxPath>::paintDecoration(Style::TextDecorationLine d
     if (decorationStyle.usedVisibility() == Visibility::Hidden)
         return;
 
-    const SVGRenderStyle& svgDecorationStyle = decorationStyle.svgStyle();
-
-    for (auto type : RenderStyle::paintTypesForPaintOrder(renderer().style().paintOrder())) {
+    for (auto type : renderer().style().paintOrder()) {
         switch (type) {
-        case PaintType::Fill:
-            if (svgDecorationStyle.hasFill()) {
+        case Style::PaintType::Fill:
+            if (decorationStyle.hasFill()) {
                 m_paintingResourceMode = RenderSVGResourceMode::ApplyToFill;
                 paintDecorationWithStyle(decoration, fragment, *decorationRenderer);
             }
             break;
-        case PaintType::Stroke:
-            if (decorationStyle.hasVisibleStroke()) {
+        case Style::PaintType::Stroke:
+            if (decorationStyle.hasStroke() && decorationStyle.strokeWidth().isPossiblyPositive()) {
                 m_paintingResourceMode = RenderSVGResourceMode::ApplyToStroke;
                 paintDecorationWithStyle(decoration, fragment, *decorationRenderer);
             }
             break;
-        case PaintType::Markers:
+        case Style::PaintType::Markers:
             break;
         default:
             ASSERT_NOT_REACHED();

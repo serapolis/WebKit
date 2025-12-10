@@ -53,11 +53,11 @@ GStreamerVideoFrameConverter::Pipeline::Pipeline(Type type)
     g_object_set(m_sink.get(), "enable-last-sample", FALSE, "max-buffers", 1, nullptr);
     switch (m_type) {
     case Type::SystemMemory: {
-        auto videoconvert = makeGStreamerElement("videoconvert"_s);
-        auto videoscale = makeGStreamerElement("videoscale"_s);
+        auto videoConvert = createVideoConvertScaleElement();
+        RELEASE_ASSERT(videoConvert);
         m_pipeline = gst_element_factory_make("pipeline", "video-frame-converter");
-        gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), videoconvert, videoscale, m_sink.get(), nullptr);
-        gst_element_link_many(m_src.get(), videoconvert, videoscale, m_sink.get(), nullptr);
+        gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), videoConvert.get(), m_sink.get(), nullptr);
+        gst_element_link_many(m_src.get(), videoConvert.get(), m_sink.get(), nullptr);
         break;
     }
 #if USE(GSTREAMER_GL)
@@ -214,9 +214,9 @@ IGNORE_WARNINGS_END
     auto structure = gst_caps_get_structure(destinationCaps.get(), 0);
     auto width = gstStructureGet<int>(structure, "width"_s);
     auto height = gstStructureGet<int>(structure, "height"_s);
-    auto formatStringView = gstStructureGetString(structure, "format"_s);
-    if (width && height && !formatStringView.isEmpty()) {
-        auto format = gst_video_format_from_string(formatStringView.toStringWithoutCopying().ascii().data());
+    auto formatString = gstStructureGetString(structure, "format"_s);
+    if (width && height && !formatString.isEmpty()) {
+        auto format = gst_video_format_from_string(formatString.utf8());
         gst_buffer_add_video_meta(writableBuffer.get(), GST_VIDEO_FRAME_FLAG_NONE, format, *width, *height);
     }
     gst_sample_set_buffer(convertedSample.get(), writableBuffer.get());

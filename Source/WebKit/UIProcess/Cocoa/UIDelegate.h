@@ -215,7 +215,12 @@ private:
         void didExitStandby(WebPageProxy&) final;
 #endif
 
+#if PLATFORM(VISION)
+        void willPresentModalUI(WebPageProxy&) final;
+#endif
+
         id<WKUIDelegatePrivate> uiDelegatePrivate();
+        RetainPtr<id<WKUIDelegatePrivate>> protectedUIDelegatePrivate();
 
         WeakPtr<UIDelegate> m_uiDelegate;
     };
@@ -332,6 +337,10 @@ private:
 #if PLATFORM(IOS_FAMILY)
         bool webViewDidEnterStandby : 1;
         bool webViewDidExitStandby : 1;
+#endif
+
+#if PLATFORM(VISION)
+        bool webViewWillPresentModalUI : 1;
 #endif
     } m_delegateMethods;
 };

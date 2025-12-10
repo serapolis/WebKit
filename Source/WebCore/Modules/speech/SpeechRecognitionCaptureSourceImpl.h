@@ -37,15 +37,6 @@
 #include <WebCore/AudioSampleDataSource.h>
 #endif
 
-namespace WebCore {
-class SpeechRecognitionCaptureSourceImpl;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::SpeechRecognitionCaptureSourceImpl> : std::true_type { };
-}
-
 namespace WTF {
 class MediaTime;
 }
@@ -75,6 +66,7 @@ public:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
 private:
     // RealtimeMediaSource::AudioSampleObserver

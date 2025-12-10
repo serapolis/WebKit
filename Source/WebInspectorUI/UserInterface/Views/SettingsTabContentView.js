@@ -389,8 +389,13 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
                 let logEditor = consoleSettingsView.addGroupWithCustomSetting(label, WI.SettingEditor.Type.Select, {values: logLevels});
                 logEditor.value = channel.level;
                 logEditor.addEventListener(WI.SettingEditor.Event.ValueDidChange, function(event) {
-                    for (let target of WI.targets)
+                    for (let target of WI.targets) {
+                        // FIXME: <https://webkit.org/b/298911> Add Console support for FrameTarget.
+                        if (target instanceof WI.FrameTarget)
+                            continue;
+
                         target.ConsoleAgent.setLoggingChannelLevel(channel.source, this.value);
+                    }
                 }, logEditor);
             }
         }
@@ -503,6 +508,11 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
         let heapSnapshotGroup = engineeringSettingsView.addGroup(WI.unlocalizedString("Heap Snapshot:"));
         heapSnapshotGroup.addSetting(WI.settings.engineeringShowInternalObjectsInHeapSnapshot, WI.unlocalizedString("Show Internal Objects"));
         heapSnapshotGroup.addSetting(WI.settings.engineeringShowPrivateSymbolsInHeapSnapshot, WI.unlocalizedString("Show Private Symbols"));
+
+        if (WI.isEngineeringBuild) {
+            engineeringSettingsView.addSeparator();
+            engineeringSettingsView.addSetting(WI.unlocalizedString("Debug UI:"), WI.showDebugUISetting, WI.unlocalizedString("Show Debug UI"));
+        }
 
         this.addSettingsView(engineeringSettingsView);
     }

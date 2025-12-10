@@ -69,6 +69,7 @@
 #include "RenderText.h"
 #include "ScriptDisallowedScope.h"
 #include "ScriptElement.h"
+#include "Settings.h"
 #include "SimplifyMarkupCommand.h"
 #include "SmartReplace.h"
 #include "StyleExtractor.h"
@@ -197,7 +198,7 @@ ReplacementFragment::ReplacementFragment(RefPtr<DocumentFragment>&& inputFragmen
         return;
     }
 
-    Ref page = createPageForSanitizingWebContent();
+    Ref page = createPageForSanitizingWebContent(&editableRoot->document());
     RefPtr stagingDocument = page->localTopDocument();
     if (!stagingDocument)
         return;
@@ -416,7 +417,7 @@ inline void ReplaceSelectionCommand::InsertedNodes::willRemoveNodePreservingChil
             // If the last inserted node is at the end of the document and doesn't have any children, look backwards for the
             // previous node as the last inserted node, clamping to the first inserted node if needed to ensure that the
             // document position of the last inserted node is not behind the first inserted node.
-            auto* previousNode = NodeTraversal::previousSkippingChildren(*node);
+            RefPtr previousNode = NodeTraversal::previousSkippingChildren(*node);
             ASSERT(previousNode);
             m_lastNodeInserted = m_firstNodeInserted->compareDocumentPosition(*previousNode) & Node::DOCUMENT_POSITION_FOLLOWING ? previousNode : m_firstNodeInserted;
         }
@@ -661,11 +662,11 @@ void ReplaceSelectionCommand::inverseTransformColor(InsertedNodes& insertedNodes
         if (!element)
             continue;
 
-        auto* inlineStyle = element->inlineStyle();
+        RefPtr inlineStyle = element->inlineStyle();
         if (!inlineStyle)
             continue;
 
-        auto editingStyle = EditingStyle::create(inlineStyle);
+        Ref editingStyle = EditingStyle::create(inlineStyle.get());
         auto transformedStyle = editingStyle->inverseTransformColorIfNeeded(*element);
         if (editingStyle.ptr() == transformedStyle.ptr())
             continue;
@@ -1001,7 +1002,7 @@ void ReplaceSelectionCommand::handleStyleSpans(InsertedNodes& insertedNodes)
     // so search for the top level style span instead of assuming it's at the top.
     for (RefPtr node = insertedNodes.firstNodeInserted(); node; node = NodeTraversal::next(*node)) {
         if (isLegacyAppleStyleSpan(node.get())) {
-            wrappingStyleSpan = static_pointer_cast<HTMLElement>(WTFMove(node));
+            wrappingStyleSpan = downcast<HTMLElement>(WTFMove(node));
             break;
         }
     }
@@ -1426,12 +1427,17 @@ void ReplaceSelectionCommand::doApply()
     if (!insertedNodes.firstNodeInserted()->isConnected())
         return;
 
-    if (needsColorTransformed)
-        inverseTransformColor(insertedNodes);
-
     removeRedundantStylesAndKeepStyleSpanInline(insertedNodes);
     if (insertedNodes.isEmpty())
         return;
+
+    if (needsColorTransformed) {
+        inverseTransformColor(insertedNodes);
+
+        removeRedundantStylesAndKeepStyleSpanInline(insertedNodes);
+        if (insertedNodes.isEmpty())
+            return;
+    }
 
     if (m_sanitizeFragment)
         applyCommandToComposite(SimplifyMarkupCommand::create(document(), insertedNodes.firstNodeInserted(), insertedNodes.pastLastLeaf()));

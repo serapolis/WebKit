@@ -61,7 +61,7 @@ public:
     RenderTable* table() const;
     CheckedPtr<RenderTable> checkedTable() const;
     unsigned rowIndex() const;
-    inline Style::PreferredSize styleOrColLogicalWidth() const;
+    inline std::pair<Style::PreferredSize, Style::ZoomFactor> styleOrColLogicalWidth() const;
     LayoutUnit logicalHeightForRowSizing() const;
     LayoutUnit minLogicalWidthForColumnSizing();
     LayoutUnit maxLogicalWidthForColumnSizing();
@@ -194,6 +194,8 @@ private:
     CollapsedBorderValue computeCollapsedAfterBorder(IncludeBorderColorOrNot = IncludeBorderColor) const;
 
     Style::PreferredSize logicalWidthFromColumns(RenderTableCol* firstColForThisCell, const Style::PreferredSize& widthFromStyle) const;
+
+    CollapsedBorderValue emptyBorder() const;
 
     void updateColAndRowSpanFlags();
 

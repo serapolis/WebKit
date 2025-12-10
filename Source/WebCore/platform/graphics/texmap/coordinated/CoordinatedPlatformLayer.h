@@ -26,6 +26,7 @@
 #pragma once
 
 #if USE(COORDINATED_GRAPHICS)
+#include "CoordinatedCompositionReason.h"
 #include "Damage.h"
 #include "FloatPoint.h"
 #include "FloatPoint3D.h"
@@ -74,8 +75,11 @@ public:
         virtual Ref<CoordinatedImageBackingStore> imageBackingStore(Ref<NativeImage>&&) = 0;
         virtual void notifyCompositionRequired() = 0;
         virtual bool isCompositionRequiredOrOngoing() const = 0;
-        virtual void requestComposition() = 0;
+        virtual void requestComposition(CompositionReason) = 0;
         virtual RunLoop* compositingRunLoop() const = 0;
+        virtual int maxTextureSize() const = 0;
+        virtual void willPaintTile() = 0;
+        virtual void didPaintTile() = 0;
     };
 
     static Ref<CoordinatedPlatformLayer> create();
@@ -123,6 +127,7 @@ public:
     void didUpdateLayerTransform();
 
     void setVisibleRect(const FloatRect&);
+    const FloatRect& visibleRect() const;
     void setTransformedVisibleRect(IntRect&& visibleRect, IntRect&& visibleRectIncludingFuture);
 
 #if ENABLE(SCROLLING_THREAD)
@@ -175,18 +180,21 @@ public:
     void updateContents(bool affectedByTransformAnimation);
     void updateBackingStore();
 
-    void flushCompositingState(TextureMapper&);
+    void flushCompositingState(const OptionSet<CompositionReason>&, TextureMapper&);
 
     bool hasPendingTilesCreation() const { return m_pendingTilesCreation; }
     bool isCompositionRequiredOrOngoing() const;
-    void requestComposition();
+    void requestComposition(CompositionReason);
     RunLoop* compositingRunLoop() const;
+    int maxTextureSize() const;
 
     Ref<CoordinatedTileBuffer> paint(const IntRect&);
 #if USE(SKIA)
     Ref<SkiaRecordingResult> record(const IntRect&);
     Ref<CoordinatedTileBuffer> replay(const RefPtr<SkiaRecordingResult>&, const IntRect&);
 #endif
+    void willPaintTile();
+    void didPaintTile();
     void waitUntilPaintingComplete();
 
 private:

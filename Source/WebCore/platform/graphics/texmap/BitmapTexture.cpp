@@ -28,7 +28,6 @@
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
 #include "ImageBuffer.h"
-#include "LengthFunctions.h"
 #include "NativeImage.h"
 #include "PlatformDisplay.h"
 #include "TextureMapper.h"
@@ -89,8 +88,15 @@ BitmapTexture::BitmapTexture(const IntSize& size, OptionSet<Flags> flags)
 #if USE(GBM)
     if (m_flags.contains(Flags::BackedByDMABuf)) {
         OptionSet<MemoryMappedGPUBuffer::BufferFlag> bufferFlags;
-        if (flags.contains(Flags::ForceLinearBuffer))
+        if (flags.contains(Flags::ForceLinearBuffer)) {
+            ASSERT(!flags.contains(Flags::ForceVivanteSuperTiledBuffer));
             bufferFlags.add(MemoryMappedGPUBuffer::BufferFlag::ForceLinear);
+        }
+
+        if (flags.contains(Flags::ForceVivanteSuperTiledBuffer)) {
+            ASSERT(!flags.contains(Flags::ForceLinearBuffer));
+            bufferFlags.add(MemoryMappedGPUBuffer::BufferFlag::ForceVivanteSuperTiled);
+        }
 
         m_memoryMappedGPUBuffer = MemoryMappedGPUBuffer::create(m_size, bufferFlags);
 
@@ -115,11 +121,10 @@ BitmapTexture::BitmapTexture(const IntSize& size, OptionSet<Flags> flags)
 void BitmapTexture::createTexture()
 {
     ASSERT(!m_id);
-    auto filter = m_flags.contains(Flags::UseNearestTextureFilter) ? GL_NEAREST : GL_LINEAR;
     glGenTextures(1, &m_id);
     glBindTexture(GL_TEXTURE_2D, m_id);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
@@ -131,6 +136,11 @@ void BitmapTexture::allocateTexture()
 }
 
 #if USE(GBM)
+IntSize BitmapTexture::allocatedSize() const
+{
+    return m_memoryMappedGPUBuffer ? m_memoryMappedGPUBuffer->allocatedSize() : m_size;
+}
+
 bool BitmapTexture::allocateTextureFromMemoryMappedGPUBuffer()
 {
     if (!m_memoryMappedGPUBuffer)
@@ -254,7 +264,7 @@ void BitmapTexture::updateContents(const void* srcData, const IntRect& targetRec
 
 #if USE(GBM)
     // Use OpenGL to update multi-plane textures via glTexSubImage2D -- mmap() mode is only intended for single-plane images.
-    if (m_memoryMappedGPUBuffer && m_memoryMappedGPUBuffer->isLinear()) {
+    if (m_memoryMappedGPUBuffer && (m_memoryMappedGPUBuffer->isLinear() || m_memoryMappedGPUBuffer->isVivanteSuperTiled())) {
         RELEASE_ASSERT(sourceOffset.isZero());
         if (auto writeScope = makeGPUBufferWriteScope(*m_memoryMappedGPUBuffer)) {
             m_memoryMappedGPUBuffer->updateContents(*writeScope, srcData, targetRect, bytesPerLine);

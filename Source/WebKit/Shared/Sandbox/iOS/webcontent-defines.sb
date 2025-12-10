@@ -24,6 +24,9 @@
 (define (lockdown-mode)
     (require-entitlement "com.apple.private.webkit.lockdown-mode"))
 
+(define (enhanced-security)
+    (require-entitlement "com.apple.private.webkit.enhanced-security"))
+
 (define-once (framebuffer-access)
     ; IOMobileFramebuffer
     (with-filter (iokit-registry-entry-class "IOMobileFramebuffer")
@@ -256,19 +259,30 @@
 (define-once (mach-bootstrap-message-numbers-post-launch)
     (message-number 206 207 711 712 800 804 904))
 
-(define (syscall-unix-only-in-use-during-launch)
-    (syscall-number
-        SYS_bsdthread_register
-        SYS_chdir
-        SYS_dup2
-        SYS_fsgetpath
-        SYS_getpid
-        SYS_kdebug_trace_string
-        SYS_objc_bp_assist_cfg_np
-        SYS_persona
-        SYS_shared_region_check_np
-        SYS_sigaction
-        SYS_workq_open))
+(define (allow-syscall-unix-kdebug)
+    (allow syscall-unix
+        (syscall-number
+            SYS_kdebug_trace_string
+            SYS_kdebug_trace64
+            SYS_kdebug_typefilter)))
+
+(define (allow-syscall-unix-only-in-use-during-launch)
+    (allow-syscall-unix-kdebug)
+    (allow syscall-unix
+        (syscall-number
+            SYS_bsdthread_register
+            SYS_chdir
+            SYS_dup2
+            SYS_fsgetpath
+            SYS_getpid
+            SYS_objc_bp_assist_cfg_np
+            SYS_persona
+            SYS_shared_region_check_np
+            SYS_sigaction
+            SYS_workq_open)))
+
+(define (allow-syscall-unix-developer-mode)
+    (allow-syscall-unix-kdebug))
 
 (define (syscall-unix-in-use-after-launch)
     (syscall-number
@@ -303,8 +317,6 @@
         SYS_getuid
         SYS_ioctl ;; needed by tcgetattr (TIOCGETA - debugging
         SYS_issetugid
-        SYS_kdebug_trace64
-        SYS_kdebug_typefilter
         SYS_kevent_id
         SYS_kevent_qos
         SYS_lseek
@@ -327,6 +339,8 @@
         SYS_psynch_cvwait
         SYS_psynch_mutexdrop
         SYS_psynch_mutexwait
+        SYS_psynch_rw_rdlock ;; <rdar://problem/51134351>
+        SYS_psynch_rw_unlock
         SYS_read
         SYS_read_nocancel
         SYS_readlink
@@ -361,8 +375,6 @@
     SYS_listxattr
     SYS_mkdir
     SYS_msync
-    SYS_psynch_rw_rdlock ;; <rdar://problem/51134351>
-    SYS_psynch_rw_unlock
     SYS_rename
     SYS_sem_close
     SYS_sem_open
@@ -383,7 +395,7 @@
     (syscall-number
         SYS_fgetxattr
         SYS_getxattr
-        SYS_iopolicysys
+        SYS_psynch_rw_wrlock
 #if ASAN_ENABLED
         SYS_sigaltstack
 #endif
@@ -400,7 +412,6 @@
         SYS_getattrlistbulk ;; xpc_realpath and directory enumeration
         SYS_getgid
         SYS_open_dprotected_np
-        SYS_psynch_rw_wrlock
         SYS_setrlimit
 #if PLATFORM(WATCHOS)
         SYS_sigreturn
@@ -487,6 +498,7 @@
 (define (kernel-mig-routine-in-use)
     (kernel-mig-routine
         (when (defined? '_mach_make_memory_entry) _mach_make_memory_entry)
+        clock_get_time
         host_get_clock_service ;; After <rdar://85931614> has been fixed, we should evaluate if this is only used on launch.
         host_get_io_master
         io_registry_entry_from_path
@@ -500,7 +512,6 @@
         mach_port_set_attributes
         mach_vm_copy
         mach_vm_map_external
-        mach_vm_remap_external
         mach_voucher_attr_command
         semaphore_create
         semaphore_destroy
@@ -525,6 +536,7 @@
 
 (define (kernel-mig-routine-rarely-used-need-backtrace-blocked-in-lockdown-mode)
     (kernel-mig-routine
+        ;; rdar://131735906 - we should see if we can modify the dependent library to remove the clock_get_time call
         clock_get_time
 #if !ENABLE(WEBCONTENT_GPU_SANDBOX_EXTENSIONS_BLOCKING)
         io_connect_add_client

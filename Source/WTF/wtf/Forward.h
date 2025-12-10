@@ -75,6 +75,7 @@ class WallTime;
 class WorkQueue;
 
 struct AnyThreadsAccessTraits;
+struct ARCEnabled;
 struct FastMalloc;
 struct MachSendRightAnnotated;
 struct MainThreadAccessTraits;
@@ -111,6 +112,7 @@ enum class ConcurrencyTag : uint8_t {
     Atomic
 };
 
+template<typename, typename> struct DefaultOSObjectRetainTraits;
 template<typename> struct DefaultRefDerefTraits;
 
 template<typename> class Awaitable;
@@ -118,16 +120,18 @@ template<typename> class CompactPtr;
 template<typename> class CompletionHandler;
 template<typename, size_t = 0> class Deque;
 template<typename Key, typename, Key> class EnumeratedArray;
+template<typename> class EnumSet;
 template<typename, typename = EmbeddedFixedVectorMalloc> class FixedVector;
 template<typename, size_t = 8, typename = SegmentedVectorMalloc> class SegmentedVector;
 template<typename> class Function;
 template<typename> struct FlatteningVariantTraits;
 template<typename> struct IsSmartPtr;
 template<typename, typename = AnyThreadsAccessTraits> class LazyNeverDestroyed;
+template<typename, typename> class LazyUniqueRef;
 template<typename> struct MarkableTraits;
 template<typename T, typename Traits = MarkableTraits<T>> class Markable;
 template<typename, typename = AnyThreadsAccessTraits> class NeverDestroyed;
-template<typename> class OSObjectPtr;
+template<typename T, typename = DefaultOSObjectRetainTraits<T, ARCEnabled>> class OSObjectPtr;
 template<typename, typename, typename> class ObjectIdentifierGeneric;
 template<typename T, typename RawValue = uint64_t> using ObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierMainThreadAccessTraits<RawValue>, RawValue>;
 template<typename T, typename RawValue = uint64_t> using AtomicObjectIdentifier = ObjectIdentifierGeneric<T, ObjectIdentifierThreadSafeAccessTraits<RawValue>, RawValue>;
@@ -144,7 +148,7 @@ template<typename> class RetainPtr;
 template<typename> class ScopedLambda;
 template<typename> class StringBuffer;
 template<typename> class StringParsingBuffer;
-template<typename, typename = void> class StringTypeAdapter;
+template<typename> class StringTypeAdapter;
 template<typename> class UniqueRef;
 template<typename T, class... Args> UniqueRef<T> makeUniqueRef(Args&&...);
 template<typename, size_t = 0> class VariantList;
@@ -168,7 +172,6 @@ template<typename T, ConcurrencyTag C> struct DefaultHash<OptionSet<T, C>>;
 template<> struct DefaultHash<String>;
 template<> struct DefaultHash<StringImpl*>;
 template<> struct DefaultHash<URL>;
-template<typename T, size_t inlineCapacity> struct DefaultHash<Vector<T, inlineCapacity>>;
 
 template<typename> struct RawValueTraits;
 template<typename> struct EnumTraits;
@@ -224,6 +227,7 @@ using WTF::CompletionHandler;
 using WTF::ConcurrencyTag;
 using WTF::ConcurrentWorkQueue;
 using WTF::Deque;
+using WTF::EnumSet;
 using WTF::EnumeratedArray;
 using WTF::FixedVector;
 using WTF::Function;
@@ -234,6 +238,7 @@ using WTF::HashMap;
 using WTF::HashSet;
 using WTF::Hasher;
 using WTF::LazyNeverDestroyed;
+using WTF::LazyUniqueRef;
 using WTF::ListHashSet;
 using WTF::Lock;
 using WTF::Logger;

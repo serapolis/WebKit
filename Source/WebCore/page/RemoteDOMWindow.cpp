@@ -125,7 +125,7 @@ ExceptionOr<void> RemoteDOMWindow::postMessage(JSC::JSGlobalObject& lexicalGloba
 
     // Capture the source of the message. We need to do this synchronously
     // in order to capture the source of the message correctly.
-    auto sourceOrigin = sourceDocument->securityOrigin().toString();
+    auto sourceOrigin = sourceDocument->securityOrigin().data();
 
     MessageWithMessagePorts messageWithPorts { messageData.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
     if (auto* remoteFrame = frame())

@@ -84,22 +84,22 @@ AudioTrack* AudioTrackList::firstEnabled() const
     return nullptr;
 }
 
-AudioTrack* AudioTrackList::getTrackById(const AtomString& id) const
+RefPtr<AudioTrack> AudioTrackList::getTrackById(const AtomString& id) const
 {
     for (auto& inbandTrack : m_inbandTracks) {
         Ref track = downcast<AudioTrack>(*inbandTrack);
         if (track->id() == id)
-            return track.ptr();
+            return track;
     }
     return nullptr;
 }
 
-AudioTrack* AudioTrackList::getTrackById(TrackID id) const
+RefPtr<AudioTrack> AudioTrackList::getTrackById(TrackID id) const
 {
     for (auto& inbandTrack : m_inbandTracks) {
         Ref track = downcast<AudioTrack>(*inbandTrack);
         if (track->trackId() == id)
-            return track.ptr();
+            return track;
     }
     return nullptr;
 }

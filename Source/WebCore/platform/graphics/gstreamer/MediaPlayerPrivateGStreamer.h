@@ -118,7 +118,7 @@ class MediaPlayerPrivateGStreamer
 {
     WTF_MAKE_TZONE_ALLOCATED(MediaPlayerPrivateGStreamer);
 public:
-    MediaPlayerPrivateGStreamer(MediaPlayer*);
+    MediaPlayerPrivateGStreamer(MediaPlayer&);
     virtual ~MediaPlayerPrivateGStreamer();
 
     constexpr MediaPlayerType mediaPlayerType() const override { return MediaPlayerType::GStreamer; }
@@ -220,6 +220,7 @@ public:
     bool handleNeedContextMessage(GstMessage*);
 
     void handleStreamCollectionMessage(GstMessage*);
+    void handleSyncErrorMessage(GstMessage*);
     void handleMessage(GstMessage*);
 
     void triggerRepaint(GRefPtr<GstSample>&&);
@@ -344,9 +345,8 @@ protected:
     void ensureAudioSourceProvider();
     virtual void checkPlayingConsistency();
 
-    virtual bool doSeek(const SeekTarget& position, float rate, bool isAsync = false);
+    virtual bool doSeek(const SeekTarget& position, float rate, bool isAsync = false, bool isSegment = false);
     void invalidateCachedPosition() const;
-    void ensureSeekFlags();
 
     static void sourceSetupCallback(MediaPlayerPrivateGStreamer*, GstElement*);
 
@@ -363,6 +363,8 @@ protected:
     bool isPipelineWaitingPreroll(GstState current, GstState pending, GstStateChangeReturn) const;
     bool isPipelineWaitingPreroll() const;
 
+    void didEnd();
+
     Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     ThreadSafeWeakPtr<MediaPlayer> m_player;
     String m_referrer;
@@ -375,6 +377,9 @@ protected:
     bool m_didErrorOccur { false };
     mutable bool m_isEndReached { false };
     mutable std::optional<bool> m_isLiveStream;
+
+    bool isSeamlessSeekingEnabled() const;
+    bool m_isSegmentSeekAllowed { true };
 
     // Must reflect whether the last successfull call to gst_element_set_state() was for PLAYING.
     bool m_isPipelinePlaying = false;
@@ -443,8 +448,8 @@ protected:
 #endif
 
     std::optional<GstVideoDecoderPlatform> m_videoDecoderPlatform;
-    GstSeekFlags m_seekFlags;
     bool m_ignoreErrors { false };
+    Atomic<unsigned> m_queuedSyncErrors { 0 };
 
     TrackIDHashMap<Ref<AudioTrackPrivateGStreamer>> m_audioTracks;
     TrackIDHashMap<Ref<VideoTrackPrivateGStreamer>> m_videoTracks;
@@ -497,7 +502,6 @@ private:
     bool isMuted() const;
     void commitLoad();
     void fillTimerFired();
-    void didEnd();
     void setPlaybackFlags(bool isMediaStream);
     void recalculateDurationIfNeeded() const; // It's called from other const methods.
 
@@ -646,6 +650,10 @@ private:
     uint64_t m_totalVideoFrames { 0 };
     uint64_t m_droppedVideoFrames { 0 };
     uint64_t m_decodedVideoFrames { 0 };
+    double m_averageFrameRate { 0 };
+
+    // https://www.w3.org/TR/webrtc-stats/#dom-rtcinboundrtpstreamstats-totaldecodetime
+    MediaTime m_totalVideoDecodeTime { MediaTime::zeroTime() };
 
     DataMutex<TaskAtMediaTimeScheduler> m_TaskAtMediaTimeSchedulerDataMutex;
 
@@ -660,6 +668,8 @@ private:
     const Ref<const Logger> m_logger;
     const uint64_t m_logIdentifier;
 #endif
+
+    bool m_initialSegmentSeekDone { false };
 
     String m_errorMessage;
 
@@ -680,8 +690,6 @@ private:
     Lock m_codecsLock;
     TrackIDHashMap<String> m_codecs WTF_GUARDED_BY_LOCK(m_codecsLock);
 
-    bool isSeamlessSeekingEnabled() const { return m_seekFlags & GST_SEEK_FLAG_SEGMENT; }
-
     Ref<PlatformMediaResourceLoader> m_loader;
 
     RefPtr<GStreamerQuirksManager> m_quirksManagerForTesting;
@@ -692,6 +700,13 @@ private:
     std::optional<VideoFrameGStreamer::Info> m_videoInfo;
 
     bool m_volumeLocked { false };
+
+    void determineContainerTypeFromCaps(const GstCaps*);
+    enum ContainerType {
+        Ogg,
+        Other
+    };
+    ContainerType m_containerType { ContainerType::Other };
 };
 
 } // namespace WebCore

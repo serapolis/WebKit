@@ -34,6 +34,7 @@
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/BackForwardController.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/Editor.h>
 #include <WebCore/EventHandler.h>
 #include <WebCore/FocusController.h>
@@ -55,7 +56,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-void WebPage::platformReinitialize()
+void WebPage::platformReinitializeAccessibilityToken()
 {
 }
 

@@ -110,7 +110,7 @@ bool MediaRecorderPrivateGStreamer::isTypeSupported(const ContentType& contentTy
     bool isSupported = scanner.isContentTypeSupported(GStreamerRegistryScanner::Configuration::Encoding, contentType, { }, GStreamerRegistryScanner::CaseSensitiveCodecName::No) > MediaPlayerEnums::SupportsType::IsNotSupported;
 
     // https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/7670
-    if (isSupported && !contentType.containerType().endsWith("mp4"_s) && !webkitGstCheckVersion(1, 24, 9))
+    if (isSupported && !contentType.containerType().endsWith("mp4"_s) && !gst_check_version(1, 24, 9))
         isSupported = false;
     return isSupported;
 }
@@ -270,7 +270,7 @@ void MediaRecorderPrivateBackend::fetchData(MediaRecorderPrivate::FetchDataCallb
         {
             Locker locker { m_dataLock };
             GST_DEBUG_OBJECT(m_pipeline.get(), "Transfering %zu encoded bytes, mimeType: %s", m_data.size(), mimeType.ascii().data());
-            buffer = m_data.take();
+            buffer = m_data.takeBuffer();
             timeCode = m_timeCode;
         }
         completionHandler(buffer.releaseNonNull(), mimeType, timeCode);
@@ -487,7 +487,7 @@ void MediaRecorderPrivateBackend::configureAudioEncoder(GstElement* element)
 void MediaRecorderPrivateBackend::configureVideoEncoder(GstElement* element)
 {
     auto encoder = WEBKIT_VIDEO_ENCODER(element);
-    videoEncoderSetCodec(encoder, m_videoCodec, { }, { }, true);
+    videoEncoderSetCodec(encoder, { m_videoCodec, false }, { }, { }, true);
 
     auto bitrate = [options = m_options]() -> unsigned {
         if (options.videoBitsPerSecond)

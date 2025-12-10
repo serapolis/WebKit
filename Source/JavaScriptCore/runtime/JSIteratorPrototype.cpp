@@ -29,7 +29,7 @@
 #include "JSIteratorPrototype.h"
 
 #include "BuiltinNames.h"
-#include "CachedCall.h"
+#include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "IteratorOperations.h"
 #include "JSCBuiltins.h"
@@ -86,8 +86,6 @@ void JSIteratorPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     if (Options::useIteratorChunking()) {
         // https://tc39.es/proposal-iterator-chunking/#sec-iterator.prototype.chunks
         JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION("chunks"_s, jsIteratorPrototypeChunksCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
-        // https://tc39.es/proposal-iterator-chunking/#sec-iterator.prototype.sliding
-        JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION("sliding"_s, jsIteratorPrototypeSlidingCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
         // https://tc39.es/proposal-iterator-chunking/#sec-iterator.prototype.windows
         JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION("windows"_s, jsIteratorPrototypeWindowsCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
@@ -174,7 +172,7 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncForEach, (JSGlobalObject* globalObject
         return throwVMTypeError(globalObject, scope, "Iterator.prototype.forEach requires the callback argument to be callable."_s);
     }
 
-    auto callData = JSC::getCallData(callbackArg);
+    auto callData = JSC::getCallDataInline(callbackArg);
     ASSERT(callData.type != CallData::Type::None);
 
     uint64_t counter = 0;

@@ -30,7 +30,7 @@
 #if ENABLE(VIDEO) && USE(MEDIA_FOUNDATION)
 
 #include "CachedResourceLoader.h"
-#include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "GraphicsContext.h"
 #include "HWndDC.h"
 #include "HostWindow.h"
@@ -118,7 +118,7 @@ private:
     Function<void(IMFAsyncResult*)> m_callback;
 };
 
-MediaPlayerPrivateMediaFoundation::MediaPlayerPrivateMediaFoundation(MediaPlayer* player) 
+MediaPlayerPrivateMediaFoundation::MediaPlayerPrivateMediaFoundation(MediaPlayer& player)
     : m_weakThis(this)
     , m_player(player)
     , m_visible(false)
@@ -140,10 +140,12 @@ MediaPlayerPrivateMediaFoundation::~MediaPlayerPrivateMediaFoundation()
 }
 
 class MediaPlayerFactoryMediaFoundation final : public MediaPlayerFactory {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(MediaPlayerFactoryMediaFoundation);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MediaPlayerFactoryMediaFoundation);
 private:
     MediaPlayerEnums::MediaEngineIdentifier identifier() const final { return MediaPlayerEnums::MediaEngineIdentifier::MediaFoundation; };
 
-    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer* player) const final
+    Ref<MediaPlayerPrivateInterface> createMediaEnginePlayer(MediaPlayer& player) const final
     {
         return adoptRef(*new MediaPlayerPrivateMediaFoundation(player));
     }
@@ -937,9 +939,6 @@ MediaPlayerPrivateMediaFoundation::CustomVideoPresenter::CustomVideoPresenter(Me
     m_sourceRect.right = 1;
 
     m_presenterEngine = makeUnique<Direct3DPresenter>();
-    if (!m_presenterEngine)
-        return;
-
     m_scheduler.setPresenter(m_presenterEngine.get());
 }
 

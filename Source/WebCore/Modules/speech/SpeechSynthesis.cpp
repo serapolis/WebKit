@@ -29,11 +29,10 @@
 #if ENABLE(SPEECH_SYNTHESIS)
 
 #include "ContextDestructionObserverInlines.h"
-#include "Document.h"
+#include "DocumentPage.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
 #include "FrameDestructionObserverInlines.h"
-#include "FrameInlines.h"
 #include "LocalFrame.h"
 #include "Page.h"
 #include "PlatformSpeechSynthesisVoice.h"
@@ -256,15 +255,14 @@ void SpeechSynthesis::boundaryEventOccurred(PlatformSpeechSynthesisUtterance& pl
     static NeverDestroyed<const String> wordBoundaryString(MAKE_STATIC_STRING_IMPL("word"));
     static NeverDestroyed<const String> sentenceBoundaryString(MAKE_STATIC_STRING_IMPL("sentence"));
 
-    ASSERT(platformUtterance.client());
-
-    RefPtr utterance = static_cast<SpeechSynthesisUtterance*>(platformUtterance.client());
+    RefPtr client = platformUtterance.client();
+    ASSERT(client);
     switch (boundary) {
     case SpeechBoundary::SpeechWordBoundary:
-        utterance->eventOccurred(eventNames().boundaryEvent, charIndex, charLength, wordBoundaryString);
+        client->eventOccurred(eventNames().boundaryEvent, charIndex, charLength, wordBoundaryString);
         break;
     case SpeechBoundary::SpeechSentenceBoundary:
-        utterance->eventOccurred(eventNames().boundaryEvent, charIndex, charLength, sentenceBoundaryString);
+        client->eventOccurred(eventNames().boundaryEvent, charIndex, charLength, sentenceBoundaryString);
         break;
     default:
         ASSERT_NOT_REACHED();

@@ -38,6 +38,7 @@ DECLARE_SYSTEM_HEADER
 #import <AppKit/NSMenu_Private.h>
 #import <AppKit/NSScrollViewSeparatorTrackingAdapter_Private.h>
 #import <AppKit/NSTextInputClient_Private.h>
+#import <AppKit/NSView_UnifiedLayout.h>
 #import <AppKit/NSWindow_Private.h>
 
 #if ENABLE(CONTENT_INSET_BACKGROUND_FILL)
@@ -110,10 +111,15 @@ NSString * const NSInspectorBarTextAlignmentItemIdentifier = @"NSInspectorBarTex
 
 @interface NSScrollPocket : NSView
 @property (copy, nullable) NSColor *captureColor;
+@property BOOL prefersSolidColorHardPocket;
 @end
 
 @interface NSImage (SPI)
 @property (readonly, getter=_isSymbolImage) BOOL _symbolImage;
+@end
+
+@interface NSView (_NSConstraintBasedLayoutEmbedding)
+@property (readonly) BOOL _wantsConstraintBasedLayout;
 @end
 
 #endif
@@ -137,6 +143,14 @@ NSString * const NSInspectorBarTextAlignmentItemIdentifier = @"NSInspectorBarTex
 
 @interface NSFontOptions : NSObject
 + (instancetype)sharedFontOptions;
+@end
+
+@interface NSFontPanel (IPI)
+@property (nonatomic, readonly) NSString *_selectedFaceName;
+- (void)_chooseFace:(id)sender;
+@end
+
+@interface NSFontEffectsBox : NSBox
 @end
 
 #endif // PLATFORM(MAC)

@@ -60,7 +60,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 #if PLATFORM(GTK)
-#include <WebCore/GtkVersioning.h>
+#include "GtkVersioning.h"
 #endif
 
 #if HAVE(GDESKTOPAPPINFO)
@@ -310,13 +310,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(NotificationService);
 
 NotificationService& NotificationService::singleton()
 {
-    static std::once_flag onceFlag;
-    static LazyNeverDestroyed<NotificationService> service;
-
-    std::call_once(onceFlag, [] {
-        service.construct();
-    });
-
+    static NeverDestroyed<NotificationService> service;
     return service;
 }
 

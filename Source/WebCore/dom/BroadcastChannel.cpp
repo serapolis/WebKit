@@ -28,13 +28,11 @@
 
 #include "BroadcastChannelRegistry.h"
 #include "ContextDestructionObserverInlines.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
 #include "ExceptionOr.h"
 #include "MessageEvent.h"
-#include "Page.h"
 #include "PartitionedSecurityOrigin.h"
 #include "SecurityOrigin.h"
 #include "SerializedScriptValue.h"
@@ -118,7 +116,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(Page*)
         return;
     }
 
-    CheckedPtr workerLoaderProxy = downcast<WorkerGlobalScope>(*context).thread().workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = downcast<WorkerGlobalScope>(*context).thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return;
 
@@ -257,7 +255,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
 
         auto& vm = globalObject->vm();
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), channel.scriptExecutionContext()->securityOrigin()->toString());
+        auto event = MessageEvent::create(*globalObject, WTFMove(message), channel.scriptExecutionContext()->securityOrigin());
         if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());

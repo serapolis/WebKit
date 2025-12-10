@@ -41,6 +41,7 @@ class RenderStyle;
 
 class StyleOriginatedAnimation : public WebAnimation {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(StyleOriginatedAnimation);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(StyleOriginatedAnimation);
 public:
     ~StyleOriginatedAnimation();
 
@@ -70,7 +71,7 @@ public:
     void flushPendingStyleChanges() const;
 
     virtual AnimationPlayState backingAnimationPlayState() const = 0;
-    virtual RefPtr<TimingFunction> backingAnimationTimingFunction() const = 0;
+    virtual TimingFunction* backingAnimationTimingFunction() const = 0;
 
 protected:
     StyleOriginatedAnimation(const Styleable&);

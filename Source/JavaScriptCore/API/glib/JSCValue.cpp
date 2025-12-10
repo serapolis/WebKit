@@ -1142,7 +1142,7 @@ static void jscValueObjectDefinePropertyAccessor(JSCValue* value, const char* pr
  * @destroy_notify: (nullable): destroy notifier for @user_data
  *
  * Define or modify a property with @property_name in object referenced by @value. When the
- * property value needs to be getted or set, @getter and @setter callbacks will be called.
+ * property value is read or set, @getter and @setter callbacks will be called.
  * When the property is cleared in the #JSCClass context, @destroy_notify is called with
  * @user_data as parameter. This is equivalent to JavaScript <function>Object.defineProperty()</function>
  * when used with an accessor descriptor.
@@ -1568,7 +1568,7 @@ gboolean jsc_value_is_array_buffer(JSCValue* value)
 /**
  * jsc_value_array_buffer_get_data:
  * @value: A #JSCValue
- * @size: (nullable): location where to store the size of the memory region.
+ * @size: (out) (optional): location where to store the size of the memory region.
  *
  * Gets a pointer to memory that contains the array buffer data.
  *
@@ -1586,7 +1586,8 @@ gboolean jsc_value_is_array_buffer(JSCValue* value)
  * the meantime. Consider taking a copy of the data and using the copy instead
  * in asynchronous code.
  *
- * Returns: (transfer none): pointer to memory.
+ * Returns: (transfer none) (array length=size) (element-type guint8):
+ *   pointer to memory.
  *
  * Since: 2.38
  */

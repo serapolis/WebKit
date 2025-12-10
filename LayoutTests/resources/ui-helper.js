@@ -643,6 +643,20 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static async setSafeAreaInsets(top, right, bottom, left)
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`
+                uiController.setSafeAreaInsets(${top}, ${right}, ${bottom}, ${left});
+                uiController.doAfterNextVisibleContentRectAndStablePresentationUpdate(function() {
+                    uiController.uiScriptComplete();
+                });`, resolve);
+        });
+    }
+
     static async setInlinePrediction(text, startIndex = 0)
     {
         if (!this.isWebKit2())
@@ -859,6 +873,19 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static waitForViewControllerToShow()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`
+                (function() {
+                    uiController.didPresentViewControllerCallback = () => uiController.uiScriptComplete();
+                })()`, resolve);
+        });
+    }
+
     static waitForContextMenuToShow()
     {
         if (!this.isWebKit2() || !this.isIOSFamily())
@@ -944,7 +971,7 @@ window.UIHelper = class UIHelper {
             return new Promise(resolve => {
                 testRunner.runUIScript(`(function() {
                     uiController.doAfterNextStablePresentationUpdate(function() {
-                        uiController.uiScriptComplete(uiController.scrollbarStateForScrollingNodeID(${scrollingNodeID[0]}, ${scrollingNodeID[1]}, ${isVertical}));
+                        uiController.uiScriptComplete(uiController.scrollbarStateForScrollingNodeID(${scrollingNodeID.nodeIdentifier}, ${scrollingNodeID.processIdentifier}, ${isVertical}));
                     });
                 })()`, state => {
                     resolve(state);
@@ -963,6 +990,33 @@ window.UIHelper = class UIHelper {
     static horizontalScrollbarState(scroller)
     {
         return UIHelper.scrollbarState(scroller, false);
+    }
+
+    static didCallEnsurePositionInformationIsUpToDateSinceLastCheck()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve(false);
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`(function() {
+                uiController.uiScriptComplete(uiController.didCallEnsurePositionInformationIsUpToDateSinceLastCheck);
+            })()`, result => {
+                resolve(result === "true");
+            });
+        });
+    }
+
+    static clearEnsurePositionInformationIsUpToDateTracking()
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript(`(function() {
+                uiController.clearEnsurePositionInformationIsUpToDateTracking();
+                uiController.uiScriptComplete();
+            })()`, resolve);
+        });
     }
 
     static getUICaretViewRect()
@@ -1632,6 +1686,14 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(`uiController.setKeyboardInputModeIdentifier(\`${escapedIdentifier}\`)`, resolve));
     }
 
+    static setFocusStartsInputSessionPolicy(policy)
+    {
+        if (!this.isWebKit2() || !this.isIOSFamily())
+            return Promise.resolve();
+
+        return new Promise(resolve => testRunner.runUIScript(`uiController.setFocusStartsInputSessionPolicy("${policy}")`, resolve));
+    }
+
     static contentOffset()
     {
         if (!this.isIOSFamily())
@@ -1930,6 +1992,18 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static getUIViewTreeForCompositedElement(element)
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        const layerID = window.internals?.layerIDForElement(element);
+        const script = `uiController.uiScriptComplete(uiController.uiViewTreeAsTextForViewWithLayerID(${layerID}))`;
+        return new Promise(resolve => {
+            testRunner.runUIScript(script, resolve);
+        });
+    }
+
     static propertiesOfLayerWithID(layerID)
     {
         if (!this.isWebKit2())
@@ -1951,6 +2025,52 @@ window.UIHelper = class UIHelper {
                 return uiController.caLayerTreeAsText;
             })()`, resolve);
         });
+    }
+
+    static getCALayerTreeForCompositedElement(element)
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        const layerID = window.internals?.layerIDForElement(element);
+        const script = `uiController.uiScriptComplete(uiController.caLayerTreeAsTextForLayerWithID(${layerID}))`;
+        return new Promise(resolve => {
+            testRunner.runUIScript(script, resolve);
+        });
+    }
+
+    static remoteAnimationStackForElement(element)
+    {
+        if (!this.isWebKit2() || !element)
+            return Promise.resolve();
+
+        const layerID = window.internals?.layerIDForElement(element);
+        const script = `uiController.uiScriptComplete(uiController.animationStackForLayerWithID(${layerID}))`;
+        return new Promise(resolve => {
+            testRunner.runUIScript(script, result => resolve(JSON.parse(result)));
+        });
+    }
+
+    static async remoteTimeline(timeline)
+    {
+        if (!this.isWebKit2() || !(timeline instanceof ScrollTimeline))
+            return;
+
+        const scrollingNodeID = window.internals?.scrollingNodeIDForTimeline(timeline);
+        if (!scrollingNodeID.nodeIdentifier || !scrollingNodeID.processIdentifier)
+            return;
+
+        const identifier = window.internals?.identifierForTimeline(timeline);
+
+        const script = `uiController.uiScriptComplete(uiController.progressBasedTimelinesForScrollingNodeID(${scrollingNodeID.nodeIdentifier}, ${scrollingNodeID.processIdentifier}))`;
+        const result = await new Promise(resolve => {
+            testRunner.runUIScript(script, result => resolve(JSON.parse(result)));
+        });
+        const timelines = result.timelines;
+        for (const timeline of timelines) {
+            if (timeline.identifier == identifier)
+                return timeline;
+        }
     }
 
     static dragFromPointToPoint(fromX, fromY, toX, toY, duration)
@@ -2451,7 +2571,9 @@ window.UIHelper = class UIHelper {
 
         return new Promise(resolve => {
             testRunner.runUIScript(`(() => {
-                uiController.requestDebugText(result => uiController.uiScriptComplete(result));
+                uiController.requestDebugText(result => {
+                    uiController.uiScriptComplete(result);
+                }, ${JSON.stringify(options)});
             })()`, debugText => {
                 if (options.normalize) {
                     debugText = debugText

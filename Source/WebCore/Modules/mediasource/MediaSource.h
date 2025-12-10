@@ -34,7 +34,6 @@
 
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
-#include "HTMLMediaElement.h"
 #include "MediaPlayer.h"
 #include "MediaPromiseTypes.h"
 #include "MediaSourceInit.h"
@@ -53,6 +52,7 @@ class AudioTrack;
 class AudioTrackPrivate;
 class ContentType;
 class InbandTextTrackPrivate;
+class HTMLMediaElement;
 class MediaSourceClientImpl;
 class MediaSourceHandle;
 class SourceBuffer;
@@ -67,7 +67,7 @@ template<typename> class ExceptionOr;
 enum class MediaSourceReadyState { Closed, Open, Ended };
 
 class MediaSource
-    : public RefCountedAndCanMakeWeakPtr<MediaSource>
+    : public RefCounted<MediaSource>
     , public ActiveDOMObject
     , public EventTarget
     , public URLRegistrable
@@ -78,16 +78,16 @@ class MediaSource
 {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(MediaSource);
 public:
-    void ref() const final { RefCountedAndCanMakeWeakPtr::ref(); }
-    void deref() const final { RefCountedAndCanMakeWeakPtr::deref(); }
-
-    USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<MediaSource>);
-
     static void setRegistry(URLRegistry*);
     static MediaSource* lookup(const String& url) { return s_registry ? downcast<MediaSource>(s_registry->lookup(url)) : nullptr; }
 
     static Ref<MediaSource> create(ScriptExecutionContext&, MediaSourceInit&&);
     virtual ~MediaSource();
+
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(ActiveDOMObject);
 
     static bool enabledForContext(ScriptExecutionContext&);
 

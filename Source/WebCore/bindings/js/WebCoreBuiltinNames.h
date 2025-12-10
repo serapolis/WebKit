@@ -273,6 +273,7 @@ namespace WebCore {
     macro(HTMLDataListElement) \
     macro(HTMLEmbedElement) \
     macro(HTMLModelElement) \
+    macro(HTMLSelectedContentElement) \
     macro(Headers) \
     macro(IDBCursor) \
     macro(IDBCursorWithValue) \
@@ -306,6 +307,7 @@ namespace WebCore {
     macro(MediaCapabilities) \
     macro(MediaCapabilitiesInfo) \
     macro(MediaDevices) \
+    macro(MediaDeviceInfo) \
     macro(MediaElementAudioSourceNode) \
     macro(MediaEncryptedEvent) \
     macro(MediaKeyMessageEvent) \
@@ -347,6 +349,7 @@ namespace WebCore {
     macro(OfflineAudioContext) \
     macro(OffscreenCanvas) \
     macro(OffscreenCanvasRenderingContext2D) \
+    macro(Origin) \
     macro(OscillatorNode) \
     macro(PaintRenderingContext2D) \
     macro(PannerNode) \
@@ -414,9 +417,9 @@ namespace WebCore {
     macro(RTCTrackEvent) \
     macro(RTCTransformEvent) \
     macro(ReadableByteStreamController) \
-    macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
     macro(ReadableStreamBYOBRequest) \
+    macro(ReadableStream) \
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(RemotePlayback) \
@@ -513,8 +516,10 @@ namespace WebCore {
     macro(WebTransport) \
     macro(WebTransportBidirectionalStream) \
     macro(WebTransportDatagramDuplexStream) \
+    macro(WebTransportDatagramsWritable) \
     macro(WebTransportError) \
     macro(WebTransportReceiveStream) \
+    macro(WebTransportSendGroup) \
     macro(WebTransportSendStream) \
     macro(WindowClient) \
     macro(Worklet) \
@@ -534,6 +539,8 @@ namespace WebCore {
     macro(XRGPUProjectionLayerInit) \
     macro(XRGPUSubImage) \
     macro(XRHand) \
+    macro(XRHitTestResult) \
+    macro(XRHitTestSource) \
     macro(XRInputSource) \
     macro(XRInputSourceArray) \
     macro(XRInputSourceEvent) \
@@ -545,6 +552,7 @@ namespace WebCore {
     macro(XRPose) \
     macro(XRProjectionLayer) \
     macro(XRQuadLayer) \
+    macro(XRRay) \
     macro(XRReferenceSpace) \
     macro(XRReferenceSpaceEvent) \
     macro(XRRenderState) \
@@ -555,6 +563,9 @@ namespace WebCore {
     macro(XRSubImage) \
     macro(XRSystem) \
     macro(XRTest) \
+    macro(XRTransientInputHitTest) \
+    macro(XRTransientInputHitTestResult) \
+    macro(XRTransientInputHitTestSource) \
     macro(XRView) \
     macro(XRViewerPose) \
     macro(XRViewport) \
@@ -567,7 +578,6 @@ namespace WebCore {
     macro(abortSteps) \
     macro(addAbortAlgorithmToSignal) \
     macro(appendFromJS) \
-    macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
     macro(backingMap) \
     macro(backingSet) \
@@ -702,7 +712,6 @@ namespace WebCore {
     macro(readable) \
     macro(readIntoRequests) \
     macro(readRequests) \
-    macro(readableByteStreamAPIEnabled) \
     macro(readableStreamController) \
     macro(reader) \
     macro(readyPromise) \
@@ -721,6 +730,7 @@ namespace WebCore {
     macro(showModalDialog) \
     macro(signal) \
     macro(signalAbort) \
+    macro(speechSynthesis) \
     macro(SpeechSynthesis) \
     macro(SpeechSynthesisErrorEvent) \
     macro(SpeechSynthesisEvent) \

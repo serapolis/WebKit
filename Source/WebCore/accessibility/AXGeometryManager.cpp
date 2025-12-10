@@ -27,6 +27,7 @@
 #include "AXGeometryManager.h"
 
 #include "AXLoggerBase.h"
+#include "DocumentPage.h"
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 #include "AXIsolatedTree.h"
@@ -87,7 +88,7 @@ bool AXGeometryManager::cacheRectIfNeeded(AXID axID, IntRect&& rect)
     if (!rectChanged)
         return false;
 
-    RefPtr tree = AXIsolatedTree::treeForPageID(*m_cache->pageID());
+    RefPtr tree = AXIsolatedTree::treeForFrameID(*m_cache->frameID());
     if (!tree)
         return false;
     tree->updateFrame(axID, WTFMove(rect));
@@ -117,7 +118,7 @@ void AXGeometryManager::willUpdateObjectRegions()
     if (!m_cache)
         return;
 
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_cache->pageID()))
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_cache->frameID()))
         tree->updateRootScreenRelativePosition();
 }
 

@@ -31,6 +31,7 @@
 #include "ProvisionalFrameCreationParameters.h"
 #include "SandboxExtension.h"
 #include "SessionState.h"
+#include "TextManipulationParameters.h"
 #include "UserContentControllerParameters.h"
 #include "ViewWindowCoordinates.h"
 #include "VisitedLinkTableIdentifier.h"
@@ -87,6 +88,10 @@
 
 #if HAVE(AUDIT_TOKEN)
 #include "CoreIPCAuditToken.h"
+#endif
+
+#if ENABLE(IMAGE_ANALYSIS)
+#include <WebCore/ImageAnalysisQueue.h>
 #endif
 
 namespace WebCore {
@@ -178,7 +183,6 @@ struct WebPageCreationParameters {
     bool hasResourceLoadClient { false };
 
     Vector<String> mimeTypesWithCustomContentProviders { };
-    String overrideReferrerForAllRequests;
 
     bool controlledByAutomation { false };
     bool isProcessSwap { false };
@@ -330,6 +334,7 @@ struct WebPageCreationParameters {
     String openedMainFrameName;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
     WebCore::SandboxFlags initialSandboxFlags;
+    WebCore::ReferrerPolicy initialReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
     std::optional<WebCore::WindowFeatures> windowFeatures { };
     bool statusBarIsVisible;
     bool menuBarIsVisible;
@@ -362,6 +367,12 @@ struct WebPageCreationParameters {
     String presentingApplicationBundleIdentifier;
 #endif
     bool shouldSendConsoleLogsToUIProcessForTesting { false };
+
+#if ENABLE(IMAGE_ANALYSIS)
+    std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers { std::nullopt };
+#endif
+
+    std::optional<TextManipulationParameters> textManipulationParameters { std::nullopt };
 };
 
 } // namespace WebKit

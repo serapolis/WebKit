@@ -63,7 +63,9 @@ typedef struct OpaqueCMBlockBuffer* CMBlockBufferRef;
 #endif
 
 #if USE(SKIA)
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkData.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WTF {
@@ -337,11 +339,7 @@ class SharedBufferBuilder {
 public:
     SharedBufferBuilder() = default;
     SharedBufferBuilder(SharedBufferBuilder&&) = default;
-    WEBCORE_EXPORT explicit SharedBufferBuilder(RefPtr<FragmentedSharedBuffer>&&);
-    explicit SharedBufferBuilder(Ref<FragmentedSharedBuffer>&& buffer) { initialize(WTFMove(buffer)); }
-    explicit SharedBufferBuilder(RefPtr<SharedBuffer>&& buffer)
-        : SharedBufferBuilder(RefPtr<FragmentedSharedBuffer>{ WTFMove(buffer) }) { }
-    explicit SharedBufferBuilder(Ref<SharedBuffer>&& buffer) { initialize(WTFMove(buffer)); }
+    SharedBufferBuilder(const FragmentedSharedBuffer& buffer) { append(buffer); }
 
     template <typename... Args>
     SharedBufferBuilder(std::in_place_t, Args&&... arg)
@@ -351,7 +349,6 @@ public:
     }
 
     SharedBufferBuilder& operator=(SharedBufferBuilder&&) = default;
-    WEBCORE_EXPORT SharedBufferBuilder& operator=(RefPtr<FragmentedSharedBuffer>&&);
 
     WEBCORE_EXPORT void append(const FragmentedSharedBuffer&);
     WEBCORE_EXPORT void append(std::span<const uint8_t>);
@@ -386,18 +383,19 @@ public:
         m_buffer = nullptr;
     }
 
-    RefPtr<FragmentedSharedBuffer> get() const
+    FragmentedSharedBuffer* buffer() const LIFETIME_BOUND
     {
         updateBufferIfNeeded();
-        return m_buffer;
+        return m_buffer.get();
     }
-    Ref<FragmentedSharedBuffer> copy() const { return createBuffer(); }
+    RefPtr<FragmentedSharedBuffer> protectedBuffer() const { return buffer(); }
+    Ref<FragmentedSharedBuffer> copyBuffer() const { return createBuffer(); }
 
     WEBCORE_EXPORT RefPtr<ArrayBuffer> tryCreateArrayBuffer() const;
 
-    WEBCORE_EXPORT Ref<FragmentedSharedBuffer> take();
-    WEBCORE_EXPORT Ref<SharedBuffer> takeAsContiguous();
-    WEBCORE_EXPORT RefPtr<ArrayBuffer> takeAsArrayBuffer();
+    WEBCORE_EXPORT Ref<FragmentedSharedBuffer> takeBuffer();
+    WEBCORE_EXPORT Ref<SharedBuffer> takeBufferAsContiguous();
+    WEBCORE_EXPORT RefPtr<ArrayBuffer> takeBufferAsArrayBuffer();
 
     WEBCORE_EXPORT bool operator==(const SharedBufferBuilder&) const;
 

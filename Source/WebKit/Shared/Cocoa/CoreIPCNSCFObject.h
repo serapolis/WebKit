@@ -28,6 +28,7 @@
 #if PLATFORM(COCOA)
 
 #include "ArgumentCodersCocoa.h"
+#include "CoreIPCPKDateComponentsRange.h"
 #include <wtf/RetainPtr.h>
 #include <wtf/UniqueRef.h>
 
@@ -45,23 +46,15 @@ class CoreIPCPKSecureElementPass;
 class CoreIPCPKPayment;
 class CoreIPCPKPaymentToken;
 class CoreIPCPKShippingMethod;
-class CoreIPCPKDateComponentsRange;
 class CoreIPCCNContact;
 class CoreIPCCNPhoneNumber;
 class CoreIPCCNPostalAddress;
-#endif
-#if ENABLE(DATA_DETECTION) && HAVE(WK_SECURE_CODING_DATA_DETECTORS)
-class CoreIPCDDScannerResult;
-#if PLATFORM(MAC)
-class CoreIPCDDSecureActionContext;
-#endif
 #endif
 class CoreIPCData;
 class CoreIPCDate;
 class CoreIPCDateComponents;
 class CoreIPCDictionary;
 class CoreIPCError;
-class CoreIPCFont;
 class CoreIPCLocale;
 class CoreIPCNSShadow;
 class CoreIPCNSValue;
@@ -82,7 +75,6 @@ using ObjectValue = Variant<
     CoreIPCDate,
     CoreIPCDictionary,
     CoreIPCError,
-    CoreIPCFont,
     CoreIPCLocale,
     CoreIPCNSShadow,
     CoreIPCNSValue,
@@ -101,12 +93,6 @@ using ObjectValue = Variant<
     CoreIPCCNContact,
     CoreIPCCNPhoneNumber,
     CoreIPCCNPostalAddress,
-#endif
-#if ENABLE(DATA_DETECTION) && HAVE(WK_SECURE_CODING_DATA_DETECTORS)
-    CoreIPCDDScannerResult,
-#if PLATFORM(MAC)
-    CoreIPCDDSecureActionContext,
-#endif
 #endif
     CoreIPCDateComponents,
 #if !HAVE(WK_SECURE_CODING_NSURLREQUEST)

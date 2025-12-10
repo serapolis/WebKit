@@ -27,7 +27,10 @@
 
 #include "AXLoggerBase.h"
 #include "AXObjectCache.h"
-#include "Document.h"
+#include "CSSPrimitiveValueMappings.h"
+#include "CSSProperty.h"
+#include "CSSValueList.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
 #include "HTMLImageElement.h"
 #include "HTMLMapElement.h"
@@ -35,7 +38,9 @@
 #include "HTMLNames.h"
 #include "Node.h"
 #include "RenderImage.h"
+#include "RenderStyleConstants.h"
 #include "RenderTreeBuilder.h"
+#include "StylePropertiesInlines.h"
 #include <wtf/CheckedPtr.h>
 #include <wtf/RefPtr.h>
 
@@ -43,15 +48,15 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-ContainerNode* composedParentIgnoringDocumentFragments(const Node& node)
+RefPtr<ContainerNode> composedParentIgnoringDocumentFragments(const Node& node)
 {
     RefPtr ancestor = node.parentInComposedTree();
     while (is<DocumentFragment>(ancestor.get()))
         ancestor = ancestor->parentInComposedTree();
-    return ancestor.get();
+    return ancestor;
 }
 
-ContainerNode* composedParentIgnoringDocumentFragments(const Node* node)
+RefPtr<ContainerNode> composedParentIgnoringDocumentFragments(const Node* node)
 {
     return node ? composedParentIgnoringDocumentFragments(*node) : nullptr;
 }
@@ -119,7 +124,7 @@ RenderImage* toSimpleImage(RenderObject& renderer)
         return nullptr;
 #endif // ENABLE(VIDEO)
 
-    return renderImage.get();
+    return renderImage.unsafeGet();
 }
 
 // FIXME: This probably belongs on Element.
@@ -265,6 +270,8 @@ String roleToString(AccessibilityRole role)
         return "Footnote"_s;
     case AccessibilityRole::Form:
         return "Form"_s;
+    case AccessibilityRole::FrameHost:
+        return "FrameHost"_s;
     case AccessibilityRole::Generic:
         return "Generic"_s;
     case AccessibilityRole::GraphicsDocument:
@@ -327,6 +334,8 @@ String roleToString(AccessibilityRole role)
         return "ListItem"_s;
     case AccessibilityRole::ListMarker:
         return "ListMarker"_s;
+    case AccessibilityRole::LocalFrame:
+        return "LocalFrame"_s;
     case AccessibilityRole::Mark:
         return "Mark"_s;
     case AccessibilityRole::MathElement:
@@ -471,6 +480,34 @@ bool needsLayoutOrStyleRecalc(const Document& document)
             return true;
     }
     return document.hasPendingStyleRecalc();
+}
+
+std::optional<CursorType> cursorTypeFrom(const StyleProperties& properties)
+{
+    for (auto property : properties) {
+        if (property.id() == CSSPropertyCursor) {
+            if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(property.value()))
+                return fromCSSValue<CursorType>(*primitiveValue);
+            if (RefPtr valueList = dynamicDowncast<CSSValueList>(property.value()); valueList && valueList->size() >= 2) {
+                if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>((*valueList)[valueList->size() - 1]))
+                    return fromCSSValue<CursorType>(*primitiveValue);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+RefPtr<Node> lastNode(const FixedVector<AXID>& axIDs, AXObjectCache& cache)
+{
+    ASSERT(isMainThread());
+
+    for (auto axID = axIDs.rbegin(); axID != axIDs.rend(); ++axID) {
+        if (RefPtr object = cache.objectForID(*axID)) {
+            if (RefPtr node = object->node())
+                return node;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace WebCore

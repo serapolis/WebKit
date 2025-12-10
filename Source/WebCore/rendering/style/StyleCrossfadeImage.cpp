@@ -34,6 +34,7 @@
 #include "CachedResourceLoader.h"
 #include "CrossfadeGeneratedImage.h"
 #include "RenderElement.h"
+#include "SVGImageForContainer.h"
 #include <wtf/PointerComparison.h>
 
 namespace WebCore {
@@ -85,8 +86,8 @@ RefPtr<StyleCrossfadeImage> StyleCrossfadeImage::blend(const StyleCrossfadeImage
 
 Ref<CSSValue> StyleCrossfadeImage::computedStyleValue(const RenderStyle& style) const
 {
-    auto fromComputedValue = m_from ? m_from->computedStyleValue(style) : static_reference_cast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone));
-    auto toComputedValue = m_to ? m_to->computedStyleValue(style) : static_reference_cast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone));
+    auto fromComputedValue = m_from ? m_from->computedStyleValue(style) : upcast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone));
+    auto toComputedValue = m_to ? m_to->computedStyleValue(style) : upcast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone));
     return CSSCrossfadeValue::create(WTFMove(fromComputedValue), WTFMove(toComputedValue), CSSPrimitiveValue::create(m_percentage), m_isPrefixed);
 }
 
@@ -135,7 +136,7 @@ void StyleCrossfadeImage::load(CachedResourceLoader& loader, const ResourceLoade
     m_inputImagesAreReady = true;
 }
 
-RefPtr<Image> StyleCrossfadeImage::image(const RenderElement* renderer, const FloatSize& size, bool isForFirstLine) const
+RefPtr<Image> StyleCrossfadeImage::image(const RenderElement* renderer, const FloatSize& size, const GraphicsContext& destinationContext, bool isForFirstLine) const
 {
     if (!renderer)
         return &Image::nullImage();
@@ -146,13 +147,25 @@ RefPtr<Image> StyleCrossfadeImage::image(const RenderElement* renderer, const Fl
     if (!m_from || !m_to)
         return &Image::nullImage();
 
-    auto fromImage = m_from->image(renderer, size, isForFirstLine);
-    auto toImage = m_to->image(renderer, size, isForFirstLine);
+    auto fromImage = m_from->image(renderer, size, destinationContext, isForFirstLine);
+    auto toImage = m_to->image(renderer, size, destinationContext, isForFirstLine);
 
     if (!fromImage || !toImage)
         return &Image::nullImage();
 
-    return CrossfadeGeneratedImage::create(*fromImage, *toImage, m_percentage, fixedSize(*renderer), size);
+    RefPtr protectedFromImage = fromImage;
+    RefPtr protectedToImage = toImage;
+
+    if (RefPtr fromSVGImage = dynamicDowncast<SVGImage>(protectedFromImage)) {
+        auto fromURL = m_cachedFromImage ? m_cachedFromImage->url() : URL();
+        protectedFromImage = SVGImageForContainer::create(fromSVGImage.get(), size, 1, fromURL);
+    }
+    if (RefPtr toSVGImage = dynamicDowncast<SVGImage>(protectedToImage)) {
+        auto toURL = m_cachedToImage ? m_cachedToImage->url() : URL();
+        protectedToImage = SVGImageForContainer::create(toSVGImage.get(), size, 1, toURL);
+    }
+
+    return CrossfadeGeneratedImage::create(*protectedFromImage, *protectedToImage, m_percentage, fixedSize(*renderer), size);
 }
 
 bool StyleCrossfadeImage::knownToBeOpaque(const RenderElement& renderer) const

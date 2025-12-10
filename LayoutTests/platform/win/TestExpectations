@@ -219,7 +219,6 @@ fast/images/jpegxl-as-image.html [ Pass ]
 fast/images/jpegxl-image-decoding.html [ Pass ]
 fast/images/jpegxl-with-color-profile.html [ Pass ]
 fast/images/animated-jpegxl-loop-count.html [ Pass ]
-fast/images/image-size-unsigned-overflow.html [ Skip ]
 
 # DataTransferItems is not yet implemented
 fast/events/clipboard-dataTransferItemList.html [ Skip ]
@@ -443,8 +442,16 @@ storage/domstorage/localstorage/close-idle-localstorage-databases-immediately.ht
 storage/domstorage/storage-close-database-on-idle.html [ Skip ]
 
 # testRunner.setStatisticsShouldDowngradeReferrer() is not supported
-http/tests/security/referrer-policy-header.html [ Skip ]
-http/tests/security/referrer-policy-header-multipart.html [ Skip ]
+http/tests/security/referrer-policy-header-empty.html [ Skip ]
+http/tests/security/referrer-policy-header-invalid.html [ Skip ]
+http/tests/security/referrer-policy-header-no-referrer-when-downgrade.html [ Skip ]
+http/tests/security/referrer-policy-header-no-referrer.html [ Skip ]
+http/tests/security/referrer-policy-header-origin-when-cross-origin.html [ Skip ]
+http/tests/security/referrer-policy-header-origin.html [ Skip ]
+http/tests/security/referrer-policy-header-same-origin.html [ Skip ]
+http/tests/security/referrer-policy-header-strict-origin-when-cross-origin.html [ Skip ]
+http/tests/security/referrer-policy-header-strict-origin.html [ Skip ]
+http/tests/security/referrer-policy-header-unsafe-url.html [ Skip ]
 http/tests/navigation/ping-attribute/area-cross-origin.html [ Skip ]
 http/tests/navigation/ping-attribute/anchor-cross-origin.html [ Skip ]
 http/tests/referrer-policy/no-referrer-when-downgrade/ [ Skip ]
@@ -454,6 +461,7 @@ http/tests/referrer-policy/unsafe-url/cross-origin-http-http.html [ Skip ]
 compositing/repaint/copy-forward-dirty-region-purged-backbuffer.html [ Skip ]
 compositing/repaint/copy-forward-dirty-region-purged.html [ Skip ]
 compositing/repaint/copy-forward-dirty-region.html [ Skip ]
+fast/repaint/iframe-from-display-none-repaint.html [ Skip ]
 
 # testRunner.pathToLocalResource
 fast/loader/local-CSS-from-local.html [ Failure ]
@@ -1426,6 +1434,8 @@ editing/style/preserve-selection-direction.html [ Failure ]
 
 imported/w3c/web-platform-tests/html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.detachedcanvas.html [ Skip ] # Failure
 imported/w3c/web-platform-tests/html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.self.2.html [ Skip ] # Failure
+imported/w3c/web-platform-tests/html/canvas/historical.any.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/historical.any.worker.html [ Failure ]
 
 imported/w3c/web-platform-tests/html/semantics/rellist-feature-detection.html [ Skip ] # Failure
 
@@ -1855,8 +1865,6 @@ webkit.org/b/277121 [ Debug ] fast/events/event-handler-detached-document.html
 webkit.org/b/168136 performance-api/performance-observer-periodic.html [ Pass Failure ]
 
 # ReadableByteStreamController is not implemented
-streams/readable-byte-stream-controller.html [ Skip ]
-streams/readable-byte-stream-controller-worker.html [ Skip ]
 streams/readable-stream-byob-reader.html [ Skip ]
 streams/readable-stream-byob-reader-worker.html [ Skip ]
 streams/readable-stream-byob-request.html [ Skip ]
@@ -1958,15 +1966,8 @@ webkit.org/b/222563 http/tests/loading/basic-auth-load-URL-with-consecutive-slas
 #  webkit.org/b/259464 fast/events/wheel/redispatched-wheel-event.html [ Failure Pass ]
 webkit.org/b/271223 fast/events/wheel/redispatched-wheel-event.html [ Skip ] # Timeout
 
-# Trusted Types aren't implemented yet
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/trusted-types-reporting.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/trusted-types-reporting-check-report.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/trusted-types-eval-reporting-report-only.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/trusted-types-eval-reporting-no-unsafe-eval.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/trusted-types-eval-reporting.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-001.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-002.html [ Skip ]
-webkit.org/b/266630 imported/w3c/web-platform-tests/trusted-types/should-trusted-type-policy-creation-be-blocked-by-csp-003.html [ Skip ]
+# Trusted Types tests fail and timeout on Windows
+webkit.org/b/299516 imported/w3c/web-platform-tests/trusted-types/ [ Skip ]
 
 # Failing with non-English keyboard
 webkit.org/b/267251 imported/w3c/web-platform-tests/css/selectors/invalidation/user-valid-user-invalid.html [ Failure Pass ]
@@ -1981,11 +1982,15 @@ imported/w3c/web-platform-tests/event-timing/interaction-count-click.html [ Skip
 imported/w3c/web-platform-tests/event-timing/interaction-count-press-key.html [ Skip ]
 
 # Timeout:
-imported/w3c/web-platform-tests/event-timing/interactionid-orphan-pointerup.html [ Skip ]
+webkit.org/b/301110 imported/w3c/web-platform-tests/event-timing/gap-keydown-keyup.html [ Skip ]
+webkit.org/b/301110 imported/w3c/web-platform-tests/event-timing/gap-pointerdown-pointerup.html [ Skip ]
+webkit.org/b/301110 imported/w3c/web-platform-tests/event-timing/interactionid-orphan-pointerup.html [ Skip ]
 
 # Fail with AccessDeniedAccess
 imported/w3c/web-platform-tests/event-timing/contextmenu.html [ Skip ]
 imported/w3c/web-platform-tests/event-timing/interactionid-auxclick.html [ Skip ]
+imported/w3c/web-platform-tests/event-timing/interactionid-aux-pointerdown-and-pointerdown.html [ Skip ]
+imported/w3c/web-platform-tests/event-timing/interactionid-aux-pointerdown.html [ Skip ]
 imported/w3c/web-platform-tests/event-timing/first-input-interactionid-key.html [ Skip ]
 
 compositing/video [ Skip ]
@@ -4315,7 +4320,7 @@ fast/events/5056619.html [ Failure ]
 fast/events/keydown-leftright-keys.html [ Failure ]
 fast/events/mouse-cursor-change.html [ Failure ]
 fast/events/mouse-cursor-no-mousemove.html [ Failure ]
-fast/events/mouse-cursor-udpate-during-raf.html [ Failure ]
+fast/events/mouse-cursor-update-during-raf.html [ Failure ]
 fast/events/page-visibility-resize-event-order.html [ Timeout ]
 fast/events/selectstart-by-single-click-with-shift.html [ Failure ]
 fast/text/font-download-font-face-src-list.html [ Failure ]
@@ -4337,6 +4342,8 @@ fast/css/sticky/sticky-top-zoomed.html [ ImageOnlyFailure ]
 
 fast/events/wheel/wheel-event-destroys-frame.html [ Skip ] # Timeout
 fast/text/install-font-style-recalc.html [ Skip ] # Timeout
+
+webkit.org/b/301856 fast/events/contextmenu-items-match-node-receiving-contextmenu-event.html [ Skip ]
 
 
 # Tests depend on the system timezone.
@@ -4529,8 +4536,20 @@ imported/w3c/web-platform-tests/wasm/core/simd/simd_f64x2_pmin_pmax.wast.js.html
 
 http/tests/iframe-memory-monitor/media-video-autoplay-in-frames.html [ Skip ]
 
+imported/w3c/web-platform-tests/speculation-rules/prefetch/different-initiators.sub.https.html?cross-site-1 [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/prefetch/initiators-a-element.sub.https.html?cross-site [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/prefetch/initiators-window-open.sub.https.html?cross-site [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/prefetch/redirect-url.https.html?origin=cross-site-initial [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/prefetch/user-pass.https.html?cross-origin=false [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/prefetch/user-pass.https.html?cross-origin=true [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/speculation-tags/invalid-tags.https.html?tag-level=rule&type=prefetch [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/speculation-tags/invalid-tags.https.html?tag-level=ruleset&type=prefetch [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/speculation-tags/valid-tags.https.html?tag-level=rule&type=prefetch [ Failure ]
+imported/w3c/web-platform-tests/speculation-rules/speculation-tags/valid-tags.https.html?tag-level=ruleset&type=prefetch [ Failure ]
+
 # Lockdown Mode does not apply
 dom/xsl/lockdown-mode [ Skip ]
+fast/speechsynthesis/lockdown-mode [ Skip ]
 http/tests/lockdown-mode [ Skip ]
 js/dom/lockdown-mode [ Skip ]
 
@@ -4573,3 +4592,26 @@ webkit.org/b/298727 css3/text-decoration/text-decoration-line-spelling-error-3.h
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-1.html [ Skip ]
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-2.html [ Skip ]
 webkit.org/b/298727 css3/text-decoration/text-decoration-line-grammar-error-3.html [ Skip ]
+
+imported/w3c/web-platform-tests/css/CSS2/visudet/height-applies-to-010a.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/visudet/inline-block-baseline-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/visudet/inline-block-baseline-002.xht [ ImageOnlyFailure ]
+
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-003.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-004.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-005.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-006.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/linebox/inline-formatting-context-007.xht [ ImageOnlyFailure ]
+
+imported/w3c/web-platform-tests/css/CSS2/stacking-context/composite-change-after-scroll-preserves-stacking-order.html [ ImageOnlyFailure ]
+
+imported/w3c/web-platform-tests/css/CSS2/box-display/block-in-inline-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/block-in-inline-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/box-generation-001.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/box-generation-002.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/display-007.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/display-008.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/display-009.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/display-012.xht [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/CSS2/box-display/display-013.xht [ ImageOnlyFailure ]

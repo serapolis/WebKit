@@ -118,6 +118,15 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 
 #endif
 
+/*! @abstract Type used to describe the string encoding when a _WKJSBuffer holds the string data.
+ */
+typedef NS_ENUM(NSInteger, _WKJSBufferStringEncoding) {
+    _WKJSBufferStringEncodingLatin1,
+    _WKJSBufferStringEncodingUniChar
+} WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+#define HAVE_WK_JS_BUFFER_STRING_ENCODING 1
+
 @class UIEventAttribution;
 @class UITextInputTraits;
 @class WKBrowsingContextHandle;
@@ -134,6 +143,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @class _WKHitTestResult;
 @class _WKInspector;
 @class _WKJSHandle;
+@class _WKJSBuffer;
 @class _WKRemoteObjectRegistry;
 @class _WKSafeBrowsingWarning;
 @class _WKSerializedNode;
@@ -145,7 +155,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @class _WKTextExtractionConfiguration;
 @class _WKTextExtractionInteraction;
 @class _WKTextExtractionInteractionResult;
-@class WKTextExtractionResult;
+@class _WKTextExtractionResult;
 @class _WKTextManipulationConfiguration;
 @class _WKTextManipulationItem;
 @class _WKTextRun;
@@ -168,6 +178,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @protocol _WKFindDelegate;
 @protocol _WKFullscreenDelegate;
 @protocol _WKIconLoadingDelegate;
+@protocol _WKImmersiveEnvironmentDelegate;
 @protocol _WKInputDelegate;
 @protocol _WKResourceLoadDelegate;
 @protocol _WKTextManipulationDelegate;
@@ -191,6 +202,7 @@ typedef NS_ENUM(NSInteger, _WKImmediateActionType) {
 @property (nonatomic, readonly) NSURL *_resourceDirectoryURL WK_API_AVAILABLE(macos(10.15), ios(13.0));
 
 - (void)_loadAlternateHTMLString:(NSString *)string baseURL:(NSURL *)baseURL forUnreachableURL:(NSURL *)unreachableURL;
+- (void)_loadAlternateHTMLString:(NSString *)string baseURL:(NSURL *)baseURL forUnreachableURL:(NSURL *)unreachableURL withWebpagePreferences:(WKWebpagePreferences *)preferences WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 - (WKNavigation *)_loadData:(NSData *)data MIMEType:(NSString *)MIMEType characterEncodingName:(NSString *)characterEncodingName baseURL:(NSURL *)baseURL userData:(id)userData WK_API_AVAILABLE(macos(10.12), ios(10.0));
 - (WKNavigation *)_loadRequest:(NSURLRequest *)request shouldOpenExternalURLs:(BOOL)shouldOpenExternalURLs WK_API_AVAILABLE(macos(10.13), ios(11.0));
 - (WKNavigation *)_loadRequest:(NSURLRequest *)request shouldOpenExternalURLsPolicy:(_WKShouldOpenExternalURLsPolicy)shouldOpenExternalURLsPolicy WK_API_AVAILABLE(macos(12.0), ios(15.0));
@@ -278,6 +290,7 @@ for this property.
 - (void)_evaluateJavaScript:(NSString *)javaScriptString inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(void (^)(id, NSError * error))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
 - (void)_evaluateJavaScript:(NSString *)javaScriptString withSourceURL:(NSURL *)sourceURL inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(void (^)(id, NSError * error))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
 - (void)_evaluateJavaScript:(NSString *)javaScriptString withSourceURL:(NSURL *)url inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld withUserGesture:(BOOL)withUserGesture completionHandler:(void (^)(id, NSError *error))completionHandler WK_API_AVAILABLE(macos(15.0), ios(18.0), visionos(2.0));
+- (void)_evaluateJavaScriptFromBuffer:(_WKJSBuffer *)javaScriptString withEncoding:(_WKJSBufferStringEncoding) bufferStringEncoding withSourceURL:(NSURL *)url inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld withUserGesture:(BOOL)withUserGesture completionHandler:(void (^)(id, NSError *error))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 - (void)_callAsyncJavaScript:(NSString *)functionBody arguments:(NSDictionary<NSString *, id> *)arguments inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)contentWorld completionHandler:(void (^)(id, NSError *error))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
 
 - (BOOL)_allMediaPresentationsClosed WK_API_AVAILABLE(macos(12.0), ios(15.0));
@@ -304,6 +317,7 @@ for this property.
 - (void)_launchInitialProcessIfNecessary WK_API_AVAILABLE(macos(14.0), ios(17.0));
 - (void)_clearBackForwardCache WK_API_AVAILABLE(macos(14.0), ios(17.0));
 
+- (void)_simulateDeviceMotionChangeWithXAcceleration:(double)xAcceleration yAcceleration:(double)yAcceleration zAcceleration:(double)zAcceleration xAccelerationIncludingGravity:(double)xAccelerationIncludingGravity yAccelerationIncludingGravity:(double)yAccelerationIncludingGravity zAccelerationIncludingGravity:(double)zAccelerationIncludingGravity xRotationRate:(double)xRotationRate yRotationRate:(double)yRotationRate zRotationRate:(double)zRotationRate WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
 - (void)_simulateDeviceOrientationChangeWithAlpha:(double)alpha beta:(double)beta gamma:(double)gamma WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
 
 + (BOOL)_willUpgradeToHTTPS:(NSURL *)url WK_API_AVAILABLE(macos(12.0), ios(15.0));
@@ -323,7 +337,7 @@ for this property.
 - (void)_executeEditCommand:(NSString *)command argument:(NSString *)argument completion:(void (^)(BOOL))completion WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
 
 - (void)_isJITEnabled:(void(^)(BOOL))completionHandler WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
-- (void)_isEnhancedSecurityEnabled:(void(^)(BOOL))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+- (void)_isEnhancedSecurityEnabled:(void(^)(BOOL))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 - (void)_removeDataDetectedLinks:(dispatch_block_t)completion WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
 
 - (IBAction)_alignCenter:(id)sender WK_API_AVAILABLE(macos(10.14.4), ios(12.2));
@@ -359,6 +373,7 @@ for this property.
 - (void)_getMainResourceDataWithCompletionHandler:(void (^)(NSData *, NSError *))completionHandler;
 - (void)_getWebArchiveDataWithCompletionHandler:(void (^)(NSData *, NSError *))completionHandler;
 - (void)_createWebArchiveForFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSData *, NSError *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+- (void)_createWebArchiveForFrames:(NSArray<WKFrameInfo *> *)frames rootFrame:(WKFrameInfo *)rootFrame completionHandler:(void (^)(NSData *, NSError *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 - (void)_getContentsAsStringWithCompletionHandler:(void (^)(NSString *, NSError *))completionHandler WK_API_AVAILABLE(macos(10.13), ios(11.0));
 - (void)_getContentsAsStringWithCompletionHandlerKeepIPCConnectionAliveForTesting:(void (^)(NSString *, NSError *))completionHandler;
 - (void)_getContentsOfAllFramesAsStringWithCompletionHandler:(void (^)(NSString *))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
@@ -488,6 +503,8 @@ for this property.
 #endif
 
 @property (nonatomic, readonly) _WKSpatialBackdropSource *_spatialBackdropSource WK_API_AVAILABLE(visionos(26.0));
+
+@property (nonatomic, weak, setter=_setImmersiveEnvironmentDelegate:) id <_WKImmersiveEnvironmentDelegate> _immersiveEnvironmentDelegate WK_API_AVAILABLE(visionos(WK_XROS_TBA));
 
 - (void)_grantAccessToAssetServices WK_API_AVAILABLE(macos(12.0), ios(14.0));
 - (void)_revokeAccessToAssetServices WK_API_AVAILABLE(macos(12.0), ios(14.0));
@@ -651,6 +668,7 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 #endif
 
 - (void)_debugTextWithConfiguration:(_WKTextExtractionConfiguration *)configuration completionHandler:(WK_SWIFT_UI_ACTOR void(^)(NSString *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA)) NS_SWIFT_NAME(_debugText(with:completionHandler:));
+- (void)_extractDebugTextWithConfiguration:(_WKTextExtractionConfiguration *)configuration completionHandler:(WK_SWIFT_UI_ACTOR void(^)(_WKTextExtractionResult *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA)) NS_SWIFT_NAME(_extractDebugText(with:completionHandler:));
 - (void)_performInteraction:(_WKTextExtractionInteraction *)interaction completionHandler:(WK_SWIFT_UI_ACTOR void(^)(_WKTextExtractionInteractionResult *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA)) NS_SWIFT_NAME(_performInteraction(_:completionHandler:));
 
 @end
@@ -711,8 +729,8 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 @property (nonatomic, setter=_setAllowsViewportShrinkToFit:) BOOL _allowsViewportShrinkToFit;
 
-@property (nonatomic, readonly) NSData *_dataForDisplayedPDF WK_API_DEPRECATED_WITH_REPLACEMENT("-_getMainResourceDataWithCompletionHandler:", ios(8.0, WK_IOS_TBA), visionos(1.0, WK_XROS_TBA));
-@property (nonatomic, readonly) NSString *_suggestedFilenameForDisplayedPDF WK_API_DEPRECATED("No longer supported.", ios(8.0, WK_IOS_TBA), visionos(1.0, WK_XROS_TBA));
+@property (nonatomic, readonly) NSData *_dataForDisplayedPDF WK_API_DEPRECATED_WITH_REPLACEMENT("-_getMainResourceDataWithCompletionHandler:", ios(8.0, 26.0), visionos(1.0, 26.0));
+@property (nonatomic, readonly) NSString *_suggestedFilenameForDisplayedPDF WK_API_DEPRECATED("No longer supported.", ios(8.0, 26.0), visionos(1.0, 26.0));
 
 @property (nonatomic, readonly) _WKWebViewPrintFormatter *_webViewPrintFormatter;
 
@@ -740,6 +758,8 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 - (void)didStartFormControlInteraction WK_API_AVAILABLE(ios(10.3));
 - (void)didEndFormControlInteraction WK_API_AVAILABLE(ios(10.3));
 
+- (void)didEnsurePositionInformationIsUpToDate WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
 - (void)_beginInteractiveObscuredInsetsChange;
 - (void)_endInteractiveObscuredInsetsChange;
 - (void)_hideContentUntilNextUpdate;
@@ -762,11 +782,11 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 // Puts the view into a state where being taken out of the view hierarchy and resigning first responder
 // will not count as becoming inactive and unfocused. The returned block must be called to exit the state.
-- (void (^)(void))_retainActiveFocusedState WK_API_AVAILABLE(ios(9_0));
+- (void (^)(void))_retainActiveFocusedState WK_API_AVAILABLE(ios(9.0));
 
-- (void)_becomeFirstResponderWithSelectionMovingForward:(BOOL)selectingForward completionHandler:(void (^)(BOOL didBecomeFirstResponder))completionHandler WK_API_AVAILABLE(ios(9_0));
+- (void)_becomeFirstResponderWithSelectionMovingForward:(BOOL)selectingForward completionHandler:(void (^)(BOOL didBecomeFirstResponder))completionHandler WK_API_AVAILABLE(ios(9.0));
 
-- (id)_snapshotLayerContentsForBackForwardListItem:(WKBackForwardListItem *)item WK_API_AVAILABLE(ios(9_0));
+- (id)_snapshotLayerContentsForBackForwardListItem:(WKBackForwardListItem *)item WK_API_AVAILABLE(ios(9.0));
 
 - (NSArray *)_dataDetectionResults;
 
@@ -923,6 +943,7 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 #if __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
 @property (nonatomic, readonly) NSScrollPocket *_topScrollPocket WK_API_AVAILABLE(macos(26.0));
+@property (nonatomic, setter=_setPrefersSolidColorHardScrollPocket:) BOOL _prefersSolidColorHardScrollPocket WK_API_AVAILABLE(macos(WK_MAC_TBA));
 #endif
 
 - (void)_showWritingTools WK_API_AVAILABLE(macos(15.2));
@@ -930,6 +951,9 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 - (BOOL)_isSmartListsEnabled WK_API_AVAILABLE(macos(WK_MAC_TBA));
 - (void)_setSmartListsEnabled:(BOOL)flag WK_API_AVAILABLE(macos(WK_MAC_TBA));
 - (void)_toggleSmartLists:(id)sender WK_API_AVAILABLE(macos(WK_MAC_TBA));
+
+- (void)_storePrivateClickMeasurementWithSourceID:(uint8_t)sourceID destinationURL:(NSURL *)destinationURL reportEndpoint:(NSURL *)reportEndpoint WK_API_AVAILABLE(macos(WK_MAC_TBA));
+- (void)_storeSimulatedPrivateClickMeasurementConversionWithPriority:(uint8_t)priority triggerData:(uint8_t)triggerData sourceURL:(NSURL *)sourceURL destinationURL:(NSURL *)destinationURL WK_API_AVAILABLE(macos(WK_MAC_TBA));
 
 @end
 

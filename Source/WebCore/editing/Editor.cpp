@@ -38,7 +38,6 @@
 #include "CSSSerializationContext.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
-#include "CachedResourceLoader.h"
 #include "CaretRectComputation.h"
 #include "ChangeListTypeCommand.h"
 #include "Chrome.h"
@@ -58,6 +57,11 @@
 #include "DocumentFragment.h"
 #include "DocumentInlines.h"
 #include "DocumentMarkerController.h"
+#include "DocumentMarkers.h"
+#include "DocumentPage.h"
+#include "DocumentQuirks.h"
+#include "DocumentResourceLoader.h"
+#include "DocumentView.h"
 #include "Editing.h"
 #include "EditorClient.h"
 #include "ElementAncestorIteratorInlines.h"
@@ -66,6 +70,7 @@
 #include "File.h"
 #include "FocusController.h"
 #include "FontAttributes.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameInlines.h"
 #include "FrameLoader.h"
 #include "FrameTree.h"
@@ -90,16 +95,14 @@
 #include "InsertListCommand.h"
 #include "InsertTextCommand.h"
 #include "KeyboardEvent.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "ModifySelectionListLevel.h"
 #include "NodeList.h"
 #include "NodeTraversal.h"
-#include "Page.h"
 #include "PagePasteboardContext.h"
 #include "Pasteboard.h"
-#include "Quirks.h"
 #include "Range.h"
 #include "RemoveFormatCommand.h"
 #include "RenderAncestorIterator.h"
@@ -109,6 +112,7 @@
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectStyle.h"
+#include "RenderStyleInlines.h"
 #include "RenderTextControl.h"
 #include "RenderedDocumentMarker.h"
 #include "RenderedPosition.h"
@@ -124,7 +128,9 @@
 #include "SpellingCorrectionCommand.h"
 #include "StaticPasteboard.h"
 #include "StylePropertiesInlines.h"
+#include "StyleTextShadow.h"
 #include "StyleTreeResolver.h"
+#include "StyleVerticalAlign.h"
 #include "SystemSoundManager.h"
 #include "TelephoneNumberDetector.h"
 #include "Text.h"
@@ -354,6 +360,11 @@ EditorClient* Editor::client() const
 {
     ASSERT(!m_client || !document().page() || m_client == &document().page()->editorClient());
     return m_client.get();
+}
+
+CheckedPtr<EditorClient> Editor::checkedClient() const
+{
+    return client();
 }
 
 TextCheckerClient* Editor::textChecker() const
@@ -827,9 +838,10 @@ bool Editor::shouldInsertText(const String& text, const std::optional<SimpleRang
 void Editor::respondToChangedContents(const VisibleSelection& endingSelection)
 {
     if (AXObjectCache::accessibilityEnabled()) {
-        RefPtr node = endingSelection.start().deprecatedNode();
-        if (AXObjectCache* cache = document().existingAXObjectCache())
-            cache->onEditableTextValueChanged(*node.get());
+        if (RefPtr node = endingSelection.start().deprecatedNode()) {
+            if (AXObjectCache* cache = document().existingAXObjectCache())
+                cache->onEditableTextValueChanged(*node.get());
+        }
     }
 
     updateMarkersForWordsAffectedByEditing(true);
@@ -2251,8 +2263,8 @@ Node* Editor::nodeBeforeWritingSuggestions() const
     if (!container)
         return nullptr;
 
-    if (RefPtr text = dynamicDowncast<Text>(container))
-        return text.get();
+    if (auto* text = dynamicDowncast<Text>(container.get()))
+        return text;
 
     return position.computeNodeBeforePosition();
 }
@@ -2577,8 +2589,8 @@ void Editor::setComposition(const String& text, const Vector<CompositionUnderlin
         RefPtr extentNode = extent.deprecatedNode();
         unsigned extentOffset = extent.deprecatedEditingOffset();
 
-        if (is<Text>(baseNode) && baseNode == extentNode && baseOffset + text.length() == extentOffset) {
-            m_compositionNode = static_pointer_cast<Text>(baseNode);
+        if (RefPtr baseTextNode = dynamicDowncast<Text>(baseNode); baseTextNode && baseNode == extentNode && baseOffset + text.length() == extentOffset) {
+            m_compositionNode = baseTextNode;
             m_compositionStart = baseOffset;
             m_compositionEnd = extentOffset;
             m_customCompositionUnderlines = underlines;
@@ -2598,12 +2610,12 @@ void Editor::setComposition(const String& text, const Vector<CompositionUnderlin
                     range.location += baseOffset;
             }
 
-            if (auto renderer = baseNode->renderer())
+            if (auto renderer = baseTextNode->renderer())
                 renderer->repaint();
 
             unsigned start = std::min(baseOffset + selectionStart, extentOffset);
             unsigned end = std::min(std::max(start, baseOffset + selectionEnd), extentOffset);
-            auto range = SimpleRange { { *baseNode, start }, { *baseNode, end } };
+            auto range = SimpleRange { { *baseTextNode, start }, { *baseTextNode, end } };
             document->selection().setSelectedRange(range, Affinity::Downstream, FrameSelection::ShouldCloseTyping::No);
         }
     }
@@ -3196,6 +3208,16 @@ void Editor::markAllMisspellingsAndBadGrammarInRanges(OptionSet<TextCheckingType
     Vector<TextCheckingResult> results;
     checkTextOfParagraph(*textChecker(), paragraphToCheck.text(), resolvedOptions, results, document().selection().selection());
     markAndReplaceFor(request.releaseNonNull(), results);
+
+#if PLATFORM(COCOA)
+    bool extendedProofreadingEnabled = document().settings().extendedProofreadingEnabled();
+
+    if (shouldMarkGrammar && extendedProofreadingEnabled) {
+        RefPtr extendedRequest = SpellCheckRequest::create(resolvedOptions, TextCheckingProcessType::TextCheckingProcessIncremental, checkingRange, textReplacementRange, paragraphRange);
+        if (extendedRequest)
+            m_spellChecker->requestExtendedCheckingFor(extendedRequest.releaseNonNull(), results);
+    }
+#endif
 }
 
 static bool isAutomaticTextReplacementType(TextCheckingType type)
@@ -4086,42 +4108,17 @@ unsigned Editor::countMatchesForText(const String& target, const std::optional<S
     if (!searchRange)
         searchRange = makeRangeSelectingNodeContents(document);
 
-    auto originalEnd = searchRange->end;
+    auto allMatches = findAllPlainText(*searchRange, target, options - FindOption::Backwards, limit);
 
-    unsigned matchCount = 0;
-    do {
-        auto resultRange = findPlainText(*searchRange, target, options - FindOption::Backwards);
-        if (resultRange.collapsed()) {
-            if (!resultRange.start.container->isInShadowTree())
-                break;
+    if (matches)
+        matches->appendVector(allMatches);
 
-            searchRange->start = makeBoundaryPointAfterNodeContents(*resultRange.start.container->shadowHost());
-            searchRange->end = originalEnd;
-            continue;
-        }
+    if (markMatches) {
+        for (const auto& match : allMatches)
+            addMarker(match, DocumentMarkerType::TextMatch);
+    }
 
-        ++matchCount;
-        if (matches)
-            matches->append(resultRange);
-
-        if (markMatches)
-            addMarker(resultRange, DocumentMarkerType::TextMatch);
-
-        // Stop looking if we hit the specified limit. A limit of 0 means no limit.
-        if (limit > 0 && matchCount >= limit)
-            break;
-
-        // Set the new start for the search range to be the end of the previous result range.
-        // There is no need to use VisiblePosition here: findPlainText will use TextIterator to go over visible text nodes.
-        searchRange->start = WTFMove(resultRange.end);
-
-        if (searchRange->collapsed()) {
-            if (auto shadowTreeRoot = searchRange->start.container->containingShadowRoot())
-                searchRange->end = makeBoundaryPointAfterNodeContents(*shadowTreeRoot);
-        }
-    } while (true);
-
-    return matchCount;
+    return allMatches.size();
 }
 
 void Editor::setMarkedTextMatchesAreHighlighted(bool flag)
@@ -4406,8 +4403,8 @@ bool Editor::selectionStartHasMarkerFor(DocumentMarkerType markerType, int from,
 
     unsigned startOffset = static_cast<unsigned>(from);
     unsigned endOffset = static_cast<unsigned>(from + length);
-    for (auto& marker : markers->markersFor(*node)) {
-        if (marker->startOffset() <= startOffset && endOffset <= marker->endOffset() && marker->type() == markerType)
+    for (auto& marker : markers->markersFor(*node, markerType)) {
+        if (marker->startOffset() <= startOffset && endOffset <= marker->endOffset())
             return true;
     }
 
@@ -4623,10 +4620,11 @@ FontAttributes Editor::fontAttributesAtSelectionStart()
             return FontShadow { };
         },
         [&](const auto& shadows) {
+            const auto& zoomFactor = style->usedZoomForLength();
             return FontShadow {
                 style->colorWithColorFilter(shadows[0].color),
-                { shadows[0].location.x().value, shadows[0].location.y().value },
-                shadows[0].blur.value
+                { shadows[0].location.x().resolveZoom(zoomFactor), shadows[0].location.y().resolveZoom(zoomFactor) },
+                shadows[0].blur.resolveZoom(zoomFactor)
             };
         }
     );
@@ -4647,28 +4645,28 @@ FontAttributes Editor::fontAttributesAtSelectionStart()
     attributes.textLists = editableTextListsAtPositionInDescendingOrder(document().selection().selection().start());
 
     switch (style->textAlign()) {
-    case TextAlignMode::Right:
-    case TextAlignMode::WebKitRight:
+    case Style::TextAlign::Right:
+    case Style::TextAlign::WebKitRight:
         attributes.horizontalAlignment = FontAttributes::HorizontalAlignment::Right;
         break;
-    case TextAlignMode::Left:
-    case TextAlignMode::WebKitLeft:
+    case Style::TextAlign::Left:
+    case Style::TextAlign::WebKitLeft:
         attributes.horizontalAlignment = FontAttributes::HorizontalAlignment::Left;
         break;
-    case TextAlignMode::Center:
-    case TextAlignMode::WebKitCenter:
+    case Style::TextAlign::Center:
+    case Style::TextAlign::WebKitCenter:
         attributes.horizontalAlignment = FontAttributes::HorizontalAlignment::Center;
         break;
-    case TextAlignMode::Justify:
+    case Style::TextAlign::Justify:
         attributes.horizontalAlignment = FontAttributes::HorizontalAlignment::Justify;
         break;
-    case TextAlignMode::Start:
+    case Style::TextAlign::Start:
         if (style->hasExplicitlySetDirection())
             attributes.horizontalAlignment = style->isLeftToRightDirection() ? FontAttributes::HorizontalAlignment::Left : FontAttributes::HorizontalAlignment::Right;
         else
             attributes.horizontalAlignment = FontAttributes::HorizontalAlignment::Natural;
         break;
-    case TextAlignMode::End:
+    case Style::TextAlign::End:
         attributes.horizontalAlignment = style->isLeftToRightDirection() ? FontAttributes::HorizontalAlignment::Right : FontAttributes::HorizontalAlignment::Left;
         break;
     }

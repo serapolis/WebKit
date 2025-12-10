@@ -33,6 +33,7 @@
 #import "ImageBufferSet.h"
 #import "Logging.h"
 #import "PlatformCALayerRemote.h"
+#import "PrepareBackingStoreBuffersData.h"
 #import "RemoteImageBufferSetProxy.h"
 #import "RemoteLayerBackingStoreCollection.h"
 #import "RemoteLayerTreeContext.h"
@@ -42,7 +43,6 @@
 #import "RemoteLayerTreeNode.h"
 #import "RemoteLayerWithInProcessRenderingBackingStore.h"
 #import "RemoteLayerWithRemoteRenderingBackingStore.h"
-#import "SwapBuffersDisplayRequirement.h"
 #import "WebPageProxy.h"
 #import "WebProcess.h"
 #import "WebProcessPool.h"
@@ -84,7 +84,7 @@ public:
         return std::unique_ptr<DelegatedContentsFenceFlusher> { new DelegatedContentsFenceFlusher(WTFMove(fence)) };
     }
 
-    bool flushAndCollectHandles(HashMap<RemoteImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&) final
+    bool flushAndCollectHandles(HashMap<ImageBufferSetIdentifier, std::unique_ptr<BufferSetBackendHandle>>&) final
     {
         return m_fence->waitFor(delegatedContentsFinishedTimeout);
     }
@@ -158,47 +158,21 @@ RemoteLayerBackingStore::ProcessModel RemoteLayerBackingStore::processModelForLa
     return ProcessModel::InProcess;
 }
 
-#if !LOG_DISABLED
-static bool hasValue(const ImageBufferBackendHandle& backendHandle)
-{
-    return WTF::switchOn(backendHandle,
-        [&] (const ShareableBitmap::Handle& handle) {
-            return true;
-        },
-        [&] (const MachSendRight& machSendRight) {
-            return !!machSendRight;
-        }
-#if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
-        , [&] (const WebCore::DynamicContentScalingDisplayList& handle) {
-            return true;
-        }
-#endif
-    );
-}
-#endif
-
 void RemoteLayerBackingStore::encode(IPC::Encoder& encoder) const
 {
-    // FIXME: For simplicity this should be moved to the end of display() once the buffer handles can be created once
-    // and stored in m_bufferHandle. http://webkit.org/b/234169
+    // Only delegated contents encode their handle here. Buffer sets encode their handles
+    // out of line (and on a different thread) using the flushAndCollectHandles method
+    // on their async flusher.
     std::optional<ImageBufferBackendHandle> handle;
     if (m_contentsBufferHandle) {
         ASSERT(m_parameters.type == Type::IOSurface);
         handle = ImageBufferBackendHandle { *m_contentsBufferHandle };
-    } else
-        handle = frontBufferHandle();
-
-    // It would be nice to ASSERT(handle && hasValue(*handle)) here, but when we hit the timeout in RemoteImageBufferProxy::ensureBackendCreated(), we don't have a handle.
-#if !LOG_DISABLED
-    if (!(handle && hasValue(*handle)))
-        LOG_WITH_STREAM(RemoteLayerBuffers, stream << "RemoteLayerBackingStore " << m_layer->layerID() << " encode - no buffer handle; did ensureBackendCreated() time out?");
-#endif
+    }
 
     encoder << WTFMove(handle);
 
     encoder << bufferSetIdentifier();
 
-    encodeBufferAndBackendInfos(encoder);
     encoder << m_contentsRenderingResourceIdentifier;
     encoder << m_previouslyPaintedRect;
 
@@ -211,7 +185,6 @@ void RemoteLayerBackingStore::encode(IPC::Encoder& encoder) const
 #if HAVE(SUPPORT_HDR_DISPLAY)
     encoder << m_maxRequestedEDRHeadroom;
 #endif
-
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteLayerBackingStoreProperties);
@@ -550,6 +523,8 @@ RemoteLayerBackingStoreProperties::LayerContentsBufferInfo RemoteLayerBackingSto
 #endif
                 }
 #endif
+                if (surface->isVolatile())
+                    RELEASE_LOG_ERROR(RemoteLayerTree, "Received volatile IOSurface");
                 contents = surface->asCAIOSurfaceLayerContents();
             }
         }
@@ -695,6 +670,8 @@ RemoteLayerBackingStoreProperties::LayerContentsBufferInfo RemoteLayerBackingSto
             if (surface->pixelFormat() == WebCore::IOSurface::Format::RGBA16F)
                 result.hasExtendedDynamicRange = true;
 #endif
+            if (surface->isVolatile())
+                RELEASE_LOG_ERROR(RemoteLayerTree, "Received volatile IOSurface");
             cachedBuffers.append({ *m_frontBufferInfo, result.buffer, WTFMove(surface) });
         }
     }

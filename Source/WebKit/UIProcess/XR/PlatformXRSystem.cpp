@@ -34,6 +34,7 @@
 #include "PlatformXRSystemProxyMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
+#include <WebCore/ExceptionData.h>
 #include <WebCore/GPUTextureFormat.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/XRCanvasConfiguration.h>
@@ -147,17 +148,20 @@ void PlatformXRSystem::requestPermissionOnSessionFeatures(IPC::Connection& conne
         return;
     }
 
+    if (!PlatformXR::isImmersive(mode)) {
+        completionHandler(granted);
+        return;
+    }
+
     auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
     if (!xrCoordinator) {
         completionHandler(granted);
         return;
     }
 
-    if (PlatformXR::isImmersive(mode)) {
-        MESSAGE_CHECK_COMPLETION(m_immersiveSessionState == ImmersiveSessionState::Idle || m_immersiveSessionState == ImmersiveSessionState::SessionEndingFromWebContent, connection, completionHandler({ }));
-        setImmersiveSessionState(ImmersiveSessionState::RequestingPermissions, [](bool) mutable { });
-        m_immersiveSessionGrantedFeatures = std::nullopt;
-    }
+    MESSAGE_CHECK_COMPLETION(m_immersiveSessionState == ImmersiveSessionState::Idle || m_immersiveSessionState == ImmersiveSessionState::SessionEndingFromWebContent, connection, completionHandler({ }));
+    setImmersiveSessionState(ImmersiveSessionState::RequestingPermissions, [](bool) mutable { });
+    m_immersiveSessionGrantedFeatures = std::nullopt;
 
     xrCoordinator->requestPermissionOnSessionFeatures(*page, securityOriginData, mode, granted, consentRequired, consentOptional, requiredFeaturesRequested, optionalFeaturesRequested, [weakThis = WeakPtr { *this }, mode, securityOriginData, consentRequired, completionHandler = WTFMove(completionHandler)](std::optional<PlatformXR::Device::FeatureList>&& grantedFeatures) mutable {
         ASSERT(RunLoop::isMain());
@@ -268,6 +272,70 @@ void PlatformXRSystem::submitFrame(IPC::Connection& connection)
     }
 }
 
+#if ENABLE(WEBXR_HIT_TEST)
+void PlatformXRSystem::requestHitTestSource(const PlatformXR::HitTestOptions& hitTestOptions, CompletionHandler<void(Expected<PlatformXR::HitTestSource, WebCore::ExceptionData>)>&& passedCompletionHandler)
+{
+    auto completionHandler = [passedCompletionHandler = WTFMove(passedCompletionHandler)](WebCore::ExceptionOr<PlatformXR::HitTestSource> exceptionOrValue) mutable {
+        if (exceptionOrValue.hasException()) {
+            auto exception = exceptionOrValue.releaseException();
+            passedCompletionHandler(makeUnexpected(WebCore::ExceptionData { exception.code(), exception.releaseMessage() }));
+        } else
+            passedCompletionHandler(exceptionOrValue.releaseReturnValue());
+    };
+    RefPtr page = m_page.get();
+    if (!page) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
+    if (!xrCoordinator) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    xrCoordinator->requestHitTestSource(*page, hitTestOptions, WTFMove(completionHandler));
+}
+
+void PlatformXRSystem::deleteHitTestSource(PlatformXR::HitTestSource source)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+    if (auto* xrCoordinator = PlatformXRSystem::xrCoordinator())
+        xrCoordinator->deleteHitTestSource(*page, source);
+}
+
+void PlatformXRSystem::requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions& hitTestOptions, CompletionHandler<void(Expected<PlatformXR::TransientInputHitTestSource, WebCore::ExceptionData>)>&& passedCompletionHandler)
+{
+    auto completionHandler = [passedCompletionHandler = WTFMove(passedCompletionHandler)](WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource> exceptionOrValue) mutable {
+        if (exceptionOrValue.hasException()) {
+            auto exception = exceptionOrValue.releaseException();
+            passedCompletionHandler(makeUnexpected(WebCore::ExceptionData { exception.code(), exception.releaseMessage() }));
+        } else
+            passedCompletionHandler(exceptionOrValue.releaseReturnValue());
+    };
+    RefPtr page = m_page.get();
+    if (!page) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
+    if (!xrCoordinator) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    xrCoordinator->requestTransientInputHitTestSource(*page, hitTestOptions, WTFMove(completionHandler));
+}
+
+void PlatformXRSystem::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
+{
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+    if (auto* xrCoordinator = PlatformXRSystem::xrCoordinator())
+        xrCoordinator->deleteTransientInputHitTestSource(*page, source);
+}
+#endif
+
 void PlatformXRSystem::didCompleteShutdownTriggeredBySystem(IPC::Connection& connection)
 {
     ASSERT(RunLoop::isMain());
@@ -316,7 +384,7 @@ void PlatformXRSystem::setImmersiveSessionState(ImmersiveSessionState state, Com
     m_immersiveSessionState = state;
 #if PLATFORM(COCOA)
     RefPtr page = m_page.get();
-    if (!page) {
+    if (!page || page->isClosed()) {
         completion(false);
         return;
     }

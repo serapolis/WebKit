@@ -36,7 +36,8 @@
 #import "Texture.h"
 #import "TextureView.h"
 #if ENABLE(WEBGPU_SWIFT)
-#import "WebGPUSwiftInternal.h"
+#import "CxxBridging.h"
+#import "WebGPUSwift-Generated.h"
 #endif
 #import <simd/simd.h>
 #import <wtf/CheckedArithmetic.h>
@@ -505,12 +506,17 @@ static std::pair<uint32_t, uint16_t> maxIndexValue(std::span<uint8_t> data)
     std::span<simd::ushort32> dataUshort = unsafeMakeSpan(static_cast<simd::ushort32*>(static_cast<void*>(data.data())), lengthUint32);
     simd::uint16 maxValue = dataUint.front();
     simd::ushort32 maxUshort = dataUshort.front();
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpsabi"
     for (auto dataUintV : dataUint)
         maxValue = simd_max(maxValue, dataUintV);
     for (auto dataUshortV : dataUshort)
         maxUshort = simd_max(maxUshort, dataUshortV);
 
     auto result = std::make_pair(simd_reduce_max(maxValue), simd_reduce_max(maxUshort));
+#pragma clang diagnostic pop
+
     if (divResult.rem) {
         auto slowResult = maxIndexValueSlow(data.subspan(blockSize * divResult.quot));
         result.first = std::max(result.first, slowResult.first);
@@ -571,12 +577,6 @@ void Queue::writeBuffer(Buffer& buffer, uint64_t bufferOffset, std::span<uint8_t
             return;
         }
     }
-#if ENABLE(WEBGPU_SWIFT)
-    if (isWebGPUSwiftEnabled()) {
-        WebGPU::writeBuffer(this, &buffer, bufferOffset, data);
-        return;
-    }
-#endif
     writeBuffer(buffer.buffer(), bufferOffset, data);
 }
 
@@ -609,6 +609,13 @@ std::pair<id<MTLBuffer>, uint64_t> Queue::newTemporaryBufferWithBytes(std::span<
 
 void Queue::writeBuffer(id<MTLBuffer> buffer, uint64_t bufferOffset, std::span<uint8_t> data)
 {
+#if ENABLE(WEBGPU_SWIFT)
+    if (isWebGPUSwiftEnabled()) {
+        Queue_writeBuffer_thunk(this, buffer, bufferOffset, data);
+        return;
+    }
+#endif
+
     auto device = m_device.get();
     if (!device)
         return;
@@ -690,7 +697,7 @@ const Device& Queue::device() const
 {
     auto device = m_device.get();
     RELEASE_ASSERT(device);
-    return *device;
+    return *device.unsafeGet();
 }
 
 void Queue::clearTextureIfNeeded(const WGPUImageCopyTexture& destination, NSUInteger slice)
@@ -1263,6 +1270,11 @@ void Queue::clearTextureIfNeeded(Texture& parentTexture, uint32_t mipLevelCount,
         }
     }
     finalizeBlitCommandEncoder();
+}
+
+id<MTLDevice> Queue::metalDevice() const
+{
+    return device().device();
 }
 
 } // namespace WebGPU

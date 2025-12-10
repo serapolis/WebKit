@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,7 @@
 #include <wtf/Locker.h>
 #include <wtf/Logger.h>
 #include <wtf/Ref.h>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -51,15 +52,6 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/MakeString.h>
-
-namespace WTF {
-class NativePromiseRequest;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WTF::NativePromiseRequest> : std::true_type { };
-}
 
 namespace WTF {
 
@@ -285,12 +277,14 @@ public:
 
 class ConvertibleToNativePromise { };
 
-class NativePromiseRequest :  public CanMakeWeakPtr<NativePromiseRequest> {
+class NativePromiseRequest final : public RefCountedAndCanMakeWeakPtr<NativePromiseRequest> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NativePromiseRequest);
 public:
-    NativePromiseRequest() = default;
-    NativePromiseRequest(NativePromiseRequest&& other) = default;
-    NativePromiseRequest& operator=(NativePromiseRequest&& other) = default;
+    static Ref<NativePromiseRequest> create()
+    {
+        return adoptRef(*new NativePromiseRequest);
+    }
+
     ~NativePromiseRequest()
     {
         ASSERT(!m_callback, "complete() or disconnect() wasn't called");
@@ -309,7 +303,7 @@ public:
         m_callback = WTFMove(callback);
     }
 
-    explicit operator bool() const { return !!m_callback; }
+    bool hasCallback() const { return !!m_callback; }
 
     void complete()
     {
@@ -328,6 +322,8 @@ public:
     }
 
 private:
+    NativePromiseRequest() = default;
+
     RefPtr<Callback> m_callback;
 };
 
@@ -1016,7 +1012,7 @@ private:
         using ThenCallbackType = ThenCallback<false, void>;
         using ReturnType = ThenCommand<ThenCallbackType>;
 
-        auto thenCallback = adoptRef(*new ThenCallbackType(RefPtr<GuaranteedSerialFunctionDispatcher> { }, WTFMove(settleFunction), callSite));
+        auto thenCallback = adoptRef(*new ThenCallbackType(RefPtr<GuaranteedSerialFunctionDispatcher> { }, std::forward<SettleFunction>(settleFunction), callSite));
         return ReturnType(*this, WTFMove(thenCallback), callSite);
     }
 
@@ -1342,7 +1338,7 @@ public:
     explicit NativePromiseProducer(RejectValueT_&& defaulReject, PromiseDispatchMode dispatchMode = PromiseDispatchMode::Default, const Logger::LogSiteIdentifier& creationSite = DEFAULT_LOGSITEIDENTIFIER)
         : m_promise(adoptRef(new PromiseType(creationSite)))
         , m_creationSite(creationSite)
-        , m_defaultReject(WTFMove(defaulReject))
+        , m_defaultReject(std::forward<RejectValueT_>(defaulReject))
     {
         if constexpr (PromiseType::IsExclusive)
             m_promise->setDispatchMode(dispatchMode, creationSite);
@@ -1430,7 +1426,7 @@ public:
             return;
         }
         if constexpr (PromiseType::IsExclusive && std::is_invocable_r_v<typename PromiseType::Result, SettleValue>)
-            protectedPromise()->settleWithFunction(WTFMove(result), site);
+            protectedPromise()->settleWithFunction(std::forward<SettleValue>(result), site);
         else
             protectedPromise()->settle(std::forward<SettleValue>(result), site);
     }
@@ -1510,7 +1506,7 @@ public:
     template<typename RejectValueType_, typename = std::enable_if<AutoRejectNonVoid>>
     void setDefaultReject(RejectValueType_&& rejectValue)
     {
-        m_defaultReject = WTFMove(rejectValue);
+        m_defaultReject = std::forward<RejectValueType_>(rejectValue);
     }
 
 private:
@@ -1569,14 +1565,14 @@ static auto invokeAsync(SerialFunctionDispatcher& targetQueue, Function&& functi
     if constexpr (IsConvertibleToNativePromise<ReturnTypeNoRef>) {
         typename ReturnTypeNoRef::PromiseType::Producer proxyPromiseProducer(PromiseDispatchMode::Default, callerName);
         auto promise = proxyPromiseProducer.promise();
-        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = WTFMove(function)] () mutable {
+        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = std::forward<Function>(function)] () mutable {
             static_cast<Ref<typename ReturnTypeNoRef::PromiseType>>(function())->chainTo(WTFMove(producer), { "invokeAsync proxy", 0 });
         });
         return promise;
     } else if constexpr (std::is_void_v<ReturnType>) {
         GenericPromise::Producer proxyPromiseProducer(PromiseDispatchMode::Default, callerName);
         auto promise = proxyPromiseProducer.promise();
-        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = WTFMove(function)] () mutable {
+        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = std::forward<Function>(function)] () mutable {
             function();
             producer.resolve({ "invokeAsync proxy", 0 });
         });
@@ -1584,7 +1580,7 @@ static auto invokeAsync(SerialFunctionDispatcher& targetQueue, Function&& functi
     } else {
         NativePromiseProducer<typename ReturnType::value_type, typename ReturnType::error_type> proxyPromiseProducer(PromiseDispatchMode::Default, callerName);
         auto promise = proxyPromiseProducer.promise();
-        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = WTFMove(function)] () mutable {
+        targetQueue.dispatch([producer = WTFMove(proxyPromiseProducer), function = std::forward<Function>(function)] () mutable {
             createSettledPromise(function())->chainTo(WTFMove(producer), { "invokeAsync proxy", 0 });
         });
         return promise;

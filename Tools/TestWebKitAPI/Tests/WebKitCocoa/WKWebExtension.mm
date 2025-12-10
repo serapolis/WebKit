@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -242,10 +242,7 @@ TEST(WKWebExtension, MultipleIconSizes)
 
     auto screenScale = 1.0;
 #if PLATFORM(IOS_FAMILY)
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    // FIXME: <rdar://155548417> ([ Build-Failure ] [ iOS26+ ] error: 'mainScreen' is deprecated: first deprecated in iOS 26.0)
-    screenScale = UIScreen.mainScreen.scale;
-ALLOW_DEPRECATED_DECLARATIONS_END
+    screenScale = UITraitCollection.currentTraitCollection.displayScale;
 #else
     screenScale = NSScreen.mainScreen.backingScaleFactor;
 #endif
@@ -362,6 +359,48 @@ TEST(WKWebExtension, SymbolImageIcon)
 
         @"action": @{
             @"default_icon": @"symbol:heart.fill"
+        }
+    };
+
+    auto testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:@{ }];
+    EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
+
+    auto *icon = [testExtension iconForSize:CGSizeMake(16, 16)];
+    EXPECT_NOT_NULL(icon);
+#if PLATFORM(MAC)
+    EXPECT_TRUE([icon isKindOfClass:NSImage.class]);
+    EXPECT_TRUE(icon._isSymbolImage);
+#else
+    EXPECT_TRUE([icon isKindOfClass:UIImage.class]);
+    EXPECT_TRUE(icon.isSymbolImage);
+#endif
+
+    auto *actionIcon = [testExtension actionIconForSize:CGSizeMake(16, 16)];
+    EXPECT_NOT_NULL(actionIcon);
+#if PLATFORM(MAC)
+    EXPECT_TRUE([actionIcon isKindOfClass:NSImage.class]);
+    EXPECT_TRUE(actionIcon._isSymbolImage);
+#else
+    EXPECT_TRUE([actionIcon isKindOfClass:UIImage.class]);
+    EXPECT_TRUE(actionIcon.isSymbolImage);
+#endif
+}
+
+TEST(WKWebExtension, PrivateSymbolImageIcon)
+{
+    auto *testManifestDictionary = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test",
+        @"version": @"1.0",
+        @"description": @"Test",
+
+        @"icons": @{
+            @"16": @"symbol:moon.and.stars.artframe"
+        },
+
+        @"action": @{
+            @"default_icon": @"symbol:person.lanyardcard.fill"
         }
     };
 
@@ -894,6 +933,12 @@ TEST(WKWebExtension, ActionParsing)
     EXPECT_NS_EQUAL(testExtension.errors, @[ ]);
     EXPECT_NULL(testExtension.displayActionLabel);
     EXPECT_NULL([testExtension actionIconForSize:NSMakeSize(16, 16)]);
+
+    // Invalid cases
+
+    testManifestDictionary = @{ @"manifest_version": @3, @"name": @"Test", @"description": @"Test", @"version": @"1.0", @"action": @{ @"default_title": @"Button Title", @"default_icon": @"test.png" } };
+    testExtension = [[WKWebExtension alloc] _initWithManifestDictionary:testManifestDictionary resources:@{ }];
+    EXPECT_EQ(testExtension.errors.count, 2ul);
 }
 
 TEST(WKWebExtension, ContentScriptsParsing)
@@ -2488,6 +2533,185 @@ TEST(WKWebExtension, ContentScriptImport)
     [manager runUntilTestMessage:@"Load Tab"];
 
     [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtension, ContentScriptNotInjectedForExcludedMatchPattern)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/test"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    static auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Extension",
+        @"description": @"Test Extension",
+        @"version": @"1.0",
+
+        @"background": @{
+            @"scripts": @[ @"background.js" ],
+            @"persistent": @NO
+        },
+
+        @"content_scripts": @[@{
+            @"matches": @[ @"*://*/*" ],
+            @"js": @[ @"content.js" ],
+            @"exclude_matches": @[@"*://*/test"]
+        }]
+    };
+
+    static auto *contentScript = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Hello from content script')"
+    ]);
+
+    static auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener((message, sender) => {",
+        @"  browser.test.notifyFail('Content script should not have been injected.')",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')",
+
+        @"setTimeout(() => {",
+        @"  browser.test.notifyPass()",
+        @"}, 1000)"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"content.js": contentScript
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    auto *url = server.requestWithLocalhost("/test"_s).URL;
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:url];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:[NSURLRequest requestWithURL:url]];
+
+    [manager run];
+}
+
+TEST(WKWebExtension, MultipleContentScriptsInjectedWhenMatched)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/only-this-path"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    static auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Extension",
+        @"version": @"1.0",
+
+        @"background": @{
+            @"scripts": @[ @"background.js" ],
+            @"persistent": @NO
+        },
+
+        @"content_scripts": @[@{
+            @"matches": @[ @"*://*/only-this-path" ],
+            @"js": @[ @"scriptA.js", @"scriptB.js" ]
+        }]
+    };
+
+    static auto *scriptA = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Script A ran')"
+    ]);
+
+    static auto *scriptB = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Script B ran')"
+    ]);
+
+    static auto *backgroundScript = Util::constructScript(@[
+        @"let seen = new Set()",
+
+        @"browser.runtime.onMessage.addListener((message, sender) => {",
+        @"  seen.add(message)",
+        @"  if (seen.has('Script A ran') && seen.has('Script B ran'))",
+        @"      browser.test.notifyPass()",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"scriptA.js": scriptA,
+        @"scriptB.js": scriptB
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    auto *url = server.requestWithLocalhost("/only-this-path"_s).URL;
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:url];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:[NSURLRequest requestWithURL:url]];
+
+    [manager run];
+}
+
+TEST(WKWebExtension, MultipleContentScriptsNotInjectedWhenNotMatched)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/non-matching"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } }
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    static auto *manifest = @{
+        @"manifest_version": @3,
+
+        @"name": @"Test Extension",
+        @"description": @"Test Extension",
+        @"version": @"1.0",
+
+        @"background": @{
+            @"scripts": @[ @"background.js" ],
+            @"persistent": @NO
+        },
+
+        @"content_scripts": @[@{
+            @"matches": @[ @"*://*/only-this-path" ],
+            @"js": @[ @"scriptA.js", @"scriptB.js" ]
+        }]
+    };
+
+    static auto *scriptA = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Script A ran')"
+    ]);
+
+    static auto *scriptB = Util::constructScript(@[
+        @"browser.runtime.sendMessage('Script B ran')"
+    ]);
+
+    static auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener((message, sender) => {",
+        @"  browser.test.notifyFail(`No content scripts should have injected, but got: ${message}`)",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')",
+
+        @"setTimeout(() => browser.test.notifyPass(), 1000)"
+    ]);
+
+    auto *resources = @{
+        @"background.js": backgroundScript,
+        @"scriptA.js": scriptA,
+        @"scriptB.js": scriptB
+    };
+
+    auto manager = Util::loadExtension(manifest, resources);
+
+    auto *url = server.requestWithLocalhost("/non-matching"_s).URL;
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:url];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:[NSURLRequest requestWithURL:url]];
 
     [manager run];
 }

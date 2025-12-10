@@ -73,7 +73,7 @@ GStreamerRTPPacketizer::~GStreamerRTPPacketizer() = default;
 
 void GStreamerRTPPacketizer::configureExtensions()
 {
-    if (!webkitGstCheckVersion(1, 24, 0)) {
+    if (!gst_check_version(1, 24, 0)) {
         GST_WARNING_OBJECT(m_bin.get(), "GStreamer 1.24 is required for configuring extensions on the RTP payloaders. Simulcast will not work.");
         return;
     }
@@ -118,7 +118,7 @@ void GStreamerRTPPacketizer::configureExtensions()
 
 void GStreamerRTPPacketizer::ensureMidExtension(const String& mid)
 {
-    if (!webkitGstCheckVersion(1, 24, 0)) {
+    if (!gst_check_version(1, 24, 0)) {
         GST_WARNING_OBJECT(m_bin.get(), "GStreamer 1.24 is required for ensuring mid extension on the RTP payloaders.");
         return;
     }
@@ -143,7 +143,7 @@ void GStreamerRTPPacketizer::ensureMidExtension(const String& mid)
 
         m_midExtension = extension;
         GST_DEBUG_OBJECT(m_bin.get(), "Using mid extension %" GST_PTR_FORMAT, m_midExtension.get());
-        g_object_set(extension, "mid", mid.utf8().data(), nullptr);
+        g_object_set(extension, "mid", mid.ascii().data(), nullptr);
         GST_DEBUG_OBJECT(m_bin.get(), "Existing mid extension updated with mid %s", mid.utf8().data());
         break;
     }
@@ -177,7 +177,7 @@ String GStreamerRTPPacketizer::rtpStreamId() const
         return emptyString();
 
     if (auto rid = gstStructureGetString(m_encodingParameters.get(), "rid"_s))
-        return rid.toString();
+        return rid.span();
 
     return emptyString();
 }

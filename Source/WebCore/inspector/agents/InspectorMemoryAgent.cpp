@@ -52,32 +52,34 @@ InspectorMemoryAgent::~InspectorMemoryAgent() = default;
 
 void InspectorMemoryAgent::didCreateFrontendAndBackend()
 {
-    m_instrumentingAgents.setPersistentMemoryAgent(this);
+    Ref { m_instrumentingAgents.get() }->setPersistentMemoryAgent(this);
 }
 
 void InspectorMemoryAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
     disable();
 
-    m_instrumentingAgents.setPersistentMemoryAgent(nullptr);
+    Ref { m_instrumentingAgents.get() }->setPersistentMemoryAgent(nullptr);
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::enable()
 {
-    if (m_instrumentingAgents.enabledMemoryAgent() == this)
+    Ref agents = m_instrumentingAgents.get();
+    if (agents->enabledMemoryAgent() == this)
         return makeUnexpected("Memory domain already enabled"_s);
 
-    m_instrumentingAgents.setEnabledMemoryAgent(this);
+    agents->setEnabledMemoryAgent(this);
 
     return { };
 }
 
 Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::disable()
 {
-    if (m_instrumentingAgents.enabledMemoryAgent() != this)
+    Ref agents = m_instrumentingAgents.get();
+    if (agents->enabledMemoryAgent() != this)
         return makeUnexpected("Memory domain already disabled"_s);
 
-    m_instrumentingAgents.setEnabledMemoryAgent(nullptr);
+    agents->setEnabledMemoryAgent(nullptr);
 
     m_tracking = false;
 
@@ -97,7 +99,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::startTracking()
 
     m_tracking = true;
 
-    m_frontendDispatcher->trackingStart(m_environment.executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingStart(checkedEnvironment()->executionStopwatch().elapsedTime().seconds());
 
     return { };
 }
@@ -111,7 +113,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::stopTracking()
 
     m_tracking = false;
 
-    m_frontendDispatcher->trackingComplete(m_environment.executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingComplete(checkedEnvironment()->executionStopwatch().elapsedTime().seconds());
 
     return { };
 }
@@ -119,7 +121,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::stopTracking()
 void InspectorMemoryAgent::didHandleMemoryPressure(Critical critical)
 {
     MemoryFrontendDispatcher::Severity severity = critical == Critical::Yes ? MemoryFrontendDispatcher::Severity::Critical : MemoryFrontendDispatcher::Severity::NonCritical;
-    m_frontendDispatcher->memoryPressure(m_environment.executionStopwatch().elapsedTime().seconds(), Inspector::Protocol::Helpers::getEnumConstantValue(severity));
+    m_frontendDispatcher->memoryPressure(checkedEnvironment()->executionStopwatch().elapsedTime().seconds(), Inspector::Protocol::Helpers::getEnumConstantValue(severity));
 }
 
 void InspectorMemoryAgent::collectSample(const ResourceUsageData& data)
@@ -163,7 +165,7 @@ void InspectorMemoryAgent::collectSample(const ResourceUsageData& data)
     categories->addItem(WTFMove(otherCategory));
 
     auto event = Inspector::Protocol::Memory::Event::create()
-        .setTimestamp(m_environment.executionStopwatch().elapsedTimeSince(data.timestamp).seconds())
+        .setTimestamp(checkedEnvironment()->executionStopwatch().elapsedTimeSince(data.timestamp).seconds())
         .setCategories(WTFMove(categories))
         .release();
 

@@ -46,10 +46,6 @@ DeviceController::~DeviceController() = default;
 
 void DeviceController::addDeviceEventListener(LocalDOMWindow& window)
 {
-    RefPtr document = window.document();
-    if (!document)
-        return;
-
     bool wasEmpty = m_listeners.isEmpty();
     m_listeners.add(&window);
 
@@ -60,7 +56,7 @@ void DeviceController::addDeviceEventListener(LocalDOMWindow& window)
     }
 
     if (wasEmpty)
-        checkedClient()->startUpdating(document->securityOrigin().data());
+        checkedClient()->startUpdating();
 }
 
 void DeviceController::removeDeviceEventListener(LocalDOMWindow& window)
@@ -101,7 +97,7 @@ void DeviceController::fireDeviceEvent()
     auto listenerVector = copyToVector(m_lastEventListeners.values());
     m_lastEventListeners.clear();
     for (auto& listener : listenerVector) {
-        auto document = listener->document();
+        RefPtr document = listener->document();
         if (document && !document->activeDOMObjectsAreSuspended() && !document->activeDOMObjectsAreStopped()) {
             if (RefPtr lastEvent = getLastEvent())
                 listener->dispatchEvent(*lastEvent);

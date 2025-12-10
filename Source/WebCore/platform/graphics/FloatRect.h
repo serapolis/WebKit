@@ -122,6 +122,13 @@ public:
     }
     void contract(float dw, float dh) { m_size.expand(-dw, -dh); }
 
+    void shiftEdgesTo(float left, float top, float right, float bottom)
+    {
+        m_location.set(left, top);
+        m_size.setWidth(right - left);
+        m_size.setHeight(bottom - top);
+    }
+
     void shiftXEdgeTo(float edge)
     {
         float delta = edge - x();
@@ -250,13 +257,6 @@ public:
 private:
     FloatPoint m_location;
     FloatSize m_size;
-
-    void setLocationAndSizeFromEdges(float left, float top, float right, float bottom)
-    {
-        m_location.set(left, top);
-        m_size.setWidth(right - left);
-        m_size.setHeight(bottom - top);
-    }
 };
 
 inline FloatRect intersection(const FloatRect& a, const FloatRect& b)

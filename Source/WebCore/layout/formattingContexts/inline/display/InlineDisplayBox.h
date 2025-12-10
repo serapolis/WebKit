@@ -81,7 +81,8 @@ struct Box {
         AtomicInlineBox,
         NonRootInlineBox,
         RootInlineBox,
-        GenericInlineLevelBox
+        GenericInlineLevelBox,
+        BlockLevelBox,
     };
     struct Expansion;
     enum class PositionWithinInlineLevelBox : uint8_t {
@@ -104,6 +105,7 @@ struct Box {
     bool isRootInlineBox() const { return m_type == Type::RootInlineBox; }
     bool isGenericInlineLevelBox() const { return m_type == Type::GenericInlineLevelBox; }
     bool isInlineLevelBox() const { return isAtomicInlineBox() || isLineBreakBox() || isInlineBox() || isGenericInlineLevelBox(); }
+    bool isBlockLevelBox() const { return m_type == Type::BlockLevelBox; }
     bool isNonRootInlineLevelBox() const { return isInlineLevelBox() && !isRootInlineBox(); }
 
     UBiDiLevel bidiLevel() const { return m_bidiLevel; }
@@ -111,7 +113,8 @@ struct Box {
     inline bool isHorizontal() const;
 
     bool hasContent() const { return m_hasContent; }
-    bool isVisible() const { return !isFullyTruncated() && style().usedVisibility() == Visibility::Visible; }
+    inline bool isVisible() const;
+    // Inline boxes around blocks are visible to hit testing but don't paint.
     bool isVisibleIgnoringUsedVisibility() const { return !isFullyTruncated() && style().visibility() == Visibility::Visible; }
     bool isFullyTruncated() const { return m_isFullyTruncated; } 
 

@@ -154,6 +154,11 @@ void PageConfiguration::setInitialSandboxFlags(WebCore::SandboxFlags sandboxFlag
     m_data.initialSandboxFlags = sandboxFlags;
 }
 
+void PageConfiguration::setInitialReferrerPolicy(WebCore::ReferrerPolicy referrerPolicy)
+{
+    m_data.initialReferrerPolicy = referrerPolicy;
+}
+
 WebProcessPool& PageConfiguration::processPool() const
 {
     return m_data.processPool.get();
@@ -367,10 +372,10 @@ bool PageConfiguration::lockdownModeEnabled() const
     return lockdownModeEnabledBySystem();
 }
 
-bool PageConfiguration::enhancedSecurityEnabled() const
+bool PageConfiguration::isEnhancedSecurityEnabled() const
 {
     if (RefPtr policies = m_data.defaultWebsitePolicies.getIfExists())
-        return policies->enhancedSecurityEnabled();
+        return policies->isEnhancedSecurityEnabled();
     return false;
 }
 

@@ -464,7 +464,7 @@ inline CapabilityLevel canCompile(Node* node)
     case MultiGetByVal:
     case MultiPutByVal:
     case PutByVal:
-    case PutByValAlias:
+    case PutByValDirectResolved:
     case PutByValMegamorphic:
     case PutByValDirect:
     case PutByValWithThis:
@@ -494,6 +494,12 @@ inline CapabilityLevel canCompile(Node* node)
     case DateGetInt32OrNaN:
     case DateGetTime:
     case DateSetTime:
+    case ResolvePromiseFirstResolving:
+    case RejectPromiseFirstResolving:
+    case FulfillPromiseFirstResolving:
+    case PromiseResolve:
+    case PromiseReject:
+    case PromiseThen:
         // These are OK.
         break;
 
@@ -601,6 +607,7 @@ CapabilityLevel canCompile(Graph& graph)
                 case AnyIntUse:
                 case DoubleRepAnyIntUse:
                 case NotDoubleUse:
+                case NotOtherUse:
                 case NeitherDoubleNorHeapBigIntUse:
                 case NeitherDoubleNorHeapBigIntNorStringUse:
                     // These are OK.

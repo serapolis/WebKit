@@ -159,7 +159,7 @@ ASVInlinePreview * ModelElementController::previewForModelIdentifier(ModelIdenti
     if (!webPageProxy || !webPageProxy->protectedPreferences()->modelElementEnabled())
         return nullptr;
 
-    return m_inlinePreviews.get(modelIdentifier.uuid).get();
+    return m_inlinePreviews.get(modelIdentifier.uuid);
 }
 
 void ModelElementController::modelElementCreateRemotePreview(String uuid, WebCore::FloatSize size, CompletionHandler<void(Expected<std::pair<String, uint32_t>, WebCore::ResourceError>)>&& completionHandler)
@@ -320,7 +320,8 @@ void ModelElementController::modelElementSizeDidChange(const String& uuid, WebCo
                 return;
             }
 
-            auto fenceSendRight = MachSendRight::adopt([strongFenceHandle copyPort]);
+            // FIXME: This is a safer cpp false positive.
+            SUPPRESS_RETAINPTR_CTOR_ADOPT auto fenceSendRight = MachSendRight::adopt([strongFenceHandle copyPort]);
             [strongFenceHandle invalidate];
             handler(WTFMove(fenceSendRight));
         });

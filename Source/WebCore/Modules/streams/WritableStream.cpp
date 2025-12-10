@@ -102,6 +102,25 @@ void WritableStream::errorIfPossible(Exception&& e)
     m_internalWritableStream->errorIfPossible(WTFMove(e));
 }
 
+void WritableStream::errorIfPossible(JSC::JSGlobalObject& globalObject, JSC::JSValue reason)
+{
+    m_internalWritableStream->errorIfPossible(globalObject, reason);
+}
+
+WritableStream::State WritableStream::state() const
+{
+    auto* globalObject = m_internalWritableStream->globalObject();
+    if (!globalObject)
+        return State::Errored;
+
+    auto state = m_internalWritableStream->state(*globalObject);
+    if (state == "writable"_s)
+        return State::Writable;
+    if (state == "closed"_s)
+        return State::Closed;
+    return State::Errored;
+}
+
 JSC::JSValue JSWritableStream::abort(JSC::JSGlobalObject& globalObject, JSC::CallFrame& callFrame)
 {
     return wrapped().internalWritableStream().abortForBindings(globalObject, callFrame.argument(0));

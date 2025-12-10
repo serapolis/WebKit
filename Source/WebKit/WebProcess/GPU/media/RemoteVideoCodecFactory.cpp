@@ -38,7 +38,6 @@ namespace WebKit {
 class RemoteVideoDecoderCallbacks : public ThreadSafeRefCounted<RemoteVideoDecoderCallbacks> {
 public:
     static Ref<RemoteVideoDecoderCallbacks> create(WebCore::VideoDecoder::OutputCallback&& outputCallback) { return adoptRef(*new RemoteVideoDecoderCallbacks(WTFMove(outputCallback))); }
-    ~RemoteVideoDecoderCallbacks() = default;
 
     void notifyDecodingResult(RefPtr<WebCore::VideoFrame>&&, int64_t timestamp);
 
@@ -74,7 +73,6 @@ private:
 class RemoteVideoEncoderCallbacks : public ThreadSafeRefCounted<RemoteVideoEncoderCallbacks> {
 public:
     static Ref<RemoteVideoEncoderCallbacks> create(WebCore::VideoEncoder::DescriptionCallback&& descriptionCallback, WebCore::VideoEncoder::OutputCallback&& outputCallback) { return adoptRef(*new RemoteVideoEncoderCallbacks(WTFMove(descriptionCallback), WTFMove(outputCallback))); }
-    ~RemoteVideoEncoderCallbacks() = default;
 
     void notifyEncodedChunk(Vector<uint8_t>&&, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration, std::optional<unsigned> temporalIndex);
     void notifyEncoderDescription(WebCore::VideoEncoderActiveConfiguration&&);
@@ -119,9 +117,7 @@ RemoteVideoCodecFactory::RemoteVideoCodecFactory(WebProcess& process)
     WebCore::VideoEncoder::setCreatorCallback(RemoteVideoCodecFactory::createEncoder);
 }
 
-RemoteVideoCodecFactory::~RemoteVideoCodecFactory()
-{
-}
+RemoteVideoCodecFactory::~RemoteVideoCodecFactory() = default;
 
 static bool shouldUseLocalDecoder(std::optional<WebCore::VideoCodecType> type, const WebCore::VideoDecoder::Config& config)
 {
@@ -172,7 +168,7 @@ void RemoteVideoCodecFactory::createEncoder(const String& codec, const WebCore::
     std::map<std::string, std::string> parameters;
     if (type == WebCore::VideoCodecType::H264) {
         if (auto position = codec.find('.');position != notFound && position != codec.length()) {
-            auto profileLevelId = spanReinterpretCast<const char>(codec.span8().subspan(position + 1));
+            auto profileLevelId = byteCast<char>(codec.span8().subspan(position + 1));
             parameters["profile-level-id"] = std::string(profileLevelId.data(), profileLevelId.size());
         }
     }

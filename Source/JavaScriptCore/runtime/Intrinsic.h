@@ -61,6 +61,7 @@ namespace JSC {
     macro(ArrayValuesIntrinsic) \
     macro(ArrayKeysIntrinsic) \
     macro(ArrayEntriesIntrinsic) \
+    macro(ArrayConstructorOfIntrinsic) \
     macro(AsyncIteratorIntrinsic) \
     macro(BooleanConstructorIntrinsic) \
     macro(CharCodeAtIntrinsic) \
@@ -107,12 +108,14 @@ namespace JSC {
     macro(ObjectGetOwnPropertyNamesIntrinsic) \
     macro(ObjectGetOwnPropertySymbolsIntrinsic) \
     macro(ObjectGetPrototypeOfIntrinsic) \
+    macro(ObjectHasOwnIntrinsic) \
     macro(ObjectIsIntrinsic) \
     macro(ObjectKeysIntrinsic) \
     macro(ObjectToStringIntrinsic) \
     macro(ReflectGetPrototypeOfIntrinsic) \
     macro(ReflectOwnKeysIntrinsic) \
     macro(StringConstructorIntrinsic) \
+    macro(StringPrototypeConcatIntrinsic) \
     macro(StringPrototypeAtIntrinsic) \
     macro(StringPrototypeCodePointAtIntrinsic) \
     macro(StringPrototypeIndexOfIntrinsic) \
@@ -198,8 +201,16 @@ namespace JSC {
     macro(IteratorHelperCreateIntrinsic) \
     macro(WrapForValidIteratorCreateIntrinsic) \
     macro(AsyncFromSyncIteratorCreateIntrinsic) \
-    macro(PromiseAllContextCreateIntrinsic) \
     macro(RegExpStringIteratorCreateIntrinsic) \
+    macro(ResolvePromiseWithFirstResolvingFunctionCallCheckIntrinsic) \
+    macro(RejectPromiseWithFirstResolvingFunctionCallCheckIntrinsic) \
+    macro(FulfillPromiseWithFirstResolvingFunctionCallCheckIntrinsic) \
+    macro(PromiseConstructorResolveIntrinsic) \
+    macro(PromiseResolveIntrinsic) \
+    macro(PromiseConstructorRejectIntrinsic) \
+    macro(PromiseRejectIntrinsic) \
+    macro(PromisePrototypeThenIntrinsic) \
+    macro(PromisePrototypeCatchIntrinsic) \
     \
     /* Getter intrinsics. */ \
     macro(TypedArrayLengthIntrinsic) \
@@ -265,5 +276,3 @@ class PrintStream;
 void printInternal(PrintStream&, JSC::Intrinsic);
 
 } // namespace WTF
-
-

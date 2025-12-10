@@ -55,6 +55,7 @@
 #import <WebCore/ResourceRequest.h>
 #import <WebCore/SharedBuffer.h>
 #import <WebCore/WebCoreJITOperations.h>
+#import <WebCore/WebCoreMainThread.h>
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebCoreURLResponse.h>
 #import <WebKitLegacy/DOMHTML.h>
@@ -152,13 +153,8 @@ void addTypesFromClass(NSMutableDictionary *allTypes, Class objCClass, NSArray *
 
 + (void)initialize
 {
-    if (self == [WebDataSource class]) {
-#if !PLATFORM(IOS_FAMILY)
-        JSC::initialize();
-        WTF::initializeMainThread();
-        WebCore::populateJITOperations();
-#endif
-    }
+    if (self == [WebDataSource class])
+        WebCore::initializeMainThreadIfNeeded();
 }
 
 - (NSError *)_mainDocumentError
@@ -480,7 +476,7 @@ void addTypesFromClass(NSMutableDictionary *allTypes, Class objCClass, NSArray *
 
 - (NSURLRequest *)initialRequest
 {
-    return toPrivate(_private)->loader->originalRequest().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
+    return toPrivate(_private)->loader->originalRequest().protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).autorelease();
 }
 
 - (NSMutableURLRequest *)request
@@ -490,12 +486,12 @@ void addTypesFromClass(NSMutableDictionary *allTypes, Class objCClass, NSArray *
         return nil;
 
     // FIXME: this cast is dubious
-    return (NSMutableURLRequest *)toPrivate(_private)->loader->request().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
+    return (NSMutableURLRequest *)toPrivate(_private)->loader->request().protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).autorelease();
 }
 
 - (NSURLResponse *)response
 {
-    return toPrivate(_private)->loader->response().nsURLResponse();
+    return toPrivate(_private)->loader->response().protectedNSURLResponse().autorelease();
 }
 
 - (NSString *)textEncodingName

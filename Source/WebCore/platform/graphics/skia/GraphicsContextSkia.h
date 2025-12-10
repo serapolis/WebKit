@@ -75,7 +75,7 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
 
-    void drawNativeImageInternal(NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
+    void drawNativeImage(NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
     void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
@@ -138,6 +138,7 @@ private:
 
     void drawSkiaRect(const SkRect&, SkPaint&);
     void drawSkiaPath(const SkPath&, SkPaint&);
+    bool drawPathAsSingleElement(const Path&, SkPaint&);
 
     class SkiaState {
     public:

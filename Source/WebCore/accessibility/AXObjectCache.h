@@ -43,7 +43,13 @@
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 
+#if PLATFORM(COCOA)
+#include <WebCore/AttributedString.h>
+#include <wtf/RetainPtr.h>
+#endif
+
 OBJC_CLASS NSMutableArray;
+OBJC_CLASS NSString;
 
 namespace WTF {
 class TextStream;
@@ -54,6 +60,7 @@ namespace WebCore {
 class AXComputedObjectAttributeCache;
 class AXGeometryManager;
 class AXIsolatedTree;
+class AXLiveRegionManager;
 class AXRemoteFrame;
 class AccessibilityNodeObject;
 class AccessibilityObject;
@@ -66,6 +73,7 @@ class HTMLTextFormControlElement;
 class Node;
 class Page;
 class RenderBlock;
+class RenderBlockFlow;
 class RenderImage;
 class RenderObject;
 class RenderStyle;
@@ -77,11 +85,13 @@ class VisiblePosition;
 class Widget;
 
 struct AXTextStateChangeIntent;
+struct AriaNotifyOptions;
 struct TextMarkerData;
 
 enum class AXNotification : uint8_t;
 enum class AXStreamOptions : uint16_t;
 enum class AXProperty : uint16_t;
+enum class LiveRegionStatus: uint8_t;
 enum class TextMarkerOrigin : uint16_t;
 
 struct CharacterOffset {
@@ -129,7 +139,27 @@ struct AXDebugInfo {
     uint64_t webProcessLocalTokenHash;
 };
 
+enum class NotifyPriority : uint8_t { Normal, High };
+
+enum class InterruptBehavior : uint8_t { None, All, Pending };
+
+enum class LiveRegionStatus : uint8_t { Off, Polite, Assertive };
+
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct AriaNotifyData {
+    String message;
+    NotifyPriority priority { NotifyPriority::Normal };
+    InterruptBehavior interrupt { InterruptBehavior::None };
+    String language;
+};
+
 #if PLATFORM(COCOA)
+// When this is updated, WebCoreArgumentCoders.serialization.in must be updated as well.
+struct LiveRegionAnnouncementData {
+    AttributedString message;
+    LiveRegionStatus status { LiveRegionStatus::Polite };
+};
+
 struct AXTextChangeContext {
     AXTextStateChangeIntent intent;
     String deletedText;
@@ -172,7 +202,7 @@ class AXObjectCache final : public CanMakeWeakPtr<AXObjectCache>, public CanMake
     friend class AXTextMarker;
     friend WTF::TextStream& operator<<(WTF::TextStream&, AXObjectCache&);
 public:
-    explicit AXObjectCache(Page&, Document*);
+    explicit AXObjectCache(LocalFrame&, Document*);
     ~AXObjectCache();
 
     String debugDescription() const;
@@ -340,6 +370,10 @@ public:
 #if ENABLE(AX_THREAD_TEXT_APIS)
     void onTextRunsChanged(const RenderObject&);
 #endif
+
+    void onLaidOutInlineContent(const RenderBlockFlow& renderBlock) { setDirtyStitchGroups(renderBlock); }
+    const Vector<AXStitchGroup>* stitchGroupsOwnedBy(AccessibilityObject&);
+
     void updateLoadingProgress(double);
     void loadingFinished() { updateLoadingProgress(1); }
     double loadingProgress() const { return m_loadingProgress; }
@@ -400,6 +434,7 @@ public:
 #endif
 
     WEBCORE_EXPORT AccessibilityObject* focusedObjectForPage(const Page*);
+    WEBCORE_EXPORT AccessibilityObject* focusedObjectForLocalFrame();
 
     // Enhanced user interface accessibility can be toggled by the assistive technology.
     WEBCORE_EXPORT static void setEnhancedUserInterfaceAccessibility(bool flag);
@@ -410,8 +445,11 @@ public:
     static bool useAXThreadTextApis() { return gAccessibilityThreadTextApisEnabled && !isMainThread(); }
     static bool shouldCreateAXThreadCompatibleMarkers() { return gAccessibilityThreadTextApisEnabled && isIsolatedTreeEnabled(); }
 #endif
+    static bool isAXTextStitchingEnabled() { return gAccessibilityTextStitchingEnabled; }
 
 #if PLATFORM(COCOA)
+    static bool shouldRepostNotificationsForTests() { return gShouldRepostNotificationsForTests; }
+
     static void initializeUserDefaultValues();
     static bool accessibilityDOMIdentifiersEnabled() { return gAccessibilityDOMIdentifiersEnabled; }
 #endif
@@ -495,6 +533,8 @@ public:
             postNotification(*object, notification);
     }
     void postNotification(AccessibilityObject&, AXNotification);
+    void postARIANotifyNotification(Node&, const String&, const AriaNotifyOptions&);
+    void postLiveRegionNotification(AccessibilityObject&, LiveRegionStatus, const AttributedString&);
     // Requests clients to announce to the user the given message in the way they deem appropriate.
     WEBCORE_EXPORT void announce(const String&);
 
@@ -523,16 +563,17 @@ public:
 
     Document* document() const { return m_document.get(); }
     RefPtr<Document> protectedDocument() const;
-    constexpr const std::optional<PageIdentifier>& pageID() const { return m_pageID; }
+    constexpr const std::optional<FrameIdentifier>& frameID() const { return m_frameID; }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     inline void objectBecameIgnored(const AccessibilityObject&);
     inline void objectBecameUnignored(const AccessibilityObject&);
 #endif
 
-#if PLATFORM(MAC)
+#if PLATFORM(COCOA)
     static void setShouldRepostNotificationsForTests(bool);
 #endif
+
     void deferRecomputeIsIgnoredIfNeeded(Element*);
     void deferRecomputeIsIgnored(Element*);
     void deferRecomputeTableIsExposed(Element*);
@@ -555,6 +596,9 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     void relayNotification(String&&, RetainPtr<NSData>&&);
+
+    void setWillPresentDatePopover(bool willPresent) { m_willPresentDatePopover = willPresent; }
+    bool willPresentDatePopover() const { return m_willPresentDatePopover; }
 #endif
 
 #if PLATFORM(MAC)
@@ -614,11 +658,15 @@ protected:
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT void postPlatformAnnouncementNotification(const String&);
+    WEBCORE_EXPORT void postPlatformARIANotifyNotification(const String&, NotifyPriority, InterruptBehavior, const String&);
+    WEBCORE_EXPORT void postPlatformLiveRegionNotification(AccessibilityObject&, LiveRegionStatus, const AttributedString&);
 #else
     void postPlatformAnnouncementNotification(const String&) { }
+    void postPlatformARIANotifyNotification(const String&, NotifyPriority, InterruptBehavior, const String&) { }
+    void postPlatformLiveRegionNotification(AccessibilityObject&, LiveRegionStatus, const AttributedString&) { }
 #endif
 
-    void frameLoadingEventPlatformNotification(AccessibilityObject*, AXLoadingEvent);
+    void frameLoadingEventPlatformNotification(RenderView*, AXLoadingEvent);
     void handleLabelChanged(AccessibilityObject*);
 
     // CharacterOffset functions.
@@ -690,6 +738,9 @@ private:
     void handleARIARoleDescriptionChanged(Element&);
     void handleMenuOpened(Element&);
     void handleLiveRegionCreated(Element&);
+#if PLATFORM(COCOA)
+    void initializeLiveRegionManager();
+#endif
     void handleMenuItemSelected(Element*);
     void handleTabPanelSelected(Element*, Element*);
     void handleRowCountChanged(AccessibilityObject*, Document*);
@@ -715,6 +766,8 @@ private:
     void updateCurrentModalNode();
     bool isNodeVisible(const Node*) const;
     bool modalElementHasAccessibleContent(Element&);
+
+    void setDirtyStitchGroups(const RenderBlock&);
 
     // Relationships between objects.
     static Vector<QualifiedName>& relationAttributes();
@@ -748,7 +801,7 @@ private:
     Ref<AccessibilityNodeObject> createFromNode(Node&);
 
     const WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
-    const std::optional<PageIdentifier> m_pageID; // constant for object's lifetime.
+    const std::optional<FrameIdentifier> m_frameID; // constant for object's lifetime.
     OptionSet<ActivityState> m_pageActivityState;
     HashMap<AXID, Ref<AccessibilityObject>> m_objects;
 
@@ -772,6 +825,9 @@ private:
     WeakHashMap<RenderText, LineRange, SingleThreadWeakPtrImpl> m_mostRecentlyPaintedText;
 
     std::unique_ptr<AXComputedObjectAttributeCache> m_computedObjectAttributeCache;
+#if PLATFORM(COCOA)
+    std::unique_ptr<AXLiveRegionManager> m_liveRegionManager;
+#endif
 
     WEBCORE_EXPORT static std::atomic<bool> gAccessibilityEnabled;
     static bool gAccessibilityEnhancedUserInterfaceEnabled;
@@ -784,6 +840,8 @@ private:
     // Accessed on and off the main thread.
     static std::atomic<bool> gAccessibilityThreadTextApisEnabled;
 #endif
+    // Accessed on and off the main thread.
+    static std::atomic<bool> gAccessibilityTextStitchingEnabled;
 
 #if PLATFORM(COCOA)
     static std::atomic<bool> gAccessibilityDOMIdentifiersEnabled;
@@ -817,13 +875,19 @@ private:
     bool m_modalNodesInitialized { false };
     bool m_isRetrievingCurrentModalNode { false };
 
+#if PLATFORM(COCOA)
+    bool m_liveRegionManagerInitialized { false };
+
+    static std::atomic<bool> gShouldRepostNotificationsForTests;
+#endif
+
     Timer m_performCacheUpdateTimer;
 
     AXTextStateChangeIntent m_textSelectionIntent;
     WeakHashSet<AccessibilityObject> m_deferredRendererChangedList;
     WeakHashSet<AccessibilityObject> m_deferredRecomputeActiveSummaryList;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredRecomputeIsIgnoredList;
-    WeakHashSet<HTMLTableElement, WeakPtrImplWithEventTargetData> m_deferredRecomputeTableIsExposedList;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredRecomputeTableIsExposedList;
     WeakHashSet<AccessibilityNodeObject> m_deferredRecomputeTableCellSlotsList;
     WeakHashSet<AccessibilityNodeObject> m_deferredRowspanChanges;
     WeakListHashSet<Node, WeakPtrImplWithEventTargetData> m_deferredTextChangedList;
@@ -856,6 +920,10 @@ private:
 
     unsigned m_cacheUpdateDeferredCount { 0 };
 
+#if PLATFORM(IOS_FAMILY)
+    bool m_willPresentDatePopover;
+#endif
+
     // Relationships between objects.
     HashMap<AXID, AXRelations> m_relations;
     bool m_relationsNeedUpdate { true };
@@ -870,6 +938,8 @@ private:
     Markable<AXID> m_lastTextFieldAXID;
     VisibleSelection m_lastSelection;
 #endif
+
+    WeakHashMap<RenderObject, Vector<AXStitchGroup>, SingleThreadWeakPtrImpl> m_stitchGroups;
 };
 
 inline bool AXObjectCache::accessibilityEnabled()
@@ -896,5 +966,10 @@ inline void AXObjectCache::setForceDeferredSpellChecking(bool shouldForce)
 {
     gForceDeferredSpellChecking = shouldForce;
 }
+
+#if PLATFORM(COCOA)
+WEBCORE_EXPORT RetainPtr<NSString> notifyPriorityToAXValueString(NotifyPriority);
+WEBCORE_EXPORT RetainPtr<NSString> interruptBehaviorToAXValueString(InterruptBehavior);
+#endif
 
 } // namespace WebCore

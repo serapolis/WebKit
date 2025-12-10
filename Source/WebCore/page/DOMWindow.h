@@ -126,7 +126,7 @@ public:
     CheckedPtr<FrameConsoleClient> checkedConsole() const;
 
     WindowProxy* opener() const;
-    Document* documentIfLocal();
+    WEBCORE_EXPORT Document* documentIfLocal();
     RefPtr<Document> protectedDocumentIfLocal();
 
     WindowProxy* top() const;
@@ -253,3 +253,7 @@ private:
 WebCoreOpaqueRoot root(DOMWindow*);
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::DOMWindow)
+    static bool isType(const WebCore::EventTarget& target) { return target.eventTargetInterface() == WebCore::EventTargetInterfaceType::DOMWindow; }
+SPECIALIZE_TYPE_TRAITS_END()

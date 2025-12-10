@@ -31,7 +31,8 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <WebCore/BoundaryPointInlines.h>
-#include <WebCore/Document.h>
+#include <WebCore/DocumentPage.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameInlines.h>
@@ -43,7 +44,6 @@
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/NodeInlines.h>
-#include <WebCore/Page.h>
 #include <WebCore/Range.h>
 #include <WebCore/RenderView.h>
 #include <WebCore/ShareableBitmap.h>
@@ -134,7 +134,7 @@ RefPtr<WebImage> InjectedBundleRangeHandle::renderedImage(SnapshotOptions option
 #endif
 
     VisibleSelection oldSelection = frame->selection().selection();
-    frame->selection().setSelection(range);
+    frame->checkedSelection()->setSelection(range);
 
     float scaleFactor = options.contains(SnapshotOption::ExcludeDeviceScaleFactor) ? 1 : frame->page()->deviceScaleFactor();
     IntRect paintRect = enclosingIntRect(unionRectIgnoringZeroRects(RenderObject::absoluteBorderAndTextRects(range)));
@@ -167,7 +167,7 @@ RefPtr<WebImage> InjectedBundleRangeHandle::renderedImage(SnapshotOptions option
     frameView->paint(graphicsContext, paintRect);
     frameView->setPaintBehavior(oldPaintBehavior);
 
-    frame->selection().setSelection(oldSelection);
+    frame->checkedSelection()->setSelection(oldSelection);
 
     return snapshot;
 }

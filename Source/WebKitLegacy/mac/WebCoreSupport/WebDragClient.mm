@@ -47,6 +47,7 @@
 #endif
 
 #import <WebCore/DataTransfer.h>
+#import <WebCore/DocumentPage.h>
 #import <WebCore/DragData.h>
 #import <WebCore/Editor.h>
 #import <WebCore/EditorClient.h>
@@ -57,7 +58,7 @@
 #import <WebCore/Image.h>
 #import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalFrameView.h>
-#import <WebCore/NodeInlines.h>
+#import <WebCore/NodeDocument.h>
 #import <WebCore/Page.h>
 #import <WebCore/PagePasteboardContext.h>
 #import <WebCore/Pasteboard.h>
@@ -160,7 +161,7 @@ void WebDragClient::startDrag(DragItem dragItem, DataTransfer& dataTransfer, Fra
     [topHTMLView _stopAutoscrollTimer];
     NSPasteboard *pasteboard = [NSPasteboard pasteboardWithName:dataTransfer.pasteboard().name().createNSString().get()];
 
-    NSImage *dragNSImage = dragImage.get().get();
+    NSImage *dragNSImage = dragImage.get().unsafeGet();
     WebHTMLView *sourceHTMLView = htmlView.get();
 
     IntSize size([dragNSImage size]);

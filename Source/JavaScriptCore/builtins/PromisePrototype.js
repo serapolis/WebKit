@@ -23,36 +23,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-function catch(onRejected)
-{
-    "use strict";
-
-    return this.then(@undefined, onRejected);
-}
-
-function then(onFulfilled, onRejected)
-{
-    "use strict";
-
-    if (!@isPromise(this))
-        @throwTypeError("|this| is not a Promise");
-
-    var constructor = @speciesConstructor(this, @Promise);
-
-    var promise;
-    var promiseOrCapability;
-    if (constructor === @Promise) {
-        promiseOrCapability = @newPromise();
-        promise = promiseOrCapability;
-    } else {
-        promiseOrCapability = @newPromiseCapabilitySlow(constructor);
-        promise = promiseOrCapability.promise;
-    }
-
-    @performPromiseThen(this, onFulfilled, onRejected, promiseOrCapability, @undefined);
-    return promise;
-}
-
 function finally(onFinally)
 {
     "use strict";

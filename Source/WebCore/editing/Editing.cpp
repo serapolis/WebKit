@@ -30,11 +30,11 @@
 #include "AXObjectCache.h"
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
-#include "DocumentInlines.h"
 #include "EditingInlines.h"
 #include "Editor.h"
 #include "ElementChildIteratorInlines.h"
 #include "ElementInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "GraphicsLayer.h"
 #include "HTMLBodyElement.h"
 #include "HTMLDListElement.h"
@@ -198,12 +198,12 @@ Element* editableRootForPosition(const Position& position, EditableType editable
 // Finds the enclosing element until which the tree can be split.
 // When a user hits ENTER, he/she won't expect this element to be split into two.
 // You may pass it as the second argument of splitTreeToNode.
-Element* unsplittableElementForPosition(const Position& position)
+RefPtr<Element> unsplittableElementForPosition(const Position& position)
 {
     // Since enclosingNodeOfType won't search beyond the highest root editable node,
     // this code works even if the closest table cell was outside of the root editable node.
-    if (auto enclosingCell = downcast<Element>(enclosingNodeOfType(position, &isTableCell)))
-        return enclosingCell.get();
+    if (RefPtr enclosingCell = downcast<Element>(enclosingNodeOfType(position, &isTableCell)))
+        return enclosingCell;
     return editableRootForPosition(position);
 }
 
@@ -1177,7 +1177,7 @@ LayoutRect localCaretRectInRendererForCaretPainting(const VisiblePosition& caret
         return LayoutRect();
     ASSERT(caretPosition.deepEquivalent().deprecatedNode()->renderer());
     auto [localRect, renderer] = caretPosition.localCaretRect();
-    return localCaretRectInRendererForRect(localRect, caretPosition.deepEquivalent().deprecatedNode(), renderer, caretPainter);
+    return localCaretRectInRendererForRect(localRect, caretPosition.deepEquivalent().deprecatedNode(), renderer.get(), caretPainter);
 }
 
 LayoutRect localCaretRectInRendererForRect(LayoutRect& localRect, Node* node, RenderObject* renderer, RenderBlock*& caretPainter)

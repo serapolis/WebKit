@@ -47,7 +47,7 @@ struct WebTransportServer::Data : public RefCounted<WebTransportServer::Data> {
     Vector<CoroutineHandle<ConnectionTask::promise_type>> coroutineHandles;
 };
 
-WebTransportServer::WebTransportServer(Function<ConnectionTask(ConnectionGroup)>&& connectionGroupHandler)
+WebTransportServer::WebTransportServer(Function<ConnectionTask(ConnectionGroup)>&& connectionGroupHandler, sec_identity_t identity)
     : m_data(Data::create(WTFMove(connectionGroupHandler)))
 {
     auto configureWebTransport = [](nw_protocol_options_t options) {
@@ -56,9 +56,9 @@ WebTransportServer::WebTransportServer(Function<ConnectionTask(ConnectionGroup)>
         nw_webtransport_options_set_connection_max_sessions(options, 1);
     };
 
-    auto configureTLS = [](nw_protocol_options_t options) {
+    auto configureTLS = [identity = RetainPtr { identity }] (nw_protocol_options_t options) {
         RetainPtr securityOptions = adoptNS(nw_tls_copy_sec_protocol_options(options));
-        sec_protocol_options_set_local_identity(securityOptions.get(), adoptNS(sec_identity_create(testIdentity().get())).get());
+        sec_protocol_options_set_local_identity(securityOptions.get(), identity ? identity.get() : adoptNS(sec_identity_create(testIdentity().get())).get());
     };
 
     auto configureQUIC = [](nw_protocol_options_t options) {
@@ -77,10 +77,18 @@ WebTransportServer::WebTransportServer(Function<ConnectionTask(ConnectionGroup)>
     nw_listener_set_new_connection_group_handler(listener.get(), [data = m_data] (nw_connection_group_t incomingConnectionGroup) {
         ConnectionGroup connectionGroup = ConnectionGroup(incomingConnectionGroup);
         data->connectionGroups.append(connectionGroup);
+
         nw_connection_group_set_state_changed_handler(incomingConnectionGroup, [connectionGroup, data] (nw_connection_group_state_t state, nw_error_t error) mutable {
-            if (state != nw_connection_group_state_ready)
-                return;
-            data->coroutineHandles.append(data->connectionGroupHandler(connectionGroup).handle);
+            switch (state) {
+            case nw_connection_group_state_ready:
+                data->coroutineHandles.append(data->connectionGroupHandler(connectionGroup).handle);
+                break;
+            case nw_connection_group_state_failed:
+                connectionGroup.markAsFailed();
+                break;
+            default:
+                break;
+            }
         });
 
         nw_connection_group_set_new_connection_handler(incomingConnectionGroup, [connectionGroup] (nw_connection_t incomingConnection) mutable {

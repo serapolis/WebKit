@@ -96,11 +96,7 @@
 #endif
 
 #if USE(SOUP)
-#if USE(SOUP2)
-#define SOUP_VERSION_MIN_REQUIRED SOUP_VERSION_2_54
-#else
 #define SOUP_VERSION_MIN_REQUIRED SOUP_VERSION_3_0
-#endif
 #endif
 
 #if PLATFORM(COCOA)
@@ -161,4 +157,11 @@
 /* FIXME: This is used to "turn on a specific feature of WebKit", so should be converted to an ENABLE macro. */
 #if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
 #define USE_ACCESSIBILITY_CONTEXT_MENUS 1
+#endif
+
+#if OS(WINDOWS)
+// https://github.com/MicrosoftDocs/cpp-docs/blob/main/docs/cpp/empty-bases.md
+#define WTF_EMPTY_BASE_CLASS __declspec(empty_bases)
+#else
+#define WTF_EMPTY_BASE_CLASS
 #endif

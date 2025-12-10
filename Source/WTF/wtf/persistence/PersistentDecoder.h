@@ -60,14 +60,16 @@ public:
     WTF_EXPORT_PRIVATE Decoder& operator>>(std::optional<float>&);
     WTF_EXPORT_PRIVATE Decoder& operator>>(std::optional<double>&);
 
-    template<typename T, std::enable_if_t<!std::is_arithmetic<typename std::remove_const<T>>::value && !std::is_enum<T>::value>* = nullptr>
+    template<typename T>
+        requires (!std::is_arithmetic_v<typename std::remove_const<T>> && !std::is_enum_v<T>)
     Decoder& operator>>(std::optional<T>& result)
     {
         result = Coder<T>::decodeForPersistence(*this);
         return *this;
     }
 
-    template<typename E, std::enable_if_t<std::is_enum<E>::value>* = nullptr>
+    template<typename E>
+        requires (std::is_enum_v<E>)
     Decoder& operator>>(std::optional<E>& result)
     {
         static_assert(sizeof(E) <= 8, "Enum type T must not be larger than 64 bits!");
@@ -84,7 +86,7 @@ public:
     template<typename T> WARN_UNUSED_RETURN
     bool bufferIsLargeEnoughToContain(size_t numElements) const
     {
-        static_assert(std::is_arithmetic_v<T> || std::is_same_v<T, Latin1Character>, "Type must have a fixed, known encoded size");
+        static_assert(std::is_arithmetic<T>::value, "Type T must have a fixed, known encoded size!");
         return numElements <= std::numeric_limits<size_t>::max() / sizeof(T) && bufferIsLargeEnoughToContain(numElements * sizeof(T));
     }
 

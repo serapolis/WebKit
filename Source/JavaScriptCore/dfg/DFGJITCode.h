@@ -102,10 +102,12 @@ public:
         StringSymbolReplaceWatchpointSet,
         StringSymbolToPrimitiveWatchpointSet,
         RegExpPrimordialPropertiesWatchpointSet,
+        PromiseThenWatchpointSet,
         ArraySpeciesWatchpointSet,
         ArrayPrototypeChainIsSaneWatchpointSet,
         StringPrototypeChainIsSaneWatchpointSet,
         ObjectPrototypeChainIsSaneWatchpointSet,
+        PromiseSpeciesWatchpointSet,
     };
 
     using Value = JITConstant<Type>;

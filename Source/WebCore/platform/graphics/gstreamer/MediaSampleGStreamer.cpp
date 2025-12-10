@@ -149,7 +149,7 @@ void MediaSampleGStreamer::dump(PrintStream& out) const
     out.print("{PTS(", presentationTime(), "), DTS(", decodeTime(), "), duration(", duration(), "), flags(");
 
     bool anyFlags = false;
-    auto appendFlag = [&out, &anyFlags](const char* flagName) {
+    auto appendFlag = [&out, &anyFlags](ASCIILiteral flagName) {
         if (anyFlags)
             out.print(",");
         out.print(flagName);
@@ -157,13 +157,13 @@ void MediaSampleGStreamer::dump(PrintStream& out) const
     };
 
     if (flags() & MediaSample::IsSync)
-        appendFlag("sync");
+        appendFlag("sync"_s);
     if (flags() & MediaSample::IsNonDisplaying)
-        appendFlag("non-displaying");
+        appendFlag("non-displaying"_s);
     if (flags() & MediaSample::HasAlpha)
-        appendFlag("has-alpha");
+        appendFlag("has-alpha"_s);
     if (flags() & ~(MediaSample::IsSync | MediaSample::IsNonDisplaying | MediaSample::HasAlpha))
-        appendFlag("unknown-flag");
+        appendFlag("unknown-flag"_s);
 
     out.print("), trackId(", trackID(), "), presentationSize(", presentationSize().width(), "x", presentationSize().height(), ")}");
 }

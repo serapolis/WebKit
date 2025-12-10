@@ -119,7 +119,7 @@ RefPtr<const DisplayList::DisplayList> GlyphDisplayListCache::getDisplayList(con
 
     if (auto iterator = m_entries.find<GlyphDisplayListCacheKeyTranslator>(GlyphDisplayListCacheKey { textRun, font, context }); iterator != m_entries.end()) {
         Ref entry { iterator->get() };
-        auto* result = &entry->displayList();
+        RefPtr result = &entry->displayList();
         const_cast<LayoutRun&>(run).setIsInGlyphDisplayListCache();
         m_entriesForLayoutRun.add(&run, WTFMove(entry));
         return result;
@@ -182,6 +182,9 @@ bool GlyphDisplayListCache::canShareDisplayList(const DisplayList::DisplayList& 
             || std::holds_alternative<DisplayList::DrawGlyphs>(item)
             || std::holds_alternative<DisplayList::DrawImageBuffer>(item)
             || std::holds_alternative<DisplayList::DrawNativeImage>(item)
+#if USE(SKIA)
+            || std::holds_alternative<DisplayList::DrawTextBlob>(item)
+#endif
             || std::holds_alternative<DisplayList::BeginTransparencyLayer>(item)
             || std::holds_alternative<DisplayList::BeginTransparencyLayerWithCompositeMode>(item)
             || std::holds_alternative<DisplayList::EndTransparencyLayer>(item)))

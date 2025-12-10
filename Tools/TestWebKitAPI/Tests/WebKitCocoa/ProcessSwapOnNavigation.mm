@@ -29,6 +29,7 @@
 #import "FrameTreeChecks.h"
 #import "HTTPServer.h"
 #import "PlatformUtilities.h"
+#import "SiteIsolationUtilities.h"
 #import "Test.h"
 #import "TestNavigationDelegate.h"
 #import "TestUIDelegate.h"
@@ -306,20 +307,20 @@ static RetainPtr<WKWebView> createdWebView;
 @end
 
 @interface PSONScheme : NSObject <WKURLSchemeHandler> {
-    const char* _bytes;
+    ASCIILiteral _bytes;
     HashMap<String, String> _redirects;
     HashMap<String, RetainPtr<NSData>> _dataMappings;
     HashSet<id <WKURLSchemeTask>> _runningTasks;
     bool _shouldRespondAsynchronously;
 }
-- (instancetype)initWithBytes:(const char*)bytes;
+- (instancetype)initWithBytes:(ASCIILiteral)bytes;
 - (void)addRedirectFromURLString:(NSString *)sourceURLString toURLString:(NSString *)destinationURLString;
-- (void)addMappingFromURLString:(NSString *)urlString toData:(const char*)data;
+- (void)addMappingFromURLString:(NSString *)urlString toData:(ASCIILiteral)data;
 @end
 
 @implementation PSONScheme
 
-- (instancetype)initWithBytes:(const char*)bytes
+- (instancetype)initWithBytes:(ASCIILiteral)bytes
 {
     self = [super init];
     _bytes = bytes;
@@ -331,9 +332,9 @@ static RetainPtr<WKWebView> createdWebView;
     _redirects.set(sourceURLString, destinationURLString);
 }
 
-- (void)addMappingFromURLString:(NSString *)urlString toData:(const char*)data
+- (void)addMappingFromURLString:(NSString *)urlString toData:(ASCIILiteral)data
 {
-    _dataMappings.set(urlString, toNSDataNoCopy(unsafeSpan8(data), FreeWhenDone::No));
+    _dataMappings.set(urlString, toNSData(data.span8()));
 }
 
 - (void)setShouldRespondAsynchronously:(BOOL)value
@@ -380,12 +381,11 @@ static RetainPtr<WKWebView> createdWebView;
     }, 0.1);
 
     doAsynchronouslyIfNecessary([self, finalURL](id <WKURLSchemeTask> task) {
-        if (auto data = _dataMappings.get([finalURL absoluteString]))
+        if (RetainPtr data = _dataMappings.get([finalURL absoluteString]))
             [task didReceiveData:data.get()];
-        else if (_bytes) {
-            RetainPtr data = toNSDataNoCopy(unsafeSpan8(_bytes), FreeWhenDone::No);
-            [task didReceiveData:data.get()];
-        } else
+        else if (_bytes)
+            [task didReceiveData:toNSData(_bytes.span8()).get()];
+        else
             [task didReceiveData:[@"Hello" dataUsingEncoding:NSUTF8StringEncoding]];
     }, 0.2);
 
@@ -402,7 +402,7 @@ static RetainPtr<WKWebView> createdWebView;
 
 @end
 
-static const char* testBytes = R"PSONRESOURCE(
+static constexpr auto testBytes = R"PSONRESOURCE(
 <head>
 <script>
 
@@ -422,15 +422,15 @@ window.onpageshow = function(evt) {
 
 </script>
 </head>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* linkToCrossSiteClientSideRedirectBytes = R"PSONRESOURCE(
+static constexpr auto linkToCrossSiteClientSideRedirectBytes = R"PSONRESOURCE(
 <body>
   <a id="testLink" href="pson://www.google.com/clientSideRedirect.html">Link to cross-site client-side redirect</a>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* crossSiteClientSideRedirectBytes = R"PSONRESOURCE(
+static constexpr auto crossSiteClientSideRedirectBytes = R"PSONRESOURCE(
 <body>
 <script>
 onload = () => {
@@ -438,9 +438,9 @@ onload = () => {
 };
 </script>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* navigationWithLockedHistoryBytes = R"PSONRESOURCE(
+static constexpr auto navigationWithLockedHistoryBytes = R"PSONRESOURCE(
 <script>
 let shouldNavigate = true;
 window.addEventListener('pageshow', function(event) {
@@ -461,105 +461,105 @@ onload = function()
     }, 10);
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* pageCache1Bytes = R"PSONRESOURCE(
+static constexpr auto pageCache1Bytes = R"PSONRESOURCE(
 <script>
 window.addEventListener('pageshow', function(event) {
     if (event.persisted)
         window.webkit.messageHandlers.pson.postMessage("Was persisted");
 });
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenCrossSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenCrossSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     window.open("pson://www.apple.com/main.html", "_blank", "noopener");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenCrossOriginButSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenCrossOriginButSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     window.open("pson://www.webkit.org:8080/main.html", "_blank", "noopener");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenCrossSiteWithOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenCrossSiteWithOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     window.open("pson://www.apple.com/main.html");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenSameSiteWithOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenSameSiteWithOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     w = window.open("pson://www.webkit.org/main2.html");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     if (!opener)
         window.open("pson://www.webkit.org/popup.html", "_blank", "noopener");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* windowOpenWithNameSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto windowOpenWithNameSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     if (!opener)
         window.open("pson://www.webkit.org/popup.html", "foo", "noopener");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* targetBlankCrossSiteWithExplicitOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto targetBlankCrossSiteWithExplicitOpenerTestBytes = R"PSONRESOURCE(
 <a id="testLink" target="_blank" href="pson://www.apple.com/main.html" rel="opener">Link</a>
 <script>
 window.onload = function() {
     testLink.click();
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* targetBlankCrossSiteWithImplicitNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto targetBlankCrossSiteWithImplicitNoOpenerTestBytes = R"PSONRESOURCE(
 <a id="testLink" target="_blank" href="pson://www.apple.com/main.html">Link</a>
 <script>
 window.onload = function() {
     testLink.click();
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* targetBlankCrossSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto targetBlankCrossSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <a id="testLink" target="_blank" href="pson://www.apple.com/main.html" rel="noopener">Link</a>
 <script>
 window.onload = function() {
     testLink.click();
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* targetBlankSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto targetBlankSameSiteNoOpenerTestBytes = R"PSONRESOURCE(
 <a id="testLink" target="_blank" href="pson://www.webkit.org/main2.html" rel="noopener">Link</a>
 <script>
 window.onload = function() {
     testLink.click();
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 #if PLATFORM(MAC)
-static const char* linkToAppleTestBytes = R"PSONRESOURCE(
+static constexpr auto linkToAppleTestBytes = R"PSONRESOURCE(
 <script>
 window.addEventListener('pageshow', function(event) {
     if (event.persisted)
@@ -567,7 +567,7 @@ window.addEventListener('pageshow', function(event) {
 });
 </script>
 <a id="testLink" href="pson://www.apple.com/main.html">Navigate</a>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 #endif
 
 static RetainPtr<_WKProcessPoolConfiguration> psonProcessPoolConfiguration()
@@ -909,6 +909,12 @@ TEST(ProcessSwap, Back)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // In site isolation, persisted: false. PageShow events are not being restored from the back-forward cache.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -995,9 +1001,9 @@ TEST(ProcessSwap, Back)
         EXPECT_EQ(5u, seenPIDs.size());
 }
 
-static const char* pageWithFragmentTestBytes = R"PSONRESOURCE(
+static constexpr auto pageWithFragmentTestBytes = R"PSONRESOURCE(
 <div id="foo">TEST</div>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, HistoryNavigationToFragmentURL)
 {
@@ -1062,6 +1068,12 @@ TEST(ProcessSwap, SuspendedPageDiesAfterBackForwardListItemIsGone)
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on back forward cache, so suspending will always fail
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -1126,6 +1138,12 @@ TEST(ProcessSwap, SuspendedPagesInActivityMonitor)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on back forward cache, so suspending will always fail
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -1444,7 +1462,7 @@ TEST(ProcessSwap, CrossSiteWindowOpenWithOpener)
 
 enum class ExpectSwap : bool { No, Yes };
 enum class WindowHasName : bool { No, Yes };
-static void runSameSiteWindowOpenNoOpenerTest(WindowHasName windowHasName, ExpectSwap expectSwap)
+static void runSameSiteWindowOpenNoOpenerTest(WindowHasName windowHasName)
 {
     auto processPoolConfiguration = psonProcessPoolConfiguration();
     auto processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
@@ -1485,10 +1503,7 @@ static void runSameSiteWindowOpenNoOpenerTest(WindowHasName windowHasName, Expec
     EXPECT_TRUE(!!pid2);
 
     // Since there is no opener, we process-swap, even though the navigation is same-site.
-    if (expectSwap == ExpectSwap::Yes)
-        EXPECT_NE(pid1, pid2);
-    else
-        EXPECT_EQ(pid1, pid2);
+    EXPECT_NE(pid1, pid2);
 
     done = false;
     request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"pson://www.webkit.org/popup2.html"]];
@@ -1506,12 +1521,12 @@ static void runSameSiteWindowOpenNoOpenerTest(WindowHasName windowHasName, Expec
 TEST(ProcessSwap, SameSiteWindowOpenNoOpener)
 {
     // We process-swap even though the navigation is same-site, because the popup has no opener.
-    runSameSiteWindowOpenNoOpenerTest(WindowHasName::No, ExpectSwap::Yes);
+    runSameSiteWindowOpenNoOpenerTest(WindowHasName::No);
 }
 
 TEST(ProcessSwap, SameSiteWindowOpenWithNameNoOpener)
 {
-    runSameSiteWindowOpenNoOpenerTest(WindowHasName::Yes, ExpectSwap::No);
+    runSameSiteWindowOpenNoOpenerTest(WindowHasName::Yes);
 }
 
 TEST(ProcessSwap, CrossSiteBlankTargetWithOpener)
@@ -1551,7 +1566,10 @@ TEST(ProcessSwap, CrossSiteBlankTargetWithOpener)
     auto pid2 = [createdWebView _webProcessIdentifier];
     EXPECT_TRUE(!!pid2);
 
-    EXPECT_EQ(pid1, pid2);
+    if (isSiteIsolationEnabled(webView.get()))
+        EXPECT_NE(pid1, pid2);
+    else
+        EXPECT_EQ(pid1, pid2);
 }
 
 TEST(ProcessSwap, CrossSiteBlankTargetImplicitNoOpener)
@@ -1933,11 +1951,11 @@ TEST(ProcessSwap, TerminateProcessRightAfterSwap)
     TestWebKitAPI::Util::runFor(0.5_s);
 }
 
-static const char* linkToWebKitBytes = R"PSONRESOURCE(
+static constexpr auto linkToWebKitBytes = R"PSONRESOURCE(
 <body>
   <a id="testLink" href="pson://www.webkit.org/main.html">Link</a>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, PolicyCancelAfterServerRedirect)
 {
@@ -2036,21 +2054,21 @@ TEST(ProcessSwap, CrossSiteDownload)
 
 #if USE(SYSTEM_PREVIEW)
 
-static const char* systemPreviewSameOriginTestBytes = R"PSONRESOURCE(
+static constexpr auto systemPreviewSameOriginTestBytes = R"PSONRESOURCE(
 <body>
     <a id="testLink" rel="ar" href="pson://www.webkit.org/whatever">
         <img src="pson://www.webkit.org/image">
     </a>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* systemPreviewCrossOriginTestBytes = R"PSONRESOURCE(
+static constexpr auto systemPreviewCrossOriginTestBytes = R"PSONRESOURCE(
 <body>
     <a id="testLink" rel="ar" href="pson://www.apple.com/whatever">
         <img src="pson://www.webkit.org/image">
     </a>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, SameOriginSystemPreview)
 {
@@ -2533,7 +2551,7 @@ TEST(ProcessSwap, NavigationWithLockedHistoryWithoutPSON)
     runNavigationWithLockedHistoryTest(ShouldEnablePSON::No);
 }
 
-static const char* sessionStorageTestBytes = R"PSONRESOURCE(
+static constexpr auto sessionStorageTestBytes = R"PSONRESOURCE(
 <head>
 <script>
 
@@ -2549,7 +2567,7 @@ window.onload = function(evt) {
 
 </script>
 </head>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, SessionStorage)
 {
@@ -2622,6 +2640,12 @@ TEST(ProcessSwap, ReuseSuspendedProcess)
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on the back forward cache, so suspending will always fail
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -2662,14 +2686,14 @@ TEST(ProcessSwap, ReuseSuspendedProcess)
     EXPECT_EQ(applePID, [webView _webProcessIdentifier]);
 }
 
-static const char* failsToEnterPageCacheTestBytes = R"PSONRESOURCE(
+static constexpr auto failsToEnterPageCacheTestBytes = R"PSONRESOURCE(
 <body>
 <script>
 // Pages with dedicated workers do not go into back/forward cache.
 var myWorker = new Worker('worker.js');
 </script>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, ReuseSuspendedProcessEvenIfPageCacheFails)
 {
@@ -2764,12 +2788,12 @@ TEST(ProcessSwap, ReuseSuspendedProcessOnBackEvenIfPageCacheFails)
     EXPECT_EQ(webkitPID, [webView _webProcessIdentifier]);
 }
 
-static const char* withSubframesTestBytes = R"PSONRESOURCE(
+static constexpr auto withSubframesTestBytes = R"PSONRESOURCE(
 <body>
 <iframe src="about:blank"></iframe>
 <iframe src="about:blank"></iframe>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, HistoryItemIDConfusion)
 {
@@ -2967,7 +2991,7 @@ TEST(ProcessSwap, PrivateAndRegularSessionsShouldGetDifferentProcesses)
     EXPECT_NE(privateSessionWebkitPID, regularSessionWebkitPID);
 }
 
-static const char* keepNavigatingFrameBytes = R"PSONRESOURCE(
+static constexpr auto keepNavigatingFrameBytes = R"PSONRESOURCE(
 <body>
 <iframe id="testFrame1" src="about:blank"></iframe>
 <iframe id="testFrame2" src="about:blank"></iframe>
@@ -2992,7 +3016,7 @@ setInterval(() => {
 }, 0);
 </script>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 enum class RetainPageInBundle : bool { No, Yes };
 
@@ -3051,7 +3075,7 @@ TEST(ProcessSwap, ReuseSuspendedProcessForRegularNavigation)
     testReuseSuspendedProcessForRegularNavigation(RetainPageInBundle::No);
 }
 
-static const char* mainFramesOnlyMainFrame = R"PSONRESOURCE(
+static constexpr auto mainFramesOnlyMainFrame = R"PSONRESOURCE(
 <script>
 function loaded() {
     setTimeout('window.frames[0].location.href = "pson://www.apple.com/main.html"', 0);
@@ -3061,18 +3085,17 @@ function loaded() {
 Some text
 <iframe src="pson://www.webkit.org/iframe.html"></iframe>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* mainFramesOnlySubframe = R"PSONRESOURCE(
+static constexpr auto mainFramesOnlySubframe = R"PSONRESOURCE(
 Some content
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-
-static const char* mainFramesOnlySubframe2 = R"PSONRESOURCE(
+static constexpr auto mainFramesOnlySubframe2 = R"PSONRESOURCE(
 <script>
     window.webkit.messageHandlers.pson.postMessage("Done");
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, MainFramesOnly)
 {
@@ -3105,7 +3128,7 @@ TEST(ProcessSwap, MainFramesOnly)
 
 #if PLATFORM(MAC)
 
-static const char* getClientWidthBytes = R"PSONRESOURCE(
+static constexpr auto getClientWidthBytes = R"PSONRESOURCE(
 <body>
 TEST
 <script>
@@ -3116,7 +3139,7 @@ function getClientWidth()
 }
 </script>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 static unsigned waitUntilClientWidthIs(WKWebView *webView, unsigned expectedClientWidth)
 {
@@ -3189,7 +3212,7 @@ TEST(ProcessSwap, PageZoomLevelAfterSwap)
 
 #endif // PLATFORM(MAC)
 
-static const char* mediaTypeBytes = R"PSONRESOURCE(
+static constexpr auto mediaTypeBytes = R"PSONRESOURCE(
 <style>
 @media screen {
 .print{
@@ -3207,7 +3230,7 @@ static const char* mediaTypeBytes = R"PSONRESOURCE(
 <div class="screen">Screen</div>
 <div class="print">Print</div>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, MediaTypeAfterSwap)
 {
@@ -3258,7 +3281,7 @@ TEST(ProcessSwap, MediaTypeAfterSwap)
     EXPECT_TRUE([innerText isEqualToString:@"Print"]);
 }
 
-static const char* navigateBeforePageLoadEndBytes = R"PSONRESOURCE(
+static constexpr auto navigateBeforePageLoadEndBytes = R"PSONRESOURCE(
 <body>
 <a id="testLink" href="pson://www.apple.com/main.html">Link</a>
 <script>
@@ -3272,7 +3295,7 @@ static const char* navigateBeforePageLoadEndBytes = R"PSONRESOURCE(
 <iframe src="subframe3.html></iframe>
 <iframe src="subframe4.html></iframe>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, NavigateCrossSiteBeforePageLoadEnd)
 {
@@ -3400,6 +3423,12 @@ TEST(ProcessSwap, SuspendedPageLimit)
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on the back forward cache, which is disabled. Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -3466,6 +3495,11 @@ TEST(ProcessSwap, PageCache1)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -3695,6 +3729,11 @@ TEST(ProcessSwap, PageCacheAfterProcessSwapByClient)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -3771,6 +3810,11 @@ TEST(ProcessSwap, PageCacheWhenNavigatingFromJS)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -4113,6 +4157,12 @@ TEST(ProcessSwap, NumberOfCachedProcesses)
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"PSON"];
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on the back forward cache, which is disabled. Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto delegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView setNavigationDelegate:delegate.get()];
 
@@ -4161,7 +4211,7 @@ TEST(ProcessSwap, NumberOfCachedProcesses)
 
 #endif // PLATFORM(MAC)
 
-static const char* visibilityBytes = R"PSONRESOURCE(
+static constexpr auto visibilityBytes = R"PSONRESOURCE(
 <script>
 window.addEventListener('pageshow', function(event) {
     var msg = window.location.href + " - pageshow ";
@@ -4175,7 +4225,7 @@ window.addEventListener('pagehide', function(event) {
     window.webkit.messageHandlers.pson.postMessage(msg);
 });
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, PageShowHide)
 {
@@ -4254,7 +4304,7 @@ TEST(ProcessSwap, PageShowHide)
 
 // Disabling the back/forward cache explicitly is (for some reason) not available on iOS.
 #if !TARGET_OS_IPHONE
-static const char* loadUnloadBytes = R"PSONRESOURCE(
+static constexpr auto loadUnloadBytes = R"PSONRESOURCE(
 <script>
 window.addEventListener('unload', function(event) {
     var msg = window.location.href + " - unload";
@@ -4266,7 +4316,7 @@ window.addEventListener('load', function(event) {
     window.webkit.messageHandlers.pson.postMessage(msg);
 });
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, LoadUnload)
 {
@@ -4479,7 +4529,7 @@ TEST(ProcessSwap, DelayedProcessLaunchDisabled)
         TestWebKitAPI::Util::spinRunLoop();
 }
 
-static const char* sameOriginBlobNavigationTestBytes = R"PSONRESOURCE(
+static constexpr auto sameOriginBlobNavigationTestBytes = R"PSONRESOURCE(
 <!DOCTYPE html>
 <html>
 <body>
@@ -4488,7 +4538,7 @@ static const char* sameOriginBlobNavigationTestBytes = R"PSONRESOURCE(
 const blob = new Blob(['<!DOCTYPE html><html><p>PASS</p></html>'], {type: 'text/html'});
 link.href = URL.createObjectURL(blob);
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, SameOriginBlobNavigation)
 {
@@ -4912,7 +4962,7 @@ TEST(ProcessSwap, NavigateToInvalidURL)
     EXPECT_EQ(pid1, pid2);
 }
 
-static const char* navigateToDataURLThenBackBytes = R"PSONRESOURCE(
+static constexpr auto navigateToDataURLThenBackBytes = R"PSONRESOURCE(
 <script>
 onpageshow = function(event) {
     if (sessionStorage.getItem('navigated') == 'true') {
@@ -4928,7 +4978,7 @@ onpageshow = function(event) {
 }
 
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, NavigateToDataURLThenBack)
 {
@@ -5131,14 +5181,14 @@ TEST(ProcessSwap, NavigateToCrossSiteThenBackFromJS)
     EXPECT_NE(applePID, [webView _webProcessIdentifier]);
 }
 
-static const char* crossSiteFormSubmissionBytes = R"PSONRESOURCE(
+static constexpr auto crossSiteFormSubmissionBytes = R"PSONRESOURCE(
 <body>
 <form action="pson://www.apple.com/main.html" method="post">
 Name: <input type="text" name="name" placeholder="Name">
 <input id="submitButton" type="submit">
 </form>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, SwapOnFormSubmission)
 {
@@ -5325,13 +5375,13 @@ TEST(ProcessSwap, LoadingStateAfterPolicyDecision)
     [webView removeObserver:loadObserver.get() forKeyPath:@"URL" context:webView.get()];
 }
 
-static const char* saveOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto saveOpenerTestBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     savedOpener = opener;
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, OpenerLinkAfterAPIControlledProcessSwappingOfOpener)
 {
@@ -6196,7 +6246,12 @@ static bool viewHasSwipeGestures(UIView *view)
 }
 #endif
 
+// rdar://163517689 (REGRESSION( iOS 26): 2X TestWebKitAPI.ProcessSwap (API-Tests) are constant failures (301536))
+#if PLATFORM(IOS)
+TEST(ProcessSwap, DISABLED_SwapWithGestureController)
+#else
 TEST(ProcessSwap, SwapWithGestureController)
+#endif
 {
     @autoreleasepool {
         auto processPoolConfiguration = psonProcessPoolConfiguration();
@@ -6236,7 +6291,12 @@ TEST(ProcessSwap, SwapWithGestureController)
     }
 }
 
+// rdar://163517689 (REGRESSION( iOS 26): 2X TestWebKitAPI.ProcessSwap (API-Tests) are constant failures (301536))
+#if PLATFORM(IOS)
+TEST(ProcessSwap, DISABLED_CrashWithGestureController)
+#else
 TEST(ProcessSwap, CrashWithGestureController)
+#endif
 {
     @autoreleasepool {
         auto processPoolConfiguration = psonProcessPoolConfiguration();
@@ -6351,8 +6411,9 @@ TEST(ProcessSwap, NavigateCrossOriginWithOpenee)
     TestWebKitAPI::Util::run(&done);
     done = false;
 
-    // We should not have process-swapped since an auxiliary window has an opener link to us.
-    EXPECT_EQ(webkitPID, [webView _webProcessIdentifier]);
+    bool processSwapped = webkitPID != [webView _webProcessIdentifier];
+    // PSON does not swap procss when the window is opener of other window, but Site Isolation does.
+    EXPECT_EQ(processSwapped, isSiteIsolationEnabled(webView.get()));
 
     // Navigate cross-origin via the API. This should allow a process swap and sever the opener link.
     request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"pson://www.webkit.org.com/main3.html"]];
@@ -6376,7 +6437,7 @@ TEST(ProcessSwap, NavigateCrossOriginWithOpenee)
     EXPECT_NE(webkitPID, [webView _webProcessIdentifier]);
 }
 
-static const char* crossSiteLinkWithOpenerTestBytes = R"PSONRESOURCE(
+static constexpr auto crossSiteLinkWithOpenerTestBytes = R"PSONRESOURCE(
 <script>
 function saveOpenee()
 {
@@ -6384,11 +6445,11 @@ function saveOpenee()
 }
 </script>
 <a id="testLink" target="foo" href="pson://www.webkit.org/main2.html">Link</a>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* pageWithLinkToAppleBytes = R"PSONRESOURCE(
+static constexpr auto pageWithLinkToAppleBytes = R"PSONRESOURCE(
 <a id="apple" href="pson://www.apple.com/main.html">Apple</a>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, NavigateCrossOriginWithOpener)
 {
@@ -6742,6 +6803,12 @@ TEST(ProcessSwap, GoBackToSuspendedPageWithMainFrameIDThatIsNotOne)
     [[webViewConfiguration userContentController] addScriptMessageHandler:messageHandler.get() name:@"pson"];
 
     auto webView1 = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // Suspending pages depends on the back forward cache, which is disabled. Once it is enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView1.get()))
+        return;
+
     auto navigationDelegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     [webView1 setNavigationDelegate:navigationDelegate.get()];
     auto uiDelegate = adoptNS([[PSONUIDelegate alloc] initWithNavigationDelegate:navigationDelegate.get()]);
@@ -6801,7 +6868,7 @@ TEST(ProcessSwap, GoBackToSuspendedPageWithMainFrameIDThatIsNotOne)
 
 #endif // PLATFORM(MAC)
 
-static const char* tallPageBytes = R"PSONRESOURCE(
+static constexpr auto tallPageBytes = R"PSONRESOURCE(
 <!DOCTYPE html>
 <html>
 <head>
@@ -6822,7 +6889,7 @@ var myWorker = new Worker('worker.js');
 <a id="testLink" href="pson://www.apple.com/main.html">Test</a>
 </body>
 </html>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 static unsigned waitUntilScrollPositionIsRestored(WKWebView *webView)
 {
@@ -6920,7 +6987,7 @@ TEST(ProcessSwap, ScrollPositionRestoration)
 
 static NSString *blockmeFilter = @"[{\"action\":{\"type\":\"block\"},\"trigger\":{\"url-filter\":\".*blockme.html\"}}]";
 
-static const char* contentBlockingAfterProcessSwapTestBytes = R"PSONRESOURCE(
+static constexpr auto contentBlockingAfterProcessSwapTestBytes = R"PSONRESOURCE(
 <body>
 <script>
 let wasSubframeLoaded = false;
@@ -6929,13 +6996,13 @@ var myWorker = new Worker('worker.js');
 </script>
 <iframe src="blockme.html"></iframe>
 </body>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* markSubFrameAsLoadedTestBytes = R"PSONRESOURCE(
+static constexpr auto markSubFrameAsLoadedTestBytes = R"PSONRESOURCE(
 <script>
 top.wasSubframeLoaded = true;
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, ContentBlockingAfterProcessSwap)
 {
@@ -7031,11 +7098,11 @@ TEST(ProcessSwap, ContentBlockingAfterProcessSwap)
     done = false;
 }
 
-static const char* notifyLoadedBytes = R"PSONRESOURCE(
+static constexpr auto notifyLoadedBytes = R"PSONRESOURCE(
 <script>
     window.webkit.messageHandlers.pson.postMessage("Loaded");
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, ContentExtensionBlocksMainLoadThenReloadWithoutExtensions)
 {
@@ -7184,7 +7251,7 @@ static bool isNotCapturing = false;
 }
 @end
 
-static const char* getUserMediaBytes = R"PSONRESOURCE(
+static constexpr auto getUserMediaBytes = R"PSONRESOURCE(
 <head>
 <body>
 <script>
@@ -7192,7 +7259,7 @@ navigator.mediaDevices.getUserMedia({video: true});
 </script>
 </body>
 </head>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, GetUserMediaCaptureState)
 {
@@ -7362,7 +7429,7 @@ TEST(ProcessSwap, QuickLookRequestsPasswordAfterSwap)
 }
 #endif
 
-static const char* minimumWidthPageBytes = R"PSONRESOURCE(
+static constexpr auto minimumWidthPageBytes = R"PSONRESOURCE(
 <!DOCTYPE html>
 <html>
 <head>
@@ -7378,7 +7445,7 @@ div {
 <div>Test</a>
 </body>
 </html>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, PassMinimumDeviceWidthOnNewWebView)
 {
@@ -7479,16 +7546,18 @@ TEST(ProcessSwap, PassSandboxExtension)
 
 #if PLATFORM(MAC)
 
-static const char* pageThatOpensBytes = R"PSONRESOURCE(
+static constexpr auto pageThatOpensBytes = R"PSONRESOURCE(
 <script>
 window.onload = function() {
     window.open("pson://www.webkit.org/window.html", "_blank");
 }
 </script>
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
-static const char* openedPage = "Hello World";
+static constexpr auto openedPage = "Hello World"_s;
 
+// Disabled for macOS Debug builds due to regression in 300964@main - duplicate frame ID assertion failure. webkit.org/b/300391
+#if defined(NDEBUG)
 TEST(ProcessSwap, SameSiteWindowWithOpenerNavigateToFile)
 {
     auto processPoolConfiguration = psonProcessPoolConfiguration();
@@ -7568,13 +7637,14 @@ TEST(ProcessSwap, SameSiteWindowWithOpenerNavigateToFile)
     auto pid5 = [createdWebView _webProcessIdentifier];
     EXPECT_NE(pid4, pid5);
 }
+#endif // defined(NDEBUG)
 
 #endif // PLATFORM(MAC)
 
 
-static const char* responsivePageBytes = R"PSONRESOURCE(
+static constexpr auto responsivePageBytes = R"PSONRESOURCE(
 <meta name="viewport" content="width=device-width, initial-scale=1">
-)PSONRESOURCE";
+)PSONRESOURCE"_s;
 
 TEST(ProcessSwap, ResizeWebViewDuringCrossSiteProvisionalNavigation)
 {
@@ -7913,6 +7983,12 @@ TEST(ProcessSwap, NavigateBackAfterNavigatingAwayFromCrossOriginOpenerPolicyUsin
     }
 
     auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+
+    // FIXME: Page cache is currently disabled under site isolation; see rdar://161762363.
+    // The back forward cache is disabled in site isolation. Once enabled, remove this early return.
+    if (isSiteIsolationEnabled(webView.get()))
+        return;
+
     auto navigationDelegate = adoptNS([[PSONNavigationDelegate alloc] init]);
     navigationDelegate->didSameDocumentNavigationHandler = ^{
         done = true;

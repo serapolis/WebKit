@@ -42,6 +42,8 @@ public:
     // FIXME: Remove.
     static RenderTreeBuilder* current() { return s_current; }
 
+    const RenderView& view() const { return m_view; }
+
     static bool isRebuildRootForChildren(const RenderElement&);
 
     void attach(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild = nullptr);
@@ -69,7 +71,7 @@ public:
     bool hasBrokenContinuation() const { return m_hasBrokenContinuation; }
 
 private:
-    static void markBoxForRelayoutAfterSplit(RenderBox&);
+    static void markBoxForRelayoutAfterSplit(RenderBoxModelObject&);
 
     void attachInternal(RenderElement& parent, RenderPtr<RenderObject>, RenderObject* beforeChild);
 
@@ -94,7 +96,7 @@ private:
 
     void removeFloatingObjects(RenderBlock&);
 
-    RenderObject* splitAnonymousBoxesAroundChild(RenderBox& parent, RenderObject& originalBeforeChild);
+    RenderObject* splitAnonymousBoxesAroundChild(RenderBoxModelObject& parent, RenderObject& originalBeforeChild);
     void createAnonymousWrappersForInlineContent(RenderBlock& parent, RenderObject* insertionPoint = nullptr);
     void removeAnonymousWrappersForInlineChildrenIfNeeded(RenderElement& parent);
 

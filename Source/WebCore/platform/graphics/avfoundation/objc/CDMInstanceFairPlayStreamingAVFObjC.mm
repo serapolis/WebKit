@@ -89,23 +89,23 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 - (void)contentKeySession:(AVContentKeySession *)session didProvideContentKeyRequest:(AVContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->didProvideRequest(keyRequest);
+    if (RefPtr parent = _parent.get())
+        parent->didProvideRequest(keyRequest);
 }
 
 - (void)contentKeySession:(AVContentKeySession *)session didProvideRenewingContentKeyRequest:(AVContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->didProvideRenewingRequest(keyRequest);
+    if (RefPtr parent = _parent.get())
+        parent->didProvideRenewingRequest(keyRequest);
 }
 
 #if PLATFORM(IOS_FAMILY)
 - (void)contentKeySession:(AVContentKeySession *)session didProvidePersistableContentKeyRequest:(AVPersistableContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->didProvidePersistableRequest(keyRequest);
+    if (RefPtr parent = _parent.get())
+        parent->didProvidePersistableRequest(keyRequest);
 }
 
 - (void)contentKeySession:(AVContentKeySession *)session didUpdatePersistableContentKey:(NSData *)persistableContentKey forContentKeyIdentifier:(id)keyIdentifier
@@ -121,7 +121,8 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 {
     UNUSED_PARAM(session);
     UNUSED_PARAM(initializationData);
-    if (!_parent)
+    RefPtr parent = _parent.get();
+    if (!parent)
         return;
 
     Vector<RetainPtr<AVContentKeyRequest>> requests;
@@ -129,34 +130,35 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
     [keyRequests enumerateObjectsUsingBlock:[&](AVContentKeyRequest* request, NSUInteger, BOOL*) {
         requests.append(request);
     }];
-    _parent->didProvideRequests(WTFMove(requests));
+    parent->didProvideRequests(WTFMove(requests));
 }
 
 - (void)contentKeySession:(AVContentKeySession *)session contentKeyRequest:(AVContentKeyRequest *)keyRequest didFailWithError:(NSError *)err
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->didFailToProvideRequest(keyRequest, err);
+    if (RefPtr parent = _parent.get())
+        parent->didFailToProvideRequest(keyRequest, err);
 }
 
 - (void)contentKeySession:(AVContentKeySession *)session contentKeyRequestDidSucceed:(AVContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->requestDidSucceed(keyRequest);
+    if (RefPtr parent = _parent.get())
+        parent->requestDidSucceed(keyRequest);
 }
 
 - (BOOL)contentKeySession:(AVContentKeySession *)session shouldRetryContentKeyRequest:(AVContentKeyRequest *)keyRequest reason:(AVContentKeyRequestRetryReason)retryReason
 {
     UNUSED_PARAM(session);
-    return _parent ? _parent->shouldRetryRequestForReason(keyRequest, retryReason) : false;
+    RefPtr parent = _parent.get();
+    return parent && parent->shouldRetryRequestForReason(keyRequest, retryReason);
 }
 
 - (void)contentKeySessionContentProtectionSessionIdentifierDidChange:(AVContentKeySession *)session
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->sessionIdentifierChanged(session.contentProtectionSessionIdentifier);
+    if (RefPtr parent = _parent.get())
+        parent->sessionIdentifierChanged(session.contentProtectionSessionIdentifier);
 }
 
 #if HAVE(AVCONTENTKEYREPORTGROUP)
@@ -169,8 +171,8 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 - (void)contentKeySession:(AVContentKeySession *)session contentProtectionSessionIdentifierDidChangeForReportGroup:(nullable AVContentKeyReportGroup *)reportGroup
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->groupSessionIdentifierChanged(reportGroup, reportGroup.contentProtectionSessionIdentifier);
+    if (RefPtr parent = _parent.get())
+        parent->groupSessionIdentifierChanged(reportGroup, reportGroup.contentProtectionSessionIdentifier);
 }
 #endif
 
@@ -178,8 +180,8 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 - (void)contentKeySession:(AVContentKeySession *)session externalProtectionStatusDidChangeForContentKey:(AVContentKey *)contentKey
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->externalProtectionStatusDidChangeForContentKey(contentKey);
+    if (RefPtr parent = _parent.get())
+        parent->externalProtectionStatusDidChangeForContentKey(contentKey);
 }
 #endif
 
@@ -188,8 +190,8 @@ static const size_t kMaximumDeviceIdentifierSeedSize = 20;
 - (void)contentKeySession:(AVContentKeySession *)session externalProtectionStatusDidChangeForContentKeyRequest:(AVContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
-    if (_parent)
-        _parent->externalProtectionStatusDidChangeForContentKeyRequest(keyRequest);
+    if (RefPtr parent = _parent.get())
+        parent->externalProtectionStatusDidChangeForContentKeyRequest(keyRequest);
 }
 
 @end
@@ -220,7 +222,7 @@ namespace WebCore {
 static WTFLogChannel& logChannel() { return LogEME; }
 #endif
 
-static AtomString initTypeForRequest(AVContentKeyRequest* request)
+static String initTypeForRequest(AVContentKeyRequest* request)
 {
     if ([request.identifier isKindOfClass:NSString.class] && [request.identifier hasPrefix:@"skd://"])
         return CDMPrivateFairPlayStreaming::skdName();
@@ -233,7 +235,7 @@ static AtomString initTypeForRequest(AVContentKeyRequest* request)
         return CDMPrivateFairPlayStreaming::sinfName();
     }
 
-    return AtomString(nsInitType);
+    return String(nsInitType);
 }
 
 static Ref<SharedBuffer> initializationDataForRequest(AVContentKeyRequest* request)
@@ -245,6 +247,11 @@ static Ref<SharedBuffer> initializationDataForRequest(AVContentKeyRequest* reque
         return SharedBuffer::create([request.identifier dataUsingEncoding:NSUTF8StringEncoding allowLossyConversion:YES]);
 
     return SharedBuffer::create(request.initializationData);
+}
+
+Ref<CDMInstanceFairPlayStreamingAVFObjC> CDMInstanceFairPlayStreamingAVFObjC::create(const CDMPrivateFairPlayStreaming& cdmPrivate)
+{
+    return adoptRef(*new CDMInstanceFairPlayStreamingAVFObjC(cdmPrivate));
 }
 
 CDMInstanceFairPlayStreamingAVFObjC::CDMInstanceFairPlayStreamingAVFObjC(const CDMPrivateFairPlayStreaming& cdmPrivate)
@@ -279,7 +286,7 @@ AVContentKeySession* CDMInstanceFairPlayStreamingAVFObjC::contentKeySession()
     return m_session.get();
 }
 
-RetainPtr<AVContentKeyRequest> CDMInstanceFairPlayStreamingAVFObjC::takeUnexpectedKeyRequestForInitializationData(const AtomString& initDataType, SharedBuffer& initData)
+RetainPtr<AVContentKeyRequest> CDMInstanceFairPlayStreamingAVFObjC::takeUnexpectedKeyRequestForInitializationData(const String& initDataType, SharedBuffer& initData)
 {
     for (auto requestIter = m_unexpectedKeyRequests.begin(); requestIter != m_unexpectedKeyRequests.end(); ++requestIter) {
         auto& request = *requestIter;
@@ -431,7 +438,7 @@ void CDMInstanceFairPlayStreamingAVFObjC::setStorageDirectory(const String& stor
 
 RefPtr<CDMInstanceSession> CDMInstanceFairPlayStreamingAVFObjC::createSession()
 {
-    auto session = adoptRef(*new CDMInstanceSessionFairPlayStreamingAVFObjC(*this));
+    Ref session = CDMInstanceSessionFairPlayStreamingAVFObjC::create(*this);
     m_sessions.append(session);
     return session;
 }
@@ -718,6 +725,11 @@ void CDMInstanceFairPlayStreamingAVFObjC::sessionKeyStatusesChanged(const CDMIns
     });
 }
 
+Ref<CDMInstanceSessionFairPlayStreamingAVFObjC> CDMInstanceSessionFairPlayStreamingAVFObjC::create(Ref<CDMInstanceFairPlayStreamingAVFObjC>&& instance)
+{
+    return adoptRef(*new CDMInstanceSessionFairPlayStreamingAVFObjC(WTFMove(instance)));
+}
+
 CDMInstanceSessionFairPlayStreamingAVFObjC::CDMInstanceSessionFairPlayStreamingAVFObjC(Ref<CDMInstanceFairPlayStreamingAVFObjC>&& instance)
     : m_instance(WTFMove(instance))
     , m_delegate(adoptNS([[WebCoreFPSContentKeySessionDelegate alloc] initWithParent:*this]))
@@ -752,7 +764,7 @@ Keys CDMInstanceSessionFairPlayStreamingAVFObjC::keyIDs()
     return keyIDs;
 }
 
-void CDMInstanceSessionFairPlayStreamingAVFObjC::requestLicense(LicenseType licenseType, KeyGroupingStrategy keyGroupingStrategy, const AtomString& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&& callback)
+void CDMInstanceSessionFairPlayStreamingAVFObjC::requestLicense(LicenseType licenseType, KeyGroupingStrategy keyGroupingStrategy, const String& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&& callback)
 {
     if (!isLicenseTypeSupported(licenseType)) {
         ERROR_LOG(LOGIDENTIFIER, " false, licenseType \"", licenseType, "\" not supported");
@@ -1154,7 +1166,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::clearClient()
 void CDMInstanceSessionFairPlayStreamingAVFObjC::didProvideRequest(AVContentKeyRequest *request)
 {
     auto initDataType = initTypeForRequest(request);
-    if (initDataType == emptyAtom()) {
+    if (initDataType.isEmpty()) {
         ERROR_LOG(LOGIDENTIFIER, "- request has empty initDataType");
         return;
     }
@@ -1359,7 +1371,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::didProvideRenewingRequest(AVCon
 {
     ASSERT(!m_requestLicenseCallback);
     auto initDataType = initTypeForRequest(request);
-    if (initDataType == emptyAtom())
+    if (initDataType.isEmpty())
         return;
 
     Request currentRequest = { initDataType, { request } };

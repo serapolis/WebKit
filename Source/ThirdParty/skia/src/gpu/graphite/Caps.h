@@ -101,7 +101,7 @@ public:
 #if defined(GPU_TEST_UTILS)
     std::string_view deviceName() const { return fDeviceName; }
 
-    PathRendererStrategy requestedPathRendererStrategy() const {
+    std::optional<PathRendererStrategy> requestedPathRendererStrategy() const {
         return fRequestedPathRendererStrategy;
     }
 #endif
@@ -119,15 +119,15 @@ public:
                                                         Discardable) const = 0;
 
     virtual TextureInfo getDefaultSampledTextureInfo(SkColorType,
-                                                     Mipmapped mipmapped,
+                                                     Mipmapped,
                                                      Protected,
                                                      Renderable) const = 0;
 
-    virtual TextureInfo getTextureInfoForSampledCopy(const TextureInfo& textureInfo,
-                                                     Mipmapped mipmapped) const = 0;
+    virtual TextureInfo getTextureInfoForSampledCopy(const TextureInfo&,
+                                                     Mipmapped) const = 0;
 
     virtual TextureInfo getDefaultCompressedTextureInfo(SkTextureCompressionType,
-                                                        Mipmapped mipmapped,
+                                                        Mipmapped,
                                                         Protected) const = 0;
 
     virtual TextureInfo getDefaultStorageTextureInfo(SkColorType) const = 0;
@@ -189,7 +189,7 @@ public:
      */
     size_t requiredTransferBufferAlignment() const { return fRequiredTransferBufferAlignment; }
 
-    /* Returns the aligned rowBytes when transfering to or from a Texture */
+    /* Returns the aligned rowBytes when transferring to or from a Texture */
     size_t getAlignedTextureDataRowBytes(size_t rowBytes) const {
         return SkAlignTo(rowBytes, fTextureDataRowBytesAlignment);
     }
@@ -202,12 +202,15 @@ public:
         return {};
     }
 
+    /* Returns a compressed label describing the immutable sampler for the Pipeline label */
+    virtual std::string toString(const ImmutableSamplerInfo&) const { return ""; }
+
     /**
      * Backends may have restrictions on what types of textures support Device::writePixels().
      * If this returns false then the caller should implement a fallback where a temporary texture
-     * is created, pixels are written to it, and then that is copied or drawn into the the surface.
+     * is created, pixels are written to it, and then that is copied or drawn into the surface.
      */
-    virtual bool supportsWritePixels(const TextureInfo& textureInfo) const = 0;
+    virtual bool supportsWritePixels(const TextureInfo&) const = 0;
 
     /**
      * Backends may have restrictions on what types of textures support Device::readPixels().
@@ -215,7 +218,7 @@ public:
      * is created, the original texture is copied or drawn into it, and then pixels read from
      * the temporary texture.
      */
-    virtual bool supportsReadPixels(const TextureInfo& textureInfo) const = 0;
+    virtual bool supportsReadPixels(const TextureInfo&) const = 0;
 
     /**
      * Given a dst pixel config and a src color type what color type must the caller coax the
@@ -557,9 +560,9 @@ protected:
 
 #if defined(GPU_TEST_UTILS)
     std::string fDeviceName;
-    int fMaxTextureAtlasSize = 2048;
-    PathRendererStrategy fRequestedPathRendererStrategy;
+    std::optional<PathRendererStrategy> fRequestedPathRendererStrategy;
 #endif
+
     size_t fGlyphCacheTextureMaximumBytes = 2048 * 1024 * 4;
 
     float fMinMSAAPathSize = 0;

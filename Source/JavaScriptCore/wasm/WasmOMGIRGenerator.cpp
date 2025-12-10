@@ -30,6 +30,7 @@
 
 #include "AirCode.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
+#include "B3AbstractHeapRepository.h"
 #include "B3BasicBlockInlines.h"
 #include "B3CCallValue.h"
 #include "B3Const128Value.h"
@@ -66,6 +67,7 @@
 #include "WasmFaultSignalHandler.h"
 #include "WasmFunctionParser.h"
 #include "WasmIRGeneratorHelpers.h"
+#include "WasmInliningDecision.h"
 #include "WasmMemory.h"
 #include "WasmMergedProfile.h"
 #include "WasmOSREntryData.h"
@@ -170,6 +172,7 @@ public:
         }
 
         static bool isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
+        static bool isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
         static bool isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
         static bool isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
         static bool isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
@@ -188,6 +191,9 @@ public:
             switch (blockType()) {
             case BlockType::If:
                 out.print("If:       ");
+                break;
+            case BlockType::Else:
+                out.print("Else:     ");
                 break;
             case BlockType::Block:
                 out.print("Block:    ");
@@ -383,10 +389,30 @@ public:
         return m_callSiteIndex;
     }
 
-    OMGIRGenerator(CompilationContext&, Module&, CalleeGroup&, const ModuleInformation&, IPIntCallee&, OptimizingJITCallee&, Procedure&, Vector<UnlinkedWasmToWasmCall>&, FixedBitVector& outgoingDirectCallees, unsigned& osrEntryScratchBufferSize, MemoryMode, CompilationMode, unsigned functionIndex, unsigned loopIndexForOSREntry);
-    OMGIRGenerator(CompilationContext&, OMGIRGenerator& inlineCaller, OMGIRGenerator& inlineRoot, Module&, CalleeGroup&, unsigned functionIndex, IPIntCallee&, BasicBlock* returnContinuation, Vector<Value*> args);
+    OMGIRGenerator(AbstractHeapRepository&, CompilationContext&, Module&, CalleeGroup&, const ModuleInformation&, IPIntCallee&, InliningNode*, OptimizingJITCallee&, Procedure&, Vector<UnlinkedWasmToWasmCall>&, FixedBitVector& outgoingDirectCallees, unsigned& osrEntryScratchBufferSize, MemoryMode, CompilationMode, unsigned functionIndex, unsigned loopIndexForOSREntry);
+    OMGIRGenerator(AbstractHeapRepository&, CompilationContext&, OMGIRGenerator& inlineCaller, OMGIRGenerator& inlineRoot, Module&, CalleeGroup&, unsigned functionIndex, IPIntCallee&, InliningNode*, BasicBlock* returnContinuation, Vector<Value*> args);
 
     void computeStackCheckSize(bool& needsOverflowCheck, int32_t& checkSize);
+
+    Value* wasmRefOfCell(Value* cell)
+    {
+        return cell;
+    }
+
+    Value* pointerOfWasmRef(Value* ref)
+    {
+        return ref;
+    }
+
+    Value* pointerOfInt32(Value* value)
+    {
+        return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
+    }
+
+    Value* int32OfPointer(Value* value)
+    {
+        return m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), value);
+    }
 
     // SIMD
     bool usesSIMD() { return m_info.usesSIMD(m_functionIndex); }
@@ -744,18 +770,18 @@ public:
     PartialResult WARN_UNUSED_RETURN addCallRef(unsigned, const TypeDefinition&, ArgumentList& args, ResultList& results, CallType = CallType::Call);
     PartialResult WARN_UNUSED_RETURN addUnreachable();
     PartialResult WARN_UNUSED_RETURN addCrash();
-    void fillCallResults(Value* callResult, const TypeDefinition& signature, ResultList& results);
 
     using ValueResults = Vector<Value*, 16>;
-    PartialResult WARN_UNUSED_RETURN emitDirectCall(unsigned, FunctionSpaceIndex functionIndexSpace, const TypeDefinition&, ArgumentList& args, ValueResults&, CallType = CallType::Call);
+    void fillCallResults(Value* callResult, const TypeDefinition& signature, ValueResults&);
+    PartialResult WARN_UNUSED_RETURN emitDirectCall(unsigned, FunctionSpaceIndex functionIndexSpace, const TypeDefinition&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
     PartialResult WARN_UNUSED_RETURN emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const TypeDefinition&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
 
     Vector<ConstrainedValue> createCallConstrainedArgs(BasicBlock*, const CallInformation& wasmCalleeInfo, const ArgumentList&);
     auto createCallPatchpoint(BasicBlock*, const TypeDefinition&, const CallInformation&, const ArgumentList& tmpArgs) -> CallPatchpointData;
     auto createTailCallPatchpoint(BasicBlock*, const TypeDefinition&, const CallInformation& wasmCallerInfoAsCallee, const CallInformation& wasmCalleeInfoAsCallee, const ArgumentList& tmpArgSourceLocations, Vector<B3::ConstrainedValue> patchArgs) -> CallPatchpointData;
 
-    bool canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const;
-    PartialResult WARN_UNUSED_RETURN emitInlineDirectCall(FunctionCodeIndex calleeIndex, const TypeDefinition&, ArgumentList& args, ValueResults&);
+    InliningNode* canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const;
+    PartialResult WARN_UNUSED_RETURN emitInlineDirectCall(InliningNode*, FunctionCodeIndex calleeIndex, const TypeDefinition&, const ArgumentList& args, ValueResults&);
 
     void dump(const ControlStack&, const Stack* expressionStack);
     void setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
@@ -807,7 +833,7 @@ private:
     {
 #if !USE(BUILTIN_FRAME_ADDRESS) || ASSERT_ENABLED
         // Prepare wasm operation calls.
-        block->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), framePointer(), instanceValue(), JSWebAssemblyInstance::offsetOfTemporaryCallFrame());
+        block->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), framePointer(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTemporaryCallFrame()));
 #else
         UNUSED_PARAM(block);
 #endif
@@ -849,10 +875,11 @@ private:
     void mutatorFence();
 
     Value* emitGetArrayPayloadBase(Wasm::StorageType, Value*);
+    Value* emitGetArraySizeWithNullCheck(Type arrayType, Value*);
     void emitNullCheck(Value*, ExceptionType);
     bool emitNullCheckBeforeAccess(Value*, ptrdiff_t offset);
     void emitArraySetUnchecked(uint32_t, Value*, Value*, Value*);
-    void emitArraySetUncheckedWithoutWriteBarrier(uint32_t, Value*, Value*, Value*);
+    bool emitArraySetUncheckedWithoutWriteBarrier(uint32_t, Value*, Value*, Value*);
     // Returns true if a writeBarrier/mutatorFence is needed.
     bool WARN_UNUSED_RETURN emitStructSet(bool canTrap, Value*, uint32_t, const StructType&, Value*);
     Value* WARN_UNUSED_RETURN allocateWasmGCArray(uint32_t typeIndex, Value* initValue, Value* size);
@@ -862,7 +889,6 @@ private:
     template <typename Generator>
     void emitCheckOrBranchForCast(CastKind, Value*, const Generator&, BasicBlock*);
     Value* emitLoadRTTFromObject(Value*);
-    Value* emitNotRTTKind(Value*, RTTKind);
 
     void unify(Value* phi, const ExpressionType source);
     void unifyValuesWithBlock(const Stack& resultStack, const ControlData& block);
@@ -877,7 +903,7 @@ private:
     void reloadMemoryRegistersFromInstance(const MemoryInformation&, Value* instance, BasicBlock*);
 
     Value* loadFromScratchBuffer(unsigned& indexInBuffer, Value* pointer, B3::Type);
-    void connectValuesAtEntrypoint(unsigned& indexInBuffer, Value* pointer, Stack& expressionStack, Variable* exceptionVariable);
+    void connectValuesAtEntrypoint(unsigned& indexInBuffer, Value* pointer, Stack& expressionStack);
     Value* emitCatchImpl(CatchKind, ControlType&, unsigned exceptionIndex = 0);
     void emitCatchTableImpl(ControlData& entryData, const ControlData::TryTableTarget&);
     RefPtr<PatchpointExceptionHandle> preparePatchpointForExceptions(BasicBlock*, PatchpointValue*);
@@ -957,12 +983,15 @@ private:
         return m_mode == MemoryMode::Signaling;
     }
 
+    Expected<Vector<ValueResults>, ErrorType> tryInliningPolymorphicCalls(unsigned callProfileIndex, Value* calleeInstance, Value* calleeCallee, const TypeDefinition& signature, const ArgumentList&, CallType, bool isTailCallRootCaller, BasicBlock* continuation);
+
     template<typename... Args>
     void traceValue(Type, Value*, Args&&... info);
     template<typename... Args>
     void traceCF(Args&&... info);
 
     FunctionParser<OMGIRGenerator>* m_parser { nullptr };
+    AbstractHeapRepository& m_heaps;
     CompilationContext& m_context;
     Module& m_module;
     CalleeGroup& m_calleeGroup;
@@ -973,7 +1002,7 @@ private:
     const CompilationMode m_compilationMode;
     const FunctionCodeIndex m_functionIndex;
     const unsigned m_loopIndexForOSREntry { UINT_MAX };
-    std::unique_ptr<MergedProfile> m_profile;
+    InliningNode* m_inlining { nullptr };
 
     struct RootBlock {
         BasicBlock* block;
@@ -991,8 +1020,6 @@ private:
     OMGIRGenerator* m_inlineParent { nullptr };
     Vector<Value*> m_inlinedArgs;
     Vector<Variable*> m_inlinedResults;
-    unsigned m_inlineDepth { 0 };
-    Checked<uint32_t> m_inlinedBytes { 0 };
 
     Vector<Variable*> m_locals;
     Vector<Variable*> m_stack;
@@ -1110,8 +1137,9 @@ void OMGIRGenerator::computeStackCheckSize(bool& needsOverflowCheck, int32_t& ch
     needsOverflowCheck = needsOverflowCheck || needUnderflowCheck;
 }
 
-OMGIRGenerator::OMGIRGenerator(CompilationContext& context, OMGIRGenerator& parentCaller, OMGIRGenerator& rootCaller, Module& module, CalleeGroup& calleeGroup, unsigned functionIndex, IPIntCallee& profiledCallee, BasicBlock* returnContinuation, Vector<Value*> args)
-    : m_context(context)
+OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext& context, OMGIRGenerator& parentCaller, OMGIRGenerator& rootCaller, Module& module, CalleeGroup& calleeGroup, unsigned functionIndex, IPIntCallee& profiledCallee, InliningNode* inlining, BasicBlock* returnContinuation, Vector<Value*> args)
+    : m_heaps(heaps)
+    , m_context(context)
     , m_module(module)
     , m_calleeGroup(calleeGroup)
     , m_info(rootCaller.m_info)
@@ -1121,13 +1149,12 @@ OMGIRGenerator::OMGIRGenerator(CompilationContext& context, OMGIRGenerator& pare
     , m_compilationMode(CompilationMode::OMGMode)
     , m_functionIndex(functionIndex)
     , m_loopIndexForOSREntry(-1)
-    , m_profile(module.createMergedProfile(profiledCallee))
+    , m_inlining(inlining)
     , m_proc(rootCaller.m_proc)
     , m_returnContinuation(returnContinuation)
     , m_inlineRoot(&rootCaller)
     , m_inlineParent(&parentCaller)
     , m_inlinedArgs(WTFMove(args))
-    , m_inlineDepth(parentCaller.m_inlineDepth + 1)
     , m_unlinkedWasmToWasmCalls(rootCaller.m_unlinkedWasmToWasmCalls)
     , m_directCallees(rootCaller.m_directCallees)
     , m_osrEntryScratchBufferSize(nullptr)
@@ -1147,8 +1174,9 @@ OMGIRGenerator::OMGIRGenerator(CompilationContext& context, OMGIRGenerator& pare
         m_hasExceptionHandlers = true;
 }
 
-OMGIRGenerator::OMGIRGenerator(CompilationContext& context, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, IPIntCallee& profiledCallee, OptimizingJITCallee& callee, Procedure& procedure, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, FixedBitVector& outgoingDirectCallees, unsigned& osrEntryScratchBufferSize, MemoryMode mode, CompilationMode compilationMode, unsigned functionIndex, unsigned loopIndexForOSREntry)
-    : m_context(context)
+OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext& context, Module& module, CalleeGroup& calleeGroup, const ModuleInformation& info, IPIntCallee& profiledCallee, InliningNode* inlining, OptimizingJITCallee& callee, Procedure& procedure, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, FixedBitVector& outgoingDirectCallees, unsigned& osrEntryScratchBufferSize, MemoryMode mode, CompilationMode compilationMode, unsigned functionIndex, unsigned loopIndexForOSREntry)
+    : m_heaps(heaps)
+    , m_context(context)
     , m_module(module)
     , m_calleeGroup(calleeGroup)
     , m_info(info)
@@ -1158,10 +1186,9 @@ OMGIRGenerator::OMGIRGenerator(CompilationContext& context, Module& module, Call
     , m_compilationMode(compilationMode)
     , m_functionIndex(functionIndex)
     , m_loopIndexForOSREntry(loopIndexForOSREntry)
-    , m_profile(module.createMergedProfile(profiledCallee))
+    , m_inlining(inlining)
     , m_proc(procedure)
     , m_inlineRoot(this)
-    , m_inlinedBytes(m_info.functionWasmSize(m_functionIndex))
     , m_unlinkedWasmToWasmCalls(unlinkedWasmToWasmCalls)
     , m_directCallees(outgoingDirectCallees)
     , m_osrEntryScratchBufferSize(&osrEntryScratchBufferSize)
@@ -1600,7 +1627,7 @@ auto OMGIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, Expr
 auto OMGIRGenerator::addRefFunc(FunctionSpaceIndex index, ExpressionType& result) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    result = push(callWasmOperation(m_currentBlock, B3::Int64, operationWasmRefFunc,
+    result = push(callWasmOperation(m_currentBlock, wasmRefType(), operationWasmRefFunc,
         instanceValue(), constant(toB3Type(Types::I32), index)));
     TRACE_VALUE(Wasm::Types::Funcref, get(result), "ref_func ", index);
     return { };
@@ -1732,6 +1759,29 @@ auto OMGIRGenerator::addCrash() -> PartialResult
     return { };
 }
 
+void OMGIRGenerator::fillCallResults(Value* callResult, const TypeDefinition& signature, ValueResults& results)
+{
+    B3::Type returnType = toB3ResultType(&signature);
+    ASSERT(returnType == callResult->type());
+
+    switch (returnType.kind()) {
+    case B3::Void: {
+        break;
+    }
+    case B3::Tuple: {
+        const Vector<B3::Type>& tuple = m_proc.tupleForType(returnType);
+        ASSERT(signature.as<FunctionSignature>()->returnCount() == tuple.size());
+        for (unsigned i = 0; i < signature.as<FunctionSignature>()->returnCount(); ++i)
+            results.append(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), tuple[i], callResult, i));
+        break;
+    }
+    default: {
+        results.append(callResult);
+        break;
+    }
+    }
+}
+
 auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const TypeDefinition& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
 {
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
@@ -1797,15 +1847,15 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         patchpoint->append(boxedCalleeCallee, ValueRep::SomeRegister);
         patchArgsIndex += m_proc.resultCount(patchpoint->type());
         patchpoint->setGenerator([prepareForCall = prepareForCall, patchArgsIndex](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
             prepareForCall->run(jit, params);
             jit.storeWasmCalleeToCalleeCallFrame(params[patchArgsIndex + 1].gpr(), sizeof(CallerFrameAndPC) - prologueStackPointerDelta());
+            // Allow scratch after the callee is stored, which could be in the scratch register.
+            AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.farJump(params[patchArgsIndex].gpr(), WasmEntryPtrTag);
         });
         return { };
     }
 
-    B3::Type returnType = toB3ResultType(&signature);
     auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
     // We need to clobber all potential pinned registers since we might be leaving the instance.
     // We pessimistically assume we're always calling something that is bounds checking so
@@ -1830,23 +1880,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         // Restore the stack pointer since it may have been lowered if our callee did a tail call.
         jit.addPtr(CCallHelpers::TrustedImm32(-params.code().frameSize()), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
     });
-    auto callResult = patchpoint;
-
-    switch (returnType.kind()) {
-    case B3::Void: {
-        break;
-    }
-    case B3::Tuple: {
-        const Vector<B3::Type>& tuple = m_proc.tupleForType(returnType);
-        for (unsigned i = 0; i < signature.as<FunctionSignature>()->returnCount(); ++i)
-            results.append(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), tuple[i], callResult, i));
-        break;
-    }
-    default: {
-        results.append(callResult);
-        break;
-    }
-    }
+    fillCallResults(patchpoint, signature, results);
 
     // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
     restoreWebAssemblyGlobalState(m_info.memory, instanceValue(), m_currentBlock);
@@ -1868,12 +1902,13 @@ auto OMGIRGenerator::addCurrentMemory(ExpressionType& result) -> PartialResult
     static_assert(sizeof(std::declval<Memory*>()->size()) == sizeof(uintptr_t), "codegen relies on this size");
 
     Value* size = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemorySize()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedMemorySize, size);
 
     constexpr uint32_t shiftValue = 16;
     static_assert(PageCount::pageSize == 1ull << shiftValue, "This must hold for the code below to be correct.");
     Value* numPages = m_currentBlock->appendNew<Value>(m_proc, ZShr, origin(), size, constant(Int32, shiftValue));
 
-    result = push(m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), numPages));
+    result = push(int32OfPointer(numPages));
 
     return { };
 }
@@ -1881,6 +1916,8 @@ auto OMGIRGenerator::addCurrentMemory(ExpressionType& result) -> PartialResult
 auto OMGIRGenerator::addMemoryFill(ExpressionType dstAddress, ExpressionType target, ExpressionType count) -> PartialResult
 {
     auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemorySize()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedMemorySize, memorySize);
+
     auto* dstAddressValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(dstAddress));
     auto* targetValue = get(target);
     auto* countValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(count));
@@ -1921,6 +1958,8 @@ auto OMGIRGenerator::addMemoryInit(unsigned dataSegmentIndex, ExpressionType dst
 auto OMGIRGenerator::addMemoryCopy(ExpressionType dstAddress, ExpressionType srcAddress, ExpressionType count) -> PartialResult
 {
     auto* memorySize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedMemorySize()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedMemorySize, memorySize);
+
     auto* dstAddressValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(dstAddress));
     auto* srcAddressValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(srcAddress));
     auto* countValue = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), get(count));
@@ -2079,13 +2118,46 @@ auto OMGIRGenerator::getGlobal(uint32_t index, ExpressionType& result) -> Partia
 {
     const Wasm::GlobalInformation& global = m_info.globals[index];
     switch (global.bindingMode) {
-    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index))));
+    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+        switch (global.type.kind) {
+        case TypeKind::I32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], value);
+            break;
+        case TypeKind::F32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_f32[index], value);
+            break;
+        case TypeKind::I64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i64[index], value);
+            break;
+        case TypeKind::F64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_f64[index], value);
+            break;
+        case TypeKind::V128:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_v128[index], value);
+            break;
+        default:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_ref[index], value);
+            break;
+        }
+        if (global.mutability == Mutability::Immutable) {
+            value->setReadsMutability(B3::Mutability::Immutable);
+            value->setControlDependent(false);
+        }
+        result = push(value);
         break;
+    }
     case Wasm::GlobalInformation::BindingMode::Portable: {
         ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        Value* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
-        result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), pointer));
+        auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_portableGlobals[index], pointer);
+        pointer->setReadsMutability(B3::Mutability::Immutable);
+        pointer->setControlDependent(false);
+
+        auto* load = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(global.type), origin(), pointer, safeCast<int32_t>(Wasm::Global::Value::offsetOfValue()));
+        m_heaps.decorateMemory(&m_heaps.WasmGlobalValue_value, load);
+
+        result = push(load);
         break;
     }
     }
@@ -2101,21 +2173,57 @@ auto OMGIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
     TRACE_VALUE(global.type, get(value), "set_global ", index);
 
     switch (global.bindingMode) {
-    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
-        m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+    case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance: {
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+        switch (global.type.kind) {
+        case TypeKind::I32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i32[index], store);
+            break;
+        case TypeKind::F32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_f32[index], store);
+            break;
+        case TypeKind::I64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_i64[index], store);
+            break;
+        case TypeKind::F64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_f64[index], store);
+            break;
+        case TypeKind::V128:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_v128[index], store);
+            break;
+        default:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_embeddedGlobals_ref[index], store);
+            break;
+        }
         if (isRefType(global.type))
             emitWriteBarrierForJSWrapper();
         break;
+    }
     case Wasm::GlobalInformation::BindingMode::Portable: {
         ASSERT(global.mutability == Wasm::Mutability::Mutable);
-        Value* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
-        m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), pointer);
+        auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGlobal(m_info, index)));
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_portableGlobals[index], pointer);
+        pointer->setReadsMutability(B3::Mutability::Immutable);
+        pointer->setControlDependent(false);
+
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), get(value), static_cast<Value*>(pointer), safeCast<int32_t>(Wasm::Global::Value::offsetOfValue()));
+        m_heaps.decorateMemory(&m_heaps.WasmGlobalValue_value, store);
+
         // We emit a write-barrier onto JSWebAssemblyGlobal, not JSWebAssemblyInstance.
         if (isRefType(global.type)) {
-            Value* cell = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), pointer, Wasm::Global::offsetOfOwner() - Wasm::Global::offsetOfValue());
+            auto* cell = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), pointer, safeCast<int32_t>(Wasm::Global::Value::offsetOfOwner()));
+            m_heaps.decorateMemory(&m_heaps.WasmGlobalValue_owner, cell);
+            cell->setControlDependent(false);
+
             Value* cellState = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), cell, safeCast<int32_t>(JSCell::cellStateOffset()));
-            Value* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+            m_heaps.decorateMemory(&m_heaps.JSCell_cellState, cellState);
+
+            auto* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_vm, vm);
+            vm->setControlDependent(false);
+
             Value* threshold = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapBarrierThreshold()));
+            m_heaps.decorateMemory(&m_heaps.VM_heap_barrierThreshold, threshold);
 
             BasicBlock* fenceCheckPath = m_proc.addBlock();
             BasicBlock* fencePath = m_proc.addBlock();
@@ -2130,6 +2238,8 @@ auto OMGIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
             m_currentBlock = fenceCheckPath;
 
             Value* shouldFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapMutatorShouldBeFenced()));
+            m_heaps.decorateMemory(&m_heaps.VM_heap_mutatorShouldBeFenced, shouldFence);
+
             m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
                 shouldFence,
                 FrequentedBlock(fencePath), FrequentedBlock(doSlowPath));
@@ -2143,6 +2253,8 @@ auto OMGIRGenerator::setGlobal(uint32_t index, ExpressionType value) -> PartialR
             });
 
             Value* cellStateLoadAfterFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), cell, safeCast<int32_t>(JSCell::cellStateOffset()));
+            m_heaps.decorateMemory(&m_heaps.JSCell_cellState, cellStateLoadAfterFence);
+
             m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
                 m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellStateLoadAfterFence, constant(Int32, blackThreshold)),
                 FrequentedBlock(continuation), FrequentedBlock(doSlowPath, FrequencyClass::Rare));
@@ -2170,8 +2282,14 @@ inline void OMGIRGenerator::emitWriteBarrierForJSWrapper()
 inline void OMGIRGenerator::emitWriteBarrier(Value* cell, Value* instanceCell)
 {
     Value* cellState = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), cell, safeCast<int32_t>(JSCell::cellStateOffset()));
-    Value* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceCell, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+    m_heaps.decorateMemory(&m_heaps.JSCell_cellState, cellState);
+
+    auto* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceCell, safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_vm, vm);
+    vm->setControlDependent(false);
+
     Value* threshold = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapBarrierThreshold()));
+    m_heaps.decorateMemory(&m_heaps.VM_heap_barrierThreshold, threshold);
 
     BasicBlock* fenceCheckPath = m_proc.addBlock();
     BasicBlock* fencePath = m_proc.addBlock();
@@ -2186,6 +2304,8 @@ inline void OMGIRGenerator::emitWriteBarrier(Value* cell, Value* instanceCell)
     m_currentBlock = fenceCheckPath;
 
     Value* shouldFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapMutatorShouldBeFenced()));
+    m_heaps.decorateMemory(&m_heaps.VM_heap_mutatorShouldBeFenced, shouldFence);
+
     m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
         shouldFence,
         FrequentedBlock(fencePath), FrequentedBlock(doSlowPath));
@@ -2199,6 +2319,8 @@ inline void OMGIRGenerator::emitWriteBarrier(Value* cell, Value* instanceCell)
     });
 
     Value* cellStateLoadAfterFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), cell, safeCast<int32_t>(JSCell::cellStateOffset()));
+    m_heaps.decorateMemory(&m_heaps.JSCell_cellState, cellStateLoadAfterFence);
+
     m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
         m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellStateLoadAfterFence, constant(Int32, blackThreshold)),
         FrequentedBlock(continuation), FrequentedBlock(doSlowPath, FrequencyClass::Rare));
@@ -2222,8 +2344,9 @@ inline Value* OMGIRGenerator::emitCheckAndPreparePointer(Value* pointer, uint32_
         // We're not using signal handling only when the memory is not shared.
         // Regardless of signaling, we must check that no memory access exceeds the current memory size.
         static_assert(GPRInfo::wasmBoundsCheckingSizeRegister != InvalidGPRReg);
-        ASSERT(sizeOfOperation + offset > offset);
-        m_currentBlock->appendNew<WasmBoundsCheckValue>(m_proc, origin(), GPRInfo::wasmBoundsCheckingSizeRegister, pointer, sizeOfOperation + offset - 1);
+        uint64_t lastLoadedOffset = static_cast<uint64_t>(offset);
+        lastLoadedOffset += static_cast<uint64_t>(sizeOfOperation - 1);
+        m_currentBlock->appendNew<WasmBoundsCheckValue>(m_proc, origin(), GPRInfo::wasmBoundsCheckingSizeRegister, pointer, lastLoadedOffset);
         break;
     }
 
@@ -2240,7 +2363,9 @@ inline Value* OMGIRGenerator::emitCheckAndPreparePointer(Value* pointer, uint32_
         // any access equal to or greater than 4GiB will trap, no need to add the redzone.
         if (offset >= Memory::fastMappedRedzoneBytes()) {
             size_t maximum = m_info.memory.maximum() ? m_info.memory.maximum().bytes() : std::numeric_limits<uint32_t>::max();
-            m_currentBlock->appendNew<WasmBoundsCheckValue>(m_proc, origin(), pointer, sizeOfOperation + offset - 1, maximum);
+            uint64_t lastLoadedOffset = static_cast<uint64_t>(offset);
+            lastLoadedOffset += static_cast<uint64_t>(sizeOfOperation - 1);
+            m_currentBlock->appendNew<WasmBoundsCheckValue>(m_proc, origin(), pointer, lastLoadedOffset, maximum);
         }
         break;
     }
@@ -2288,65 +2413,87 @@ inline Value* OMGIRGenerator::emitLoadOp(LoadOpType op, Value* pointer, uint32_t
 
     switch (op) {
     case LoadOpType::I32Load8S: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::I64Load8S: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8S), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I32Load8U: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::I64Load8U: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I32Load16S: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::I64Load16S: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16S), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I32Load16U: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::I64Load16U: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I32Load: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::I64Load32U: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), value);
     }
 
     case LoadOpType::I64Load32S: {
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int32, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
         return m_currentBlock->appendNew<Value>(m_proc, SExt32, origin(), value);
     }
 
     case LoadOpType::I64Load: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int64, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Int64, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::F32Load: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Float, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Float, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
 
     case LoadOpType::F64Load: {
-        return m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Double, origin(), pointer, offset);
+        auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), Double, origin(), pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+        return value;
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2426,17 +2573,21 @@ inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* v
         value = m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), value);
         [[fallthrough]];
 
-    case StoreOpType::I32Store8:
-        m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store8), origin(), value, pointer, offset);
+    case StoreOpType::I32Store8: {
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store8), origin(), value, pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
+    }
 
     case StoreOpType::I64Store16:
         value = m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), value);
         [[fallthrough]];
 
-    case StoreOpType::I32Store16:
-        m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store16), origin(), value, pointer, offset);
+    case StoreOpType::I32Store16: {
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store16), origin(), value, pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
+    }
 
     case StoreOpType::I64Store32:
         value = m_currentBlock->appendNew<Value>(m_proc, Trunc, origin(), value);
@@ -2445,9 +2596,11 @@ inline void OMGIRGenerator::emitStoreOp(StoreOpType op, Value* pointer, Value* v
     case StoreOpType::I64Store:
     case StoreOpType::I32Store:
     case StoreOpType::F32Store:
-    case StoreOpType::F64Store:
-        m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), value, pointer, offset);
+    case StoreOpType::F64Store: {
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), value, pointer, offset);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
         return;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -2540,7 +2693,10 @@ inline Value* OMGIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueTyp
         break;
     }
 
-    return sanitizeAtomicResult(op, valueType, m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchgAdd), origin(), accessWidth(op), value, pointer));
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchgAdd), origin(), accessWidth(op), value, pointer);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
+    m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
+    return sanitizeAtomicResult(op, valueType, atomic);
 }
 
 auto OMGIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType& result, uint32_t offset) -> PartialResult
@@ -2578,7 +2734,9 @@ inline void OMGIRGenerator::emitAtomicStoreOp(ExtAtomicOpType op, Type valueType
 
     if (valueType.isI64() && accessWidth(op) != Width64)
         value = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
-    m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchg), origin(), accessWidth(op), value, pointer);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchg), origin(), accessWidth(op), value, pointer);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
+    m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
 }
 
 auto OMGIRGenerator::atomicStore(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, uint32_t offset) -> PartialResult
@@ -2666,7 +2824,10 @@ inline Value* OMGIRGenerator::emitAtomicBinaryRMWOp(ExtAtomicOpType op, Type val
     if (valueType.isI64() && accessWidth(op) != Width64)
         value = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
 
-    return sanitizeAtomicResult(op, valueType, m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(opcode), origin(), accessWidth(op), value, pointer));
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(opcode), origin(), accessWidth(op), value, pointer);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
+    m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
+    return sanitizeAtomicResult(op, valueType, atomic);
 }
 
 auto OMGIRGenerator::atomicBinaryRMW(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
@@ -2704,8 +2865,12 @@ Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueT
 
     Width accessWidth = Wasm::accessWidth(op);
 
-    if (widthForType(toB3Type(valueType)) == accessWidth)
-        return sanitizeAtomicResult(op, valueType, m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, expected, value, pointer));
+    if (widthForType(toB3Type(valueType)) == accessWidth) {
+        auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, expected, value, pointer);
+        m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
+        m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
+        return sanitizeAtomicResult(op, valueType, atomic);
+    }
 
     Value* maximum = nullptr;
     switch (valueType.kind) {
@@ -2754,12 +2919,15 @@ Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueT
         truncatedValue = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), value);
     }
 
-    auto result = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, truncatedExpected, truncatedValue, pointer);
-    return sanitizeAtomicResult(op, valueType, result);
+    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicStrongCAS), origin(), accessWidth, truncatedExpected, truncatedValue, pointer);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
+    m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
+    return sanitizeAtomicResult(op, valueType, atomic);
 }
 
 bool WARN_UNUSED_RETURN OMGIRGenerator::emitStructSet(bool canTrap, Value* structValue, uint32_t fieldIndex, const StructType& structType, Value* argument)
 {
+    structValue = pointerOfWasmRef(structValue);
     auto fieldType = structType.field(fieldIndex).type;
     int32_t fieldOffset = fixupPointerPlusOffset(structValue, JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex));
 
@@ -2770,20 +2938,46 @@ bool WARN_UNUSED_RETURN OMGIRGenerator::emitStructSet(bool canTrap, Value* struc
     };
 
     if (fieldType.is<PackedType>()) {
-        switch (structType.field(fieldIndex).type.as<PackedType>()) {
-        case PackedType::I8:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Store8)), origin(), argument, structValue, fieldOffset);
+        switch (fieldType.as<PackedType>()) {
+        case PackedType::I8: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Store8), origin(), argument, structValue, fieldOffset);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i8[fieldIndex], store);
             return false;
-        case PackedType::I16:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Store16)), origin(), argument, structValue, fieldOffset);
+        }
+        case PackedType::I16: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Store16), origin(), argument, structValue, fieldOffset);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i16[fieldIndex], store);
             return false;
+        }
         }
     }
 
     ASSERT(fieldType.is<Type>());
-    m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Store)), origin(), argument, structValue, fieldOffset);
+    auto resultType = fieldType.unpacked();
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Store), origin(), argument, structValue, fieldOffset);
+    switch (resultType.kind) {
+    case TypeKind::I32:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i32[fieldIndex], store);
+        break;
+    case TypeKind::F32:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_f32[fieldIndex], store);
+        break;
+    case TypeKind::I64:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i64[fieldIndex], store);
+        break;
+    case TypeKind::F64:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_f64[fieldIndex], store);
+        break;
+    case TypeKind::V128:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_v128[fieldIndex], store);
+        break;
+    default:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_ref[fieldIndex], store);
+        break;
+    }
+
     // FIXME: We should be able elide this write barrier if we know we're storing jsNull();
-    return isRefType(fieldType.unpacked());
+    return isRefType(resultType);
 }
 
 auto OMGIRGenerator::atomicCompareExchange(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType expected, ExpressionType value, ExpressionType& result, uint32_t offset) -> PartialResult
@@ -3057,8 +3251,8 @@ auto OMGIRGenerator::addI31GetU(TypedExpression reference, ExpressionType& resul
     if (reference.type().isNullable())
         emitNullCheck(value, ExceptionType::NullI31Get);
 
-    Value* masked = m_currentBlock->appendNew<Value>(m_proc, B3::BitAnd, origin(), value, constant(Int64, 0x7fffffff));
-    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::Trunc, origin(), masked));
+    Value* masked = m_currentBlock->appendNew<Value>(m_proc, B3::BitAnd, origin(), int32OfPointer(pointerOfWasmRef(value)), constant(Int32, 0x7fffffff));
+    result = push(masked);
     return { };
 }
 
@@ -3074,7 +3268,7 @@ Value* OMGIRGenerator::allocateWasmGCArray(uint32_t typeIndex, Value* initValue,
     auto* continuation = m_proc.addBlock();
 
     auto* payload = emitGetArrayPayloadBase(elementType, object);
-    auto* remainingUpsilon = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), size));
+    auto* remainingUpsilon = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), pointerOfInt32(size));
 
     m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), loopHeader);
     loopHeader->addPredecessor(m_currentBlock);
@@ -3098,16 +3292,40 @@ Value* OMGIRGenerator::allocateWasmGCArray(uint32_t typeIndex, Value* initValue,
 
     if (elementType.is<PackedType>()) {
         switch (elementType.as<PackedType>()) {
-        case PackedType::I8:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, Store8, origin(), initValue, indexedAddress);
+        case PackedType::I8: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store8, origin(), initValue, indexedAddress);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_i8.atAnyNumber(), store);
             break;
-        case PackedType::I16:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, Store16, origin(), initValue, indexedAddress);
+        }
+        case PackedType::I16: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store16, origin(), initValue, indexedAddress);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_i16.atAnyNumber(), store);
             break;
+        }
         }
     } else {
         ASSERT(elementType.is<Type>());
-        m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), initValue, indexedAddress);
+        auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), initValue, indexedAddress);
+        switch (elementType.unpacked().kind) {
+        case TypeKind::I32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_i32.atAnyNumber(), store);
+            break;
+        case TypeKind::F32:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_f32.atAnyNumber(), store);
+            break;
+        case TypeKind::I64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_i64.atAnyNumber(), store);
+            break;
+        case TypeKind::F64:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_f64.atAnyNumber(), store);
+            break;
+        case TypeKind::V128:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_v128.atAnyNumber(), store);
+            break;
+        default:
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_ref.atAnyNumber(), store);
+            break;
+        }
     }
     m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), FrequentedBlock(loopHeader));
     loopHeader->addPredecessor(m_currentBlock);
@@ -3222,6 +3440,22 @@ auto OMGIRGenerator::addArrayNewFixed(uint32_t typeIndex, ArgumentList& args, Ex
     return { };
 }
 
+Value* OMGIRGenerator::emitGetArraySizeWithNullCheck(Type arrayType, Value* array)
+{
+    int32_t offset = safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize());
+    bool canTrap = false;
+    if (arrayType.isNullable())
+        canTrap = emitNullCheckBeforeAccess(array, offset);
+    auto wrapTrapping = [&](auto input) -> B3::Kind {
+        if (canTrap)
+            return trapping(input);
+        return input;
+    };
+    auto* arraySize = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), Int32, origin(), pointerOfWasmRef(array), offset);
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_size, arraySize);
+    return arraySize;
+}
+
 auto OMGIRGenerator::addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, TypedExpression arrayref, ExpressionType index, ExpressionType& result) -> PartialResult
 {
     auto arrayValue = get(arrayref);
@@ -3230,19 +3464,8 @@ auto OMGIRGenerator::addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, T
     getArrayElementType(typeIndex, elementType);
     Wasm::Type resultType = elementType.unpacked();
 
-    // Ensure arrayref is non-null.
-    ptrdiff_t offset = safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize());
-    bool canTrap = false;
-    if (arrayref.type().isNullable())
-        canTrap = emitNullCheckBeforeAccess(arrayValue, offset);
-    auto wrapTrapping = [&](auto input) -> B3::Kind {
-        if (canTrap)
-            return trapping(input);
-        return input;
-    };
-
     // Check array bounds.
-    Value* arraySize = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), Int32, origin(), arrayValue, offset);
+    auto* arraySize = emitGetArraySizeWithNullCheck(arrayref.type(), arrayValue);
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
             m_currentBlock->appendNew<Value>(m_proc, AboveEqual, origin(), indexValue, arraySize));
@@ -3252,18 +3475,38 @@ auto OMGIRGenerator::addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, T
     }
 
     Value* payloadBase = emitGetArrayPayloadBase(elementType, arrayValue);
-    indexValue = is32Bit() ? indexValue : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), indexValue);
     Value* indexedAddress = m_currentBlock->appendNew<Value>(m_proc, Add, pointerType(), origin(), payloadBase,
-        m_currentBlock->appendNew<Value>(m_proc, Mul, pointerType(), origin(), indexValue, constant(pointerType(), elementType.elementSize())));
+        m_currentBlock->appendNew<Value>(m_proc, Mul, pointerType(), origin(),
+            pointerOfInt32(indexValue),
+            constant(pointerType(), elementType.elementSize())));
+
+    auto decorateWithIndex = [&](MemoryValue* load, NumberedAbstractHeap& heap, Value* indexValue) {
+        // FIXME: we should do this decoration after we found that indexValue is a constant.
+        // But right now, the current mechanism requires constant at the frontend level.
+        // We may need to modelthis WasmArrayGet as is in B3 initially, doing optimization
+        // and lower it to these sequence in the middle of the pipeline.
+        // The logic is the same to what FTL is doing. But FTL already does constant folding onto FTL SSA,
+        // while OMG B3 is not at this stage.
+        if (indexValue->hasInt32()) {
+            int32_t index = indexValue->asInt32();
+            if (index >= 0) {
+                m_heaps.decorateMemory(&heap[index], load);
+                return;
+            }
+        }
+        m_heaps.decorateMemory(&heap.atAnyNumber(), load);
+    };
 
     if (elementType.is<PackedType>()) {
-        Value* load;
+        MemoryValue* load;
         switch (elementType.as<PackedType>()) {
         case PackedType::I8:
-            load = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), Int32, origin(), indexedAddress);
+            load = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), indexedAddress);
+            decorateWithIndex(load, m_heaps.JSWebAssemblyArray_i8, indexValue);
             break;
         case PackedType::I16:
-            load = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z), Int32, origin(), indexedAddress);
+            load = m_currentBlock->appendNew<MemoryValue>(m_proc, Load16Z, Int32, origin(), indexedAddress);
+            decorateWithIndex(load, m_heaps.JSWebAssemblyArray_i16, indexValue);
             break;
         }
         Value* postProcess = load;
@@ -3287,7 +3530,29 @@ auto OMGIRGenerator::addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, T
     }
 
     ASSERT(elementType.is<Type>());
-    result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), toB3Type(resultType), origin(), indexedAddress));
+    auto* load = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(resultType), origin(), indexedAddress);
+    switch (resultType.kind) {
+    case TypeKind::I32:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_i32, indexValue);
+        break;
+    case TypeKind::F32:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_f32, indexValue);
+        break;
+    case TypeKind::I64:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_i64, indexValue);
+        break;
+    case TypeKind::F64:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_f64, indexValue);
+        break;
+    case TypeKind::V128:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_v128, indexValue);
+        break;
+    default:
+        decorateWithIndex(load, m_heaps.JSWebAssemblyArray_ref, indexValue);
+        break;
+    }
+
+    result = push(load);
 
     return { };
 }
@@ -3318,9 +3583,9 @@ bool OMGIRGenerator::emitNullCheckBeforeAccess(Value* ref, ptrdiff_t offset)
 
 Value* OMGIRGenerator::emitGetArrayPayloadBase(Wasm::StorageType fieldType, Value* arrayref)
 {
-    auto payloadBase = m_currentBlock->appendNew<Value>(m_proc, Add, pointerType(), origin(), arrayref, constant(pointerType(), JSWebAssemblyArray::offsetOfData()));
+    auto payloadBase = m_currentBlock->appendNew<Value>(m_proc, Add, pointerType(), origin(), pointerOfWasmRef(arrayref), constant(pointerType(), JSWebAssemblyArray::offsetOfData()));
     if (JSWebAssemblyArray::needsAlignmentCheck(fieldType)) {
-        auto isPreciseAllocation = m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), arrayref, constant(pointerType(), PreciseAllocation::halfAlignment));
+        auto isPreciseAllocation = m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), pointerOfWasmRef(arrayref), constant(pointerType(), PreciseAllocation::halfAlignment));
         return m_currentBlock->appendNew<Value>(m_proc, B3::Select, origin(), isPreciseAllocation,
             payloadBase,
             m_currentBlock->appendNew<Value>(m_proc, Add, origin(), payloadBase, constant(pointerType(), JSWebAssemblyArray::v128AlignmentShift)));
@@ -3330,39 +3595,78 @@ Value* OMGIRGenerator::emitGetArrayPayloadBase(Wasm::StorageType fieldType, Valu
 
 // Does the array set without null check and bounds checks -- can be
 // called directly by addArrayNewFixed()
-void OMGIRGenerator::emitArraySetUncheckedWithoutWriteBarrier(uint32_t typeIndex, Value* arrayref, Value* index, Value* setValue)
+bool OMGIRGenerator::emitArraySetUncheckedWithoutWriteBarrier(uint32_t typeIndex, Value* arrayref, Value* indexValue, Value* setValue)
 {
     StorageType elementType;
     getArrayElementType(typeIndex, elementType);
 
     auto payloadBase = emitGetArrayPayloadBase(elementType, arrayref);
-    auto indexValue = is32Bit() ? index : m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), index);
     auto indexedAddress = m_currentBlock->appendNew<Value>(m_proc, Add, pointerType(), origin(), payloadBase,
-        m_currentBlock->appendNew<Value>(m_proc, Mul, pointerType(), origin(), indexValue, constant(pointerType(), elementType.elementSize())));
+        m_currentBlock->appendNew<Value>(m_proc, Mul, pointerType(), origin(), pointerOfInt32(indexValue), constant(pointerType(), elementType.elementSize())));
+
+    auto decorateWithIndex = [&](MemoryValue* store, NumberedAbstractHeap& heap, Value* indexValue) {
+        // FIXME: we should do this decoration after we found that indexValue is a constant.
+        // But right now, the current mechanism requires constant at the frontend level.
+        // We may need to modelthis WasmArrayGet as is in B3 initially, doing optimization
+        // and lower it to these sequence in the middle of the pipeline.
+        // The logic is the same to what FTL is doing. But FTL already does constant folding onto FTL SSA,
+        // while OMG B3 is not at this stage.
+        if (indexValue->hasInt32()) {
+            int32_t index = indexValue->asInt32();
+            if (index >= 0) {
+                m_heaps.decorateMemory(&heap[index], store);
+                return;
+            }
+        }
+        m_heaps.decorateMemory(&heap.atAnyNumber(), store);
+    };
 
     if (elementType.is<PackedType>()) {
         switch (elementType.as<PackedType>()) {
-        case PackedType::I8:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store8), origin(), setValue, indexedAddress);
-            break;
-        case PackedType::I16:
-            m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store16), origin(), setValue, indexedAddress);
+        case PackedType::I8: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store8, origin(), setValue, indexedAddress);
+            decorateWithIndex(store, m_heaps.JSWebAssemblyArray_i8, indexValue);
             break;
         }
-        return;
+        case PackedType::I16: {
+            auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store16, origin(), setValue, indexedAddress);
+            decorateWithIndex(store, m_heaps.JSWebAssemblyArray_i16, indexValue);
+            break;
+        }
+        }
+        return false;
     }
 
     ASSERT(elementType.is<Type>());
-    m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), setValue, indexedAddress);
+    auto resultType = elementType.unpacked();
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, Store, origin(), setValue, indexedAddress);
+    switch (resultType.kind) {
+    case TypeKind::I32:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_i32, indexValue);
+        break;
+    case TypeKind::F32:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_f32, indexValue);
+        break;
+    case TypeKind::I64:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_i64, indexValue);
+        break;
+    case TypeKind::F64:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_f64, indexValue);
+        break;
+    case TypeKind::V128:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_v128, indexValue);
+        break;
+    default:
+        decorateWithIndex(store, m_heaps.JSWebAssemblyArray_ref, indexValue);
+        break;
+    }
+    return isRefType(elementType.unpacked());
 }
 
 void OMGIRGenerator::emitArraySetUnchecked(uint32_t typeIndex, Value* arrayref, Value* index, Value* setValue)
 {
-    emitArraySetUncheckedWithoutWriteBarrier(typeIndex, arrayref, index, setValue);
-    StorageType elementType;
-    getArrayElementType(typeIndex, elementType);
-    if (isRefType(elementType.unpacked()))
-        emitWriteBarrier(arrayref, instanceValue());
+    if (emitArraySetUncheckedWithoutWriteBarrier(typeIndex, arrayref, index, setValue))
+        emitWriteBarrier(pointerOfWasmRef(arrayref), instanceValue());
 }
 
 
@@ -3377,19 +3681,8 @@ auto OMGIRGenerator::addArraySet(uint32_t typeIndex, TypedExpression arrayref, E
     auto indexValue = get(index);
     auto valueValue = get(value);
 
-    // Ensure arrayref is non-null.
-    ptrdiff_t offset = safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize());
-    bool canTrap = false;
-    if (arrayref.type().isNullable())
-        canTrap = emitNullCheckBeforeAccess(arrayValue, offset);
-    auto wrapTrapping = [&](auto input) -> B3::Kind {
-        if (canTrap)
-            return trapping(input);
-        return input;
-    };
-
     // Check array bounds.
-    Value* arraySize = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), Int32, origin(), arrayValue, offset);
+    auto* arraySize = emitGetArraySizeWithNullCheck(arrayref.type(), arrayValue);
     {
         CheckValue* check = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(),
             m_currentBlock->appendNew<Value>(m_proc, AboveEqual, origin(), indexValue, arraySize));
@@ -3407,18 +3700,9 @@ auto OMGIRGenerator::addArrayLen(TypedExpression arrayref, ExpressionType& resul
 {
     auto arrayValue = get(arrayref);
 
-    // Ensure arrayref is non-null.
-    ptrdiff_t offset = safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize());
-    bool canTrap = false;
-    if (arrayref.type().isNullable())
-        canTrap = emitNullCheckBeforeAccess(arrayValue, offset);
-    auto wrapTrapping = [&](auto input) -> B3::Kind {
-        if (canTrap)
-            return trapping(input);
-        return input;
-    };
+    auto* arraySize = emitGetArraySizeWithNullCheck(arrayref.type(), arrayValue);
 
-    result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), Int32, origin(), arrayValue, offset));
+    result = push(arraySize);
 
     return { };
 }
@@ -3586,11 +3870,12 @@ auto OMGIRGenerator::addStructNewDefault(uint32_t typeIndex, ExpressionType& res
 auto OMGIRGenerator::addStructGet(ExtGCOpType structGetKind, TypedExpression structReference, const StructType& structType, uint32_t fieldIndex, ExpressionType& result) -> PartialResult
 {
     auto fieldType = structType.field(fieldIndex).type;
+    auto mutability = structType.field(fieldIndex).mutability;
     auto resultType = fieldType.unpacked();
 
     Value* structValue = get(structReference);
 
-    ptrdiff_t fieldOffset = fixupPointerPlusOffset(structValue, JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex));
+    int32_t fieldOffset = fixupPointerPlusOffset(structValue, JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex));
     bool canTrap = false;
     if (structReference.type().isNullable())
         canTrap = emitNullCheckBeforeAccess(structValue, fieldOffset);
@@ -3599,17 +3884,22 @@ auto OMGIRGenerator::addStructGet(ExtGCOpType structGetKind, TypedExpression str
             return trapping(input);
         return input;
     };
+    structValue = pointerOfWasmRef(structValue);
 
     if (fieldType.is<PackedType>()) {
-        Value* load;
+        MemoryValue* load;
         switch (fieldType.as<PackedType>()) {
         case PackedType::I8:
-            load = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Load8Z)), Int32, origin(), structValue, fieldOffset);
+            load = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load8Z), Int32, origin(), structValue, fieldOffset);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i8[fieldIndex], load);
             break;
         case PackedType::I16:
-            load = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Load16Z)), Int32, origin(), structValue, fieldOffset);
+            load = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load16Z), Int32, origin(), structValue, fieldOffset);
+            m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i16[fieldIndex], load);
             break;
         }
+        if (mutability == Mutability::Immutable)
+            load->setReadsMutability(B3::Mutability::Immutable);
         Value* postProcess = load;
         switch (structGetKind) {
         case ExtGCOpType::StructGetU:
@@ -3629,7 +3919,30 @@ auto OMGIRGenerator::addStructGet(ExtGCOpType structGetKind, TypedExpression str
     }
 
     ASSERT(fieldType.is<Type>());
-    result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(memoryKind(Load)), toB3Type(resultType), origin(), structValue, fieldOffset));
+    auto* load = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), toB3Type(resultType), origin(), structValue, fieldOffset);
+    switch (resultType.kind) {
+    case TypeKind::I32:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i32[fieldIndex], load);
+        break;
+    case TypeKind::F32:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_f32[fieldIndex], load);
+        break;
+    case TypeKind::I64:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_i64[fieldIndex], load);
+        break;
+    case TypeKind::F64:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_f64[fieldIndex], load);
+        break;
+    case TypeKind::V128:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_v128[fieldIndex], load);
+        break;
+    default:
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_ref[fieldIndex], load);
+        break;
+    }
+    if (mutability == Mutability::Immutable)
+        load->setReadsMutability(B3::Mutability::Immutable);
+    result = push(load);
 
     return { };
 }
@@ -3639,14 +3952,14 @@ auto OMGIRGenerator::addStructSet(TypedExpression structReference, const StructT
     Value* structValue = get(structReference);
     Value* valueValue = get(value);
 
-    ptrdiff_t fieldOffset = fixupPointerPlusOffset(structValue, JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex));
+    int32_t fieldOffset = fixupPointerPlusOffset(structValue, JSWebAssemblyStruct::offsetOfData() + structType.offsetOfFieldInPayload(fieldIndex));
     bool canTrap = false;
     if (structReference.type().isNullable())
         canTrap = emitNullCheckBeforeAccess(structValue, fieldOffset);
 
     bool needsWriteBarrier = emitStructSet(canTrap, structValue, fieldIndex, structType, valueValue);
     if (needsWriteBarrier)
-        emitWriteBarrier(structValue, instanceValue());
+        emitWriteBarrier(pointerOfWasmRef(structValue), instanceValue());
     return { };
 }
 
@@ -3790,7 +4103,9 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
             if (!reference.type().definitelyIsCellOrNull())
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), value, constant(pointerType(), JSValue::NotCellMask)), castFailure, falseBlock);
             if (!reference.type().definitelyIsWasmGCObjectOrNull()) {
-                Value* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                auto* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                m_heaps.decorateMemory(&m_heaps.JSCell_typeInfoType, jsType);
+
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), jsType, constant(Int32, JSType::WebAssemblyGCObjectType)), castFailure, falseBlock);
             }
             break;
@@ -3807,11 +4122,17 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
             if (!reference.type().definitelyIsCellOrNull())
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), value, constant(pointerType(), JSValue::NotCellMask)), castFailure, falseBlock);
             if (!reference.type().definitelyIsWasmGCObjectOrNull()) {
-                Value* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                auto* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                m_heaps.decorateMemory(&m_heaps.JSCell_typeInfoType, jsType);
+
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), jsType, constant(Int32, JSType::WebAssemblyGCObjectType)), castFailure, falseBlock);
             }
-            Value* rtt = emitLoadRTTFromObject(value);
-            emitCheckOrBranchForCast(castKind, emitNotRTTKind(rtt, static_cast<TypeKind>(toHeapType) == Wasm::TypeKind::Arrayref ? RTTKind::Array : RTTKind::Struct), castFailure, falseBlock);
+            Value* rtt = emitLoadRTTFromObject(pointerOfWasmRef(value));
+            auto* kind = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, origin(), rtt, safeCast<int32_t>(RTT::offsetOfKind()));
+            m_heaps.decorateMemory(&m_heaps.WasmRTT_kind, kind);
+            kind->setControlDependent(false);
+
+            emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), kind, constant(Int32, static_cast<uint8_t>(static_cast<TypeKind>(toHeapType) == Wasm::TypeKind::Arrayref ? RTTKind::Array : RTTKind::Struct))), castFailure, falseBlock);
             break;
         }
         default:
@@ -3823,28 +4144,37 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
 
         ([&] {
             Value* structure = nullptr;
-            Value* rtt;
-            if (signature.expand().is<Wasm::FunctionSignature>())
+            MemoryValue* rtt;
+            if (signature.expand().is<Wasm::FunctionSignature>()) {
                 rtt = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(B3::Load), pointerType(), origin(), value, safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfRTT()));
-            else {
+                m_heaps.decorateMemory(&m_heaps.WebAssemblyFunctionBase_rtt, rtt);
+            } else {
                 // The cell check is only needed for non-functions, as the typechecker does not allow non-Cell values for funcref casts.
                 if (!reference.type().definitelyIsCellOrNull())
                     emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), value, constant(Int64, JSValue::NotCellMask)), castFailure, falseBlock);
 
                 if (!reference.type().definitelyIsWasmGCObjectOrNull()) {
-                    Value* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load8Z), Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                    auto* jsType = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load8Z), Int32, origin(), value, safeCast<int32_t>(JSCell::typeInfoTypeOffset()));
+                    m_heaps.decorateMemory(&m_heaps.JSCell_typeInfoType, jsType);
                     emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), jsType, constant(Int32, JSType::WebAssemblyGCObjectType)), castFailure, falseBlock);
                 }
                 Value* structureID = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(B3::Load), Int32, origin(), value, safeCast<int32_t>(JSCell::structureIDOffset()));
+                m_heaps.decorateMemory(&m_heaps.JSCell_structureID, structureID);
                 structure = decodeNonNullStructure(structureID);
                 if (targetRTT->displaySizeExcludingThis() < WebAssemblyGCStructure::inlinedTypeDisplaySize) {
                     auto* targetRTTPointer = constant(pointerType(), std::bit_cast<uintptr_t>(targetRTT.ptr()));
-                    auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), structure, safeCast<uint32_t>(WebAssemblyGCStructure::offsetOfInlinedTypeDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+                    auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfInlinedTypeDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+                    m_heaps.decorateMemory(&m_heaps.WebAssemblyGCStructure_inlinedTypeDisplays[targetRTT->displaySizeExcludingThis()], pointer);
+                    pointer->setReadsMutability(B3::Mutability::Immutable);
+                    pointer->setControlDependent(false);
+
                     emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), pointer, targetRTTPointer), castFailure, falseBlock);
                     return;
                 }
 
                 rtt = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
+                m_heaps.decorateMemory(&m_heaps.WebAssemblyGCStructure_rtt, rtt);
+                rtt->setControlDependent(false);
             }
 
             auto* targetRTTPointer = constant(pointerType(), std::bit_cast<uintptr_t>(targetRTT.ptr()));
@@ -3864,8 +4194,16 @@ void OMGIRGenerator::emitRefTestOrCast(CastKind castKind, TypedExpression refere
                 emitCheckOrBranchForCast(castKind, constant(Int32, 1), castFailure, falseBlock);
             } else {
                 auto* displaySizeExcludingThis = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, origin(), rtt, safeCast<int32_t>(RTT::offsetOfDisplaySizeExcludingThis()));
+                m_heaps.decorateMemory(&m_heaps.WasmRTT_displaySizeExcludingThis, displaySizeExcludingThis);
+                displaySizeExcludingThis->setControlDependent(false);
+
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, BelowEqual, origin(), displaySizeExcludingThis, constant(Int32, targetRTT->displaySizeExcludingThis())), castFailure, falseBlock);
-                auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), rtt, safeCast<uint32_t>(RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+
+                auto* pointer = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), rtt, safeCast<int32_t>(RTT::offsetOfData() + targetRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+                m_heaps.decorateMemory(&m_heaps.WasmRTT_data[targetRTT->displaySizeExcludingThis()], pointer);
+                pointer->setReadsMutability(B3::Mutability::Immutable);
+                pointer->setControlDependent(false);
+
                 emitCheckOrBranchForCast(castKind, m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), pointer, targetRTTPointer), castFailure, falseBlock);
             }
         }());
@@ -3964,7 +4302,11 @@ Value* OMGIRGenerator::allocatorForWasmGCHeapCellSize(Value* sizeInBytes, BasicB
     Value* address = m_currentBlock->appendNew<Value>(m_proc, Add, origin(),
         m_currentBlock->appendNew<Value>(m_proc, B3::Add, origin(), instanceValue(), constant(pointerType(), allocatorBufferBaseOffset)),
         m_currentBlock->appendNew<Value>(m_proc, Mul, origin(), sizeClassIndex, constant(pointerType(), sizeof(Allocator))));
-    return m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), address);
+
+    auto* result = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), address);
+    result->setReadsMutability(B3::Mutability::Immutable);
+    result->setControlDependent(false);
+    return result;
 }
 
 Value* OMGIRGenerator::allocateWasmGCHeapCell(Value* allocator, BasicBlock* slowPath)
@@ -4021,9 +4363,15 @@ Value* OMGIRGenerator::allocateWasmGCHeapCell(Value* allocator, BasicBlock* slow
 Value* OMGIRGenerator::allocateWasmGCObject(Value* allocator, Value* structureID, Value* typeInfo, BasicBlock* slowPath)
 {
     auto* cell = allocateWasmGCHeapCell(allocator, slowPath);
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), structureID, cell, safeCast<int32_t>(JSCell::structureIDOffset()));
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), typeInfo, cell, safeCast<int32_t>(JSCell::indexingTypeAndMiscOffset()));
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), constant(pointerType(), 0), cell, safeCast<int32_t>(JSObject::butterflyOffset()));
+
+    auto* storeStructureID = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), structureID, cell, safeCast<int32_t>(JSCell::structureIDOffset()));
+    m_heaps.decorateMemory(&m_heaps.JSCell_structureID, storeStructureID);
+
+    auto* storeUsefulBytes = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), typeInfo, cell, safeCast<int32_t>(JSCell::indexingTypeAndMiscOffset()));
+    m_heaps.decorateMemory(&m_heaps.JSCell_usefulBytes, storeUsefulBytes);
+
+    auto* storeButterfly = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), constant(pointerType(), 0), cell, safeCast<int32_t>(JSObject::butterflyOffset()));
+    m_heaps.decorateMemory(&m_heaps.JSObject_butterfly, storeButterfly);
     return cell;
 }
 
@@ -4033,15 +4381,19 @@ Value* OMGIRGenerator::allocateWasmGCArrayUninitialized(uint32_t typeIndex, Valu
     auto* continuation = m_proc.addBlock();
 
     auto* structureID = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGCObjectStructureID(m_info, typeIndex)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_gcObjectStructureIDs[typeIndex], structureID);
+    structureID->setReadsMutability(B3::Mutability::Immutable);
+    structureID->setControlDependent(false);
+
     const ArrayType* typeDefinition = m_info.typeSignatures[typeIndex]->expand().template as<ArrayType>();
     size_t elementSize = typeDefinition->elementType().type.elementSize();
-    auto* extended = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), size);
+    auto* extended = pointerOfInt32(size);
     auto* shifted = m_currentBlock->appendNew<Value>(m_proc, Shl, origin(), extended, constant(Int32, getLSBSet(elementSize)));
     auto* sizeInBytes = m_currentBlock->appendNew<Value>(m_proc, Add, pointerType(), origin(), shifted, constant(pointerType(), sizeof(JSWebAssemblyArray)));
     auto* allocator = allocatorForWasmGCHeapCellSize(sizeInBytes, slowPath);
     auto* typeInfo = constant(Int32, JSWebAssemblyArray::typeInfoBlob().blob());
     auto* cell = allocateWasmGCObject(allocator, structureID, typeInfo, slowPath);
-    auto* fastValue = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), cell);
+    auto* fastValue = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), wasmRefOfCell(cell));
     m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
     continuation->addPredecessor(m_currentBlock);
 
@@ -4054,11 +4406,12 @@ Value* OMGIRGenerator::allocateWasmGCArrayUninitialized(uint32_t typeIndex, Valu
     continuation->addPredecessor(m_currentBlock);
 
     m_currentBlock = continuation;
-    auto* result = m_currentBlock->appendNew<Value>(m_proc, Phi, pointerType(), origin());
+    auto* result = m_currentBlock->appendNew<Value>(m_proc, Phi, wasmRefType(), origin());
     fastValue->setPhi(result);
     slowValue->setPhi(result);
 
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), size, result, safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize()));
+    auto* arraySizeStore = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), size, pointerOfWasmRef(result), safeCast<int32_t>(JSWebAssemblyArray::offsetOfSize()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyArray_size, arraySizeStore);
     return result;
 }
 
@@ -4068,12 +4421,16 @@ Value* OMGIRGenerator::allocateWasmGCStructUninitialized(uint32_t typeIndex)
     auto* continuation = m_proc.addBlock();
 
     auto* structureID = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfGCObjectStructureID(m_info, typeIndex)));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_gcObjectStructureIDs[typeIndex], structureID);
+    structureID->setReadsMutability(B3::Mutability::Immutable);
+    structureID->setControlDependent(false);
+
     const StructType* typeDefinition = m_info.typeSignatures[typeIndex]->expand().template as<StructType>();
     Value* sizeInBytes = constant(pointerType(), JSWebAssemblyStruct::allocationSize(typeDefinition->instancePayloadSize()));
     auto* allocator = allocatorForWasmGCHeapCellSize(sizeInBytes, slowPath);
     auto* typeInfo = constant(Int32, JSWebAssemblyStruct::typeInfoBlob().blob());
     auto* cell = allocateWasmGCObject(allocator, structureID, typeInfo, slowPath);
-    auto* fastValue = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), cell);
+    auto* fastValue = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), wasmRefOfCell(cell));
     m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
     continuation->addPredecessor(m_currentBlock);
 
@@ -4087,11 +4444,12 @@ Value* OMGIRGenerator::allocateWasmGCStructUninitialized(uint32_t typeIndex)
     continuation->addPredecessor(m_currentBlock);
 
     m_currentBlock = continuation;
-    auto* result = m_currentBlock->appendNew<Value>(m_proc, Phi, pointerType(), origin());
+    auto* result = m_currentBlock->appendNew<Value>(m_proc, Phi, wasmRefType(), origin());
     fastValue->setPhi(result);
     slowValue->setPhi(result);
 
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), constant(Int32, typeDefinition->instancePayloadSize()), result, safeCast<int32_t>(JSWebAssemblyStruct::offsetOfSize()));
+    auto* size = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(), constant(Int32, typeDefinition->instancePayloadSize()), pointerOfWasmRef(result), safeCast<int32_t>(JSWebAssemblyStruct::offsetOfSize()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyStruct_size, size);
     return result;
 }
 
@@ -4105,8 +4463,13 @@ void OMGIRGenerator::mutatorFence()
     auto* slowPath = m_proc.addBlock();
     auto* continuation = m_proc.addBlock();
 
-    Value* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+    auto* vm = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfVM()));
+    m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_vm, vm);
+    vm->setControlDependent(false);
+
     Value* shouldFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapMutatorShouldBeFenced()));
+    m_heaps.decorateMemory(&m_heaps.VM_heap_mutatorShouldBeFenced, shouldFence);
+
     m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), shouldFence, FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
     slowPath->addPredecessor(m_currentBlock);
     continuation->addPredecessor(m_currentBlock);
@@ -4122,14 +4485,15 @@ void OMGIRGenerator::mutatorFence()
 Value* OMGIRGenerator::emitLoadRTTFromObject(Value* reference)
 {
     Value* structureID = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, origin(), reference, safeCast<int32_t>(JSCell::structureIDOffset()));
-    Value* structure = decodeNonNullStructure(structureID);
-    return m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
-}
+    m_heaps.decorateMemory(&m_heaps.JSCell_structureID, structureID);
 
-Value* OMGIRGenerator::emitNotRTTKind(Value* rtt, RTTKind targetKind)
-{
-    Value* kind = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z), origin(), rtt, safeCast<int32_t>(RTT::offsetOfKind()));
-    return m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), kind, constant(Int32, static_cast<uint8_t>(targetKind)));
+    Value* structure = decodeNonNullStructure(structureID);
+
+    auto* rtt = m_currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), origin(), structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyGCStructure_rtt, rtt);
+    rtt->setControlDependent(false);
+
+    return rtt;
 }
 
 auto OMGIRGenerator::addAnyConvertExtern(ExpressionType reference, ExpressionType& result) -> PartialResult
@@ -4219,7 +4583,9 @@ auto OMGIRGenerator::addSIMDLoad(ExpressionType pointerVariable, uint32_t uoffse
 {
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, 16);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    result = push(m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), B3::V128, origin(), ptr, offset));
+    auto* value = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), B3::V128, origin(), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, value);
+    result = push(value);
 
     return { };
 }
@@ -4228,7 +4594,8 @@ auto OMGIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointerVa
 {
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, 16);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), get(value), ptr, offset);
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Store), origin(), get(value), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
 
     return { };
 }
@@ -4271,7 +4638,8 @@ auto OMGIRGenerator::addSIMDLoadSplat(SIMDLaneOperation op, ExpressionType point
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    Value* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorSplat, B3::V128, lane, SIMDSignMode::None, memLoad));
 
     return { };
@@ -4314,7 +4682,8 @@ auto OMGIRGenerator::addSIMDLoadLane(SIMDLaneOperation op, ExpressionType pointe
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    Value* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), type, origin(), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorReplaceLane, B3::V128, lane, SIMDSignMode::None, laneIndex, get(vectorVariable), memLoad));
 
     return { };
@@ -4358,7 +4727,8 @@ auto OMGIRGenerator::addSIMDStoreLane(SIMDLaneOperation op, ExpressionType point
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
     Value* laneValue = m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorExtractLane, type, lane, byteSize < 4 ? SIMDSignMode::Unsigned : SIMDSignMode::None, laneIndex, get(vectorVariable));
-    m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(storeOp), origin(), laneValue, ptr, offset);
+    auto* store = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(storeOp), origin(), laneValue, ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, store);
 
     return { };
 }
@@ -4400,7 +4770,8 @@ auto OMGIRGenerator::addSIMDLoadExtend(SIMDLaneOperation op, ExpressionType poin
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    Value* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), B3::Double, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(loadOp), B3::Double, origin(), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), VectorExtendLow, B3::V128, SIMDInfo { lane, signMode }, memLoad));
 
     return { };
@@ -4429,7 +4800,8 @@ auto OMGIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer
 
     Value* ptr = emitCheckAndPreparePointer(get(pointerVariable), uoffset, byteSize);
     int32_t offset = fixupPointerPlusOffset(ptr, uoffset);
-    Value* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), loadType, origin(), ptr, offset);
+    auto* memLoad = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load), loadType, origin(), ptr, offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, memLoad);
     result = push(m_currentBlock->appendNew<SIMDValue>(m_proc, origin(), B3::VectorReplaceLane, B3::V128, lane, SIMDSignMode::None, idx,
         m_currentBlock->appendNew<Const128Value>(m_proc, origin(), v128_t { }),
         memLoad));
@@ -4440,22 +4812,18 @@ auto OMGIRGenerator::addSIMDLoadPad(SIMDLaneOperation op, ExpressionType pointer
 Value* OMGIRGenerator::loadFromScratchBuffer(unsigned& indexInBuffer, Value* pointer, B3::Type type)
 {
     unsigned valueSize = m_proc.usesSIMD() ? 2 : 1;
-    size_t offset = valueSize * sizeof(uint64_t) * (indexInBuffer++);
+    int32_t offset = safeCast<int32_t>(valueSize * sizeof(uint64_t) * (indexInBuffer++));
     RELEASE_ASSERT(type.isNumeric());
     return m_currentBlock->appendNew<MemoryValue>(m_proc, Load, type, origin(), pointer, offset);
 }
 
-void OMGIRGenerator::connectValuesAtEntrypoint(unsigned& indexInBuffer, Value* pointer, Stack& expressionStack, Variable* exceptionVariable)
+void OMGIRGenerator::connectValuesAtEntrypoint(unsigned& indexInBuffer, Value* pointer, Stack& expressionStack)
 {
     TRACE_CF("Connect values at entrypoint");
     for (unsigned i = 0; i < expressionStack.size(); i++) {
         TypedExpression value = expressionStack[i];
         Value* load = loadFromScratchBuffer(indexInBuffer, pointer, value->type());
         m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), value.value(), load);
-    }
-    if (exceptionVariable) {
-        Value* load = loadFromScratchBuffer(indexInBuffer, pointer, pointerType());
-        m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), exceptionVariable, load);
     }
 };
 
@@ -4480,6 +4848,7 @@ auto OMGIRGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, Co
 
     m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), body);
     if (loopIndex == m_loopIndexForOSREntry) {
+        // This must be kept in sync with BBQJIT::makeStackMap.
         dataLogLnIf(WasmOMGIRGeneratorInternal::verbose, "Setting up for OSR entry");
 
         m_currentBlock = m_rootBlocks[0].block;
@@ -4492,14 +4861,19 @@ auto OMGIRGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, Co
 
         for (unsigned controlIndex = 0; controlIndex < m_parser->controlStack().size(); ++controlIndex) {
             auto& data = m_parser->controlStack()[controlIndex].controlData;
-            auto& expressionStack = m_parser->controlStack()[controlIndex].enclosedExpressionStack;
-            ASSERT(&data != &block);
-            Variable* exceptionVariable = ControlType::isAnyCatch(data) ? data.exception() : nullptr;
-            connectValuesAtEntrypoint(indexInBuffer, pointer, expressionStack, exceptionVariable);
-            if (ControlType::isTry(data))
+            if (ControlType::isAnyCatch(data)) {
+                auto* load = loadFromScratchBuffer(indexInBuffer, pointer, pointerType());
+                m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), data.exception(), load);
+            } else if (ControlType::isTry(data))
                 ++indexInBuffer;
         }
-        connectValuesAtEntrypoint(indexInBuffer, pointer, enclosingStack, nullptr);
+
+        for (unsigned controlIndex = 0; controlIndex < m_parser->controlStack().size(); ++controlIndex) {
+            auto& expressionStack = m_parser->controlStack()[controlIndex].enclosedExpressionStack;
+            ASSERT(&m_parser->controlStack()[controlIndex].controlData != &block);
+            connectValuesAtEntrypoint(indexInBuffer, pointer, expressionStack);
+        }
+        connectValuesAtEntrypoint(indexInBuffer, pointer, enclosingStack);
         // The loop's stack can be read by the loop body, so the restored values should join using the loop-back phi nodes.
         for (unsigned i = 0; i < newStack.size(); i++) {
             auto* load = loadFromScratchBuffer(indexInBuffer, pointer, newStack[i]->type());
@@ -4689,15 +5063,16 @@ void OMGIRGenerator::connectValuesForCatchEntrypoint(ControlData& catchData, Val
         for (unsigned controlIndex = 0; controlIndex < currentFrame->m_parser->controlStack().size(); ++controlIndex) {
             auto& controlData = currentFrame->m_parser->controlStack()[controlIndex].controlData;
             auto& expressionStack = currentFrame->m_parser->controlStack()[controlIndex].enclosedExpressionStack;
-            Variable* exceptionVariable = nullptr;
-            if (ControlType::isAnyCatch(controlData) && &controlData != &catchData)
-                exceptionVariable = controlData.exception();
-            connectValuesAtEntrypoint(indexInBuffer, pointer, expressionStack, exceptionVariable);
+            connectValuesAtEntrypoint(indexInBuffer, pointer, expressionStack);
+            if (ControlType::isAnyCatch(controlData) && &controlData != &catchData) {
+                auto* load = loadFromScratchBuffer(indexInBuffer, pointer, pointerType());
+                m_currentBlock->appendNew<VariableValue>(m_proc, Set, origin(), controlData.exception(), load);
+            }
         }
         // inlineParent frames only
         if (currentFrame != this) {
             auto& topExpressionStack = currentFrame->m_parser->expressionStack();
-            connectValuesAtEntrypoint(indexInBuffer, pointer, topExpressionStack, nullptr);
+            connectValuesAtEntrypoint(indexInBuffer, pointer, topExpressionStack);
         }
     }
 }
@@ -4708,7 +5083,7 @@ auto OMGIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const TypeDe
     unsigned offset = 0;
     for (unsigned i = 0; i < signature.as<FunctionSignature>()->argumentCount(); ++i) {
         Type type = signature.as<FunctionSignature>()->argumentType(i);
-        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), payload, offset * sizeof(uint64_t));
+        Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), payload, safeCast<int32_t>(offset * sizeof(uint64_t)));
         results.append(push(value));
         offset += type.kind == TypeKind::V128 ? 2 : 1;
     }
@@ -4804,7 +5179,7 @@ auto OMGIRGenerator::emitCatchTableImpl(ControlData& data, const ControlData::Tr
         for (unsigned i = 0; i < signature->template as<FunctionSignature>()->argumentCount(); ++i) {
             Type type = signature->as<FunctionSignature>()->argumentType(i);
             Variable* var = m_proc.addVariable(toB3Type(type));
-            Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), buffer, offset * sizeof(uint64_t));
+            Value* value = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, toB3Type(type), origin(), buffer, safeCast<int32_t>(offset * sizeof(uint64_t)));
             set(var, value);
             resultStack.constructAndAppend(type, var);
             offset += type.kind == TypeKind::V128 ? 2 : 1;
@@ -4813,6 +5188,7 @@ auto OMGIRGenerator::emitCatchTableImpl(ControlData& data, const ControlData::Tr
 
     if (target.type == CatchKind::CatchRef || target.type == CatchKind::CatchAllRef) {
         Variable* var = m_proc.addVariable(wasmRefType());
+        exception = wasmRefOfCell(exception);
         set(var, exception);
         push(exception);
         resultStack.constructAndAppend(Type { TypeKind::RefNull, static_cast<TypeIndex>(TypeKind::Exnref) }, var);
@@ -4856,7 +5232,7 @@ auto OMGIRGenerator::addThrow(unsigned exceptionIndex, ArgumentList& args, Stack
     patch->append(instanceValue(), ValueRep::reg(GPRInfo::argumentGPR0));
     unsigned offset = 0;
     for (auto arg : args) {
-        patch->append(get(arg), ValueRep::stackArgument(offset * sizeof(EncodedJSValue)));
+        patch->append(get(arg), ValueRep::stackArgument(safeCast<int32_t>(offset * sizeof(EncodedJSValue))));
         offset += arg->type().isVector() ? 2 : 1;
     }
     m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, offset);
@@ -5167,33 +5543,74 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     auto& functionSignature = *signature.as<FunctionSignature>();
     const Checked<int32_t> offsetOfFirstSlotFromFP = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(wasmCallerInfoAsCallee.headerAndArgumentStackSizeInBytes);
     JIT_COMMENT(jit, "Set up tail call, new FP offset from FP: ", newFPOffsetFromFP);
-    AllowMacroScratchRegisterUsage allowScratch(jit);
+
+    const unsigned frameSize = params.code().frameSize();
+    ASSERT(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize) == frameSize);
+    ASSERT(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::abs(newFPOffsetFromFP)) == static_cast<size_t>(std::abs(newFPOffsetFromFP)));
+
+    auto fpOffsetToSPOffset = [frameSize](int32_t offset) {
+        return checkedSum<int>(safeCast<int>(frameSize), offset).value();
+    };
+
+    auto newReturnPCOffset = fpOffsetToSPOffset(checkedSum<intptr_t>(CallFrame::returnPCOffset(), newFPOffsetFromFP).value());
+
+    // We requested some extra stack space below via requestCallArgAreaSize
+    // ... FP [initial safe area][caller stack space ] [callArgSpace                    ] SP ...
+    // becomes
+    // ... FP [safe area growing ->    ] [danger           ] [ scratch                  ] SP ...
+    // This scratch space sits at the very bottom of the stack, near sp.
+    // AirLowerStackArgs takes care of adding callArgSpace to our total caller frame size.
+    // BUT, even though we have this extra space, the new frame might be bigger, so we can't
+    // use the new frame as scratch. The new return pc represents the lowest offset from SP we can use.
+    int spillPointer = 0;
+    const int scratchAreaUpperBound = std::min(
+        safeCast<int>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(static_cast<int>(wasmCalleeInfoAsCallee.headerAndArgumentStackSizeInBytes))),
+        newReturnPCOffset);
+    auto allocateSpill = [&] (Width width) -> int {
+        int offset = spillPointer;
+        spillPointer += bytesForWidth(width);
+        ASSERT(spillPointer <= scratchAreaUpperBound);
+        ASSERT(offset < scratchAreaUpperBound);
+        return offset;
+    };
+
+    RegisterAtOffsetList calleeSaves = params.code().calleeSaveRegisterAtOffsetList();
 
     // Be careful not to clobber this below.
     // We also need to make sure that we preserve this if it is used by the patchpoint body.
-    bool clobbersTmp = false;
+    AllowMacroScratchRegisterUsage allowScratch(jit);
     auto tmp = jit.scratchRegister();
-    int tmpSpill = 0;
+    bool tmpNeedsSaving = false;
+    int tmpSpillOffsetRelativeToOriginalSP = 0;
 
-    // Set up a valid frame so that we can clobber this one.
-    RegisterAtOffsetList calleeSaves = params.code().calleeSaveRegisterAtOffsetList();
-    jit.emitRestore(calleeSaves);
+    // Nothing before saving tmp can use the scratch register since it might clobber an input.
+    {
+        DisallowMacroScratchRegisterUsage disallowScratch(jit);
 
-    for (unsigned i = 0; i < params.size(); ++i) {
-        auto arg = params[i];
-        if (arg.isGPR()) {
-            ASSERT(!calleeSaves.find(arg.gpr()));
-            if (arg.gpr() == tmp)
-                clobbersTmp = true;
-            continue;
+        // Set up a valid frame so that we can clobber this one.
+        jit.emitRestore(calleeSaves);
+
+        for (unsigned i = 0; i < params.size(); ++i) {
+            auto arg = params[i];
+            if (arg.isGPR()) {
+                ASSERT(!calleeSaves.find(arg.gpr()));
+                if (arg.gpr() == tmp)
+                    tmpNeedsSaving = true;
+                continue;
+            }
+            if (arg.isFPR()) {
+                ASSERT(!calleeSaves.find(arg.fpr()));
+                continue;
+            }
         }
-        if (arg.isFPR()) {
-            ASSERT(!calleeSaves.find(arg.fpr()));
-            continue;
-        }
+
+        ASSERT(!calleeSaves.find(tmp));
     }
 
-    ASSERT(!calleeSaves.find(tmp));
+    if (tmpNeedsSaving) {
+        tmpSpillOffsetRelativeToOriginalSP = allocateSpill(WidthPtr);
+        jit.storePtr(tmp, CCallHelpers::Address(MacroAssembler::stackPointerRegister, tmpSpillOffsetRelativeToOriginalSP));
+    }
 
 #if ASSERT_ENABLED
     // Let's make sure we never rely on these slots, so we can use them for scratch in the future.
@@ -5203,14 +5620,6 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     jit.storePtr(MacroAssembler::TrustedImmPtr(0xBEEFAAAA),
         CCallHelpers::Address(MacroAssembler::framePointerRegister, CallFrameSlot::argumentCountIncludingThis * sizeof(Register)));
 #endif
-
-    const unsigned frameSize = params.code().frameSize();
-    ASSERT(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize) == frameSize);
-    ASSERT(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::abs(newFPOffsetFromFP)) == static_cast<size_t>(std::abs(newFPOffsetFromFP)));
-
-    auto fpOffsetToSPOffset = [frameSize](int32_t offset) {
-        return checkedSum<int>(safeCast<int>(frameSize), offset).value();
-    };
 
     JIT_COMMENT(jit, "Let's use the caller's frame, so that we always have a valid frame.");
     if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
@@ -5268,30 +5677,8 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
         });
     }
 
-    auto newReturnPCOffset = fpOffsetToSPOffset(checkedSum<intptr_t>(CallFrame::returnPCOffset(), newFPOffsetFromFP).value());
-
     JIT_COMMENT(jit, "Copy over args if needed into their final position, clobbering everything.");
     // This code has a bunch of overlap with CallFrameShuffler and Shuffle in Air/BBQ
-
-    // We requested some extra stack space below via requestCallArgAreaSize
-    // ... FP [initial safe area][caller stack space ] [callArgSpace                    ] SP ...
-    // becomes
-    // ... FP [safe area growing ->    ] [danger           ] [ scratch                  ] SP ...
-    // This scratch space sits at the very bottom of the stack, near sp.
-    // AirLowerStackArgs takes care of adding callArgSpace to our total caller frame size.
-    // BUT, even though we have this extra space, the new frame might be bigger, so we can't
-    // use the new frame as scratch. The new return pc represents the lowest offset from SP we can use.
-    int spillPointer = 0;
-    const int scratchAreaUpperBound = std::min(
-        safeCast<int>(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(static_cast<int>(wasmCalleeInfoAsCallee.headerAndArgumentStackSizeInBytes))),
-        newReturnPCOffset);
-    auto allocateSpill = [&] (Width width) -> int {
-        int offset = spillPointer;
-        spillPointer += bytesForWidth(width);
-        ASSERT(spillPointer <= scratchAreaUpperBound);
-        ASSERT(offset < scratchAreaUpperBound);
-        return offset;
-    };
 
     auto doMove = [&jit, tmp] (int srcOffset, int dstOffset, Width width) {
         JIT_COMMENT(jit, "Do move ", srcOffset, " -> ", dstOffset);
@@ -5321,11 +5708,6 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     ASSERT(safeAreaLowerBound < stackUpperBound);
 
     JIT_COMMENT(jit, "SP[", safeAreaLowerBound, "] to SP[", stackUpperBound, "] form the safe portion of the stack to clobber; Scratches go from SP[0] to SP[", scratchAreaUpperBound, "].");
-
-    if (clobbersTmp) {
-        tmpSpill = allocateSpill(WidthPtr);
-        jit.storePtr(tmp, CCallHelpers::Address(MacroAssembler::stackPointerRegister, tmpSpill));
-    }
 
 #if ASSERT_ENABLED
     // Clobber all safe values to make debugging easier.
@@ -5359,11 +5741,11 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
             continue;
         }
 
-        auto saveSrc = [tmp, clobbersTmp, tmpSpill, dstType, &allocateSpill, &jit, &fpOffsetToSPOffset](ValueRep src) -> std::tuple<int, Width> {
+        auto saveSrc = [tmp, tmpNeedsSaving, tmpSpillOffsetRelativeToOriginalSP, dstType, &allocateSpill, &jit, &fpOffsetToSPOffset](ValueRep src) -> std::tuple<int, Width> {
             int srcOffset = 0;
-            if (clobbersTmp && src.isGPR() && src.gpr() == tmp) {
+            if (tmpNeedsSaving && src.isGPR() && src.gpr() == tmp) {
                 // Before tmp may have been clobbered, it was spilled to tmpSpill.
-                srcOffset = tmpSpill;
+                srcOffset = tmpSpillOffsetRelativeToOriginalSP;
             } else if (src.isGPR()) {
                 srcOffset = allocateSpill(WidthPtr);
                 jit.storePtr(src.gpr(), CCallHelpers::Address(MacroAssembler::stackPointerRegister, srcOffset));
@@ -5411,11 +5793,9 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
     });
     JIT_COMMENT(jit, "ReturnPC has srcOffset ", fpOffsetToSPOffset(CallFrame::returnPCOffset()), " dstOffset ", newReturnPCOffset);
 
-    std::sort(
-        argsToMove.begin(), argsToMove.end(),
-        [] (const auto& left, const auto& right) {
-            return std::get<0>(left) > std::get<0>(right);
-        });
+    std::ranges::sort(argsToMove, [](const auto& left, const auto& right) {
+        return std::get<0>(left) > std::get<0>(right);
+    });
 
     for (unsigned i = 0; i < argsToMove.size(); ++i) {
         auto [srcOffset, dstOffset, width] = argsToMove[i];
@@ -5490,51 +5870,64 @@ static inline void prepareForTailCallImpl(unsigned functionIndex, CCallHelpers& 
 #endif
 #endif
 
-    jit.addPtr(MacroAssembler::TrustedImm32(newSPAtPrologueOffsetFromSP), MacroAssembler::stackPointerRegister);
+    if (tmpNeedsSaving)
+        jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, tmpSpillOffsetRelativeToOriginalSP), tmp);
+
+    // Nothing after restoring tmp can use the scratch register since it might clobber an input.
+    {
+        DisallowMacroScratchRegisterUsage disallowScratch(jit);
+
+        jit.addPtr(MacroAssembler::TrustedImm32(newSPAtPrologueOffsetFromSP), MacroAssembler::stackPointerRegister);
 
 #if CPU(X86_64)
-    if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
-        jit.probeDebugSIMD([] (Probe::Context& context) {
-            dataLogLn("return pc on the top of the stack: ", RawHex(*context.gpr<uintptr_t*>(MacroAssembler::stackPointerRegister)), " at ", RawHex(context.gpr<uintptr_t>(MacroAssembler::stackPointerRegister)));
-        });
-    }
+        if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
+            jit.probeDebugSIMD([] (Probe::Context& context) {
+                dataLogLn("return pc on the top of the stack: ", RawHex(*context.gpr<uintptr_t*>(MacroAssembler::stackPointerRegister)), " at ", RawHex(context.gpr<uintptr_t>(MacroAssembler::stackPointerRegister)));
+            });
+        }
 #endif
+
+        JIT_COMMENT(jit, "OK, now we can jump.");
+        if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
+            jit.probeDebugSIMD([wasmCalleeInfoAsCallee] (Probe::Context& context) {
+                dataLogLn("Can now jump: FP: ", RawHex(context.gpr<uintptr_t>(GPRInfo::callFrameRegister)), " SP: ", RawHex(context.gpr<uintptr_t>(MacroAssembler::stackPointerRegister)));
+                auto* newFP = context.gpr<uintptr_t*>(MacroAssembler::stackPointerRegister) - prologueStackPointerDelta() / sizeof(uintptr_t);
+                dataLogLn("New (callee) FP at prologue will be at ", RawPointer(newFP));
+                auto fpl = std::bit_cast<uint64_t*>(newFP);
+                auto fpi = std::bit_cast<uint32_t*>(newFP);
+
+                for (unsigned i = 0; i < wasmCalleeInfoAsCallee.params.size(); ++i) {
+                    auto arg = wasmCalleeInfoAsCallee.params[i];
+                    auto src = arg.location;
+                    dataLog("Arg ", i, " located at ", arg.location, " = ");
+                    if (arg.location.isGPR())
+                        dataLog(context.gpr(arg.location.jsr().payloadGPR()), " / ", (int) context.gpr(arg.location.jsr().payloadGPR()));
+                    else if (arg.location.isFPR() && arg.width <= Width::Width64)
+                        dataLog(context.fpr(arg.location.fpr(), SavedFPWidth::SaveVectors));
+                    else if (arg.location.isFPR())
+                        dataLog(context.vector(arg.location.fpr()));
+                    else
+                        dataLog(fpl[src.offsetFromFP() / sizeof(*fpl)], " / ", fpi[src.offsetFromFP() / sizeof(*fpi)],  " / ", RawHex(fpi[src.offsetFromFP() / sizeof(*fpi)]), " / ", std::bit_cast<double>(fpl[src.offsetFromFP() / sizeof(*fpl)]), " at ", RawPointer(&fpi[src.offsetFromFP() / sizeof(*fpi)]));
+                    dataLogLn();
+                }
+            });
+        }
 
 #if ASSERT_ENABLED
-    for (unsigned i = 2; i < 50; ++i) {
-        // Everthing after sp might be overwritten anyway.
-        jit.storePtr(MacroAssembler::TrustedImm32(0xBFFF), CCallHelpers::Address(MacroAssembler::stackPointerRegister, -i * sizeof(uintptr_t)));
-    }
+        // Everything in the old stack might be overwritten anyway. Clobber for easier debugging.
+        if (tmpNeedsSaving)
+            jit.pushPair(tmp, tmp);
+        jit.move(MacroAssembler::TrustedImm32(0xBFFF), tmp);
+        constexpr int stackSlotsToClobber = 50;
+        constexpr int stackBytesToClobber = stackSlotsToClobber * registerSize();
+        static_assert(!(stackBytesToClobber & (stackAlignmentBytes() - 1)), "Size in bytes to clobber on stack is aligned");
+        for (int i = 0; i < stackSlotsToClobber / 2; ++i)
+            jit.pushPair(tmp, tmp);
+        jit.addPtr(MacroAssembler::TrustedImm32(stackBytesToClobber), MacroAssembler::stackPointerRegister);
+        if (tmpNeedsSaving)
+            jit.popPair(tmp, tmp);
 #endif
-
-    JIT_COMMENT(jit, "OK, now we can jump.");
-    if (WasmOMGIRGeneratorInternal::verboseTailCalls) {
-        jit.probeDebugSIMD([wasmCalleeInfoAsCallee] (Probe::Context& context) {
-            dataLogLn("Can now jump: FP: ", RawHex(context.gpr<uintptr_t>(GPRInfo::callFrameRegister)), " SP: ", RawHex(context.gpr<uintptr_t>(MacroAssembler::stackPointerRegister)));
-            auto* newFP = context.gpr<uintptr_t*>(MacroAssembler::stackPointerRegister) - prologueStackPointerDelta() / sizeof(uintptr_t);
-            dataLogLn("New (callee) FP at prologue will be at ", RawPointer(newFP));
-            auto fpl = std::bit_cast<uint64_t*>(newFP);
-            auto fpi = std::bit_cast<uint32_t*>(newFP);
-
-            for (unsigned i = 0; i < wasmCalleeInfoAsCallee.params.size(); ++i) {
-                auto arg = wasmCalleeInfoAsCallee.params[i];
-                auto src = arg.location;
-                dataLog("Arg ", i, " located at ", arg.location, " = ");
-                if (arg.location.isGPR())
-                    dataLog(context.gpr(arg.location.jsr().payloadGPR()), " / ", (int) context.gpr(arg.location.jsr().payloadGPR()));
-                else if (arg.location.isFPR() && arg.width <= Width::Width64)
-                    dataLog(context.fpr(arg.location.fpr(), SavedFPWidth::SaveVectors));
-                else if (arg.location.isFPR())
-                    dataLog(context.vector(arg.location.fpr()));
-                else
-                    dataLog(fpl[src.offsetFromFP() / sizeof(*fpl)], " / ", fpi[src.offsetFromFP() / sizeof(*fpi)],  " / ", RawHex(fpi[src.offsetFromFP() / sizeof(*fpi)]), " / ", std::bit_cast<double>(fpl[src.offsetFromFP() / sizeof(*fpl)]), " at ", RawPointer(&fpi[src.offsetFromFP() / sizeof(*fpi)]));
-                dataLogLn();
-            }
-        });
     }
-
-    if (clobbersTmp)
-        jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, tmpSpill), tmp);
 }
 
 // See also: https://leaningtech.com/fantastic-tail-calls-and-how-to-implement-them/, a blog post about contributing this feature.
@@ -5650,52 +6043,19 @@ auto OMGIRGenerator::createTailCallPatchpoint(BasicBlock* block, const TypeDefin
     return { patchpoint, nullptr, WTFMove(prepareForCall) };
 }
 
-bool OMGIRGenerator::canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const
+InliningNode* OMGIRGenerator::canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const
 {
-    ASSERT(!m_inlinedBytes || !m_inlineParent);
-    if (!Options::useOMGInlining())
-        return false;
+    auto* result = m_inlining->callTarget(functionIndexSpace, callProfileIndex);
+    if (!result)
+        return nullptr;
 
-    size_t wasmSize = m_info.functionWasmSizeImportSpace(functionIndexSpace);
-    if (wasmSize >= Options::maximumWasmCalleeSizeForInlining())
-        return false;
+    if (result->depth() > 1 && !StackCheck(Thread::currentSingleton().stack(), StackBounds::DefaultReservedZone * 2).isSafeToRecurse())
+        return nullptr;
 
-    {
-        unsigned selfRecursionCount = 0;
-        for (auto* cursor = this; cursor; cursor = cursor->m_inlineParent) {
-            if (&cursor->m_info == &m_info && cursor->m_info.toSpaceIndex(cursor->m_functionIndex) == functionIndexSpace) {
-                ++selfRecursionCount;
-                if (selfRecursionCount >= Options::maximumWasmSelfRecursionDepthForInlining())
-                    return false;
-            }
-        }
-    }
-
-    // If this callsite is never used by IPInt and BBQ, we should skip inlining. Likely a dead code.
-    // FIXME: This is still very naive. We can forcefully inline if wasm byte size is
-    // too small (then call sequence can be larger than the inlined content).
-    // Also, we could eventually consider emitting OSR exit, and stop generating
-    // the rest of the code for this and subsequent basic blocks.
-    if (!m_profile->isCalled(callProfileIndex))
-        return false;
-
-    if (m_inlineDepth >= Options::maximumWasmDepthForInlining())
-        return false;
-
-    if (m_inlineRoot->m_inlinedBytes.value() >= Options::maximumWasmCallerSizeForInlining())
-        return false;
-
-    if (m_inlineDepth > 1 && !StackCheck(Thread::currentSingleton().stack(), StackBounds::DefaultReservedZone * 2).isSafeToRecurse())
-        return false;
-
-    // FIXME: There's no fundamental reason we can't inline these including imports.
-    if (m_info.callCanClobberInstance(functionIndexSpace))
-        return false;
-
-    return true;
+    return result;
 }
 
-auto OMGIRGenerator::emitInlineDirectCall(FunctionCodeIndex calleeFunctionIndex, const TypeDefinition& calleeSignature, ArgumentList& args, ValueResults& results) -> PartialResult
+auto OMGIRGenerator::emitInlineDirectCall(InliningNode* inlining, FunctionCodeIndex calleeFunctionIndex, const TypeDefinition& calleeSignature, const ArgumentList& args, ValueResults& results) -> PartialResult
 {
     Vector<Value*> getArgs;
 
@@ -5710,7 +6070,7 @@ auto OMGIRGenerator::emitInlineDirectCall(FunctionCodeIndex calleeFunctionIndex,
 
     const FunctionData& function = m_info.functions[calleeFunctionIndex];
     Ref<IPIntCallee> profiledCallee = m_calleeGroup.ipintCalleeFromFunctionIndexSpace(m_calleeGroup.toSpaceIndex(calleeFunctionIndex));
-    m_protectedInlineeGenerators.append(makeUnique<OMGIRGenerator>(m_context, *this, *m_inlineRoot, m_module, m_calleeGroup, calleeFunctionIndex, profiledCallee.get(), continuation, WTFMove(getArgs)));
+    m_protectedInlineeGenerators.append(makeUnique<OMGIRGenerator>(m_heaps, m_context, *this, *m_inlineRoot, m_module, m_calleeGroup, calleeFunctionIndex, profiledCallee.get(), inlining, continuation, WTFMove(getArgs)));
     auto& irGenerator = *m_protectedInlineeGenerators.last();
     m_protectedInlineeParsers.append(makeUnique<FunctionParser<OMGIRGenerator>>(irGenerator, function.data, calleeSignature, m_info));
     auto& parser = *m_protectedInlineeParsers.last();
@@ -5742,7 +6102,7 @@ auto OMGIRGenerator::emitInlineDirectCall(FunctionCodeIndex calleeFunctionIndex,
     advanceCallSiteIndex();
     m_callee->addCodeOrigin(firstInlineCallSiteIndex, lastInlineCallSiteIndex, m_info, calleeFunctionIndex + m_numImportFunctions);
 
-    dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, "Inlining CallSiteIndex range: ", firstInlineCallSiteIndex, " -> ", lastInlineCallSiteIndex, " [", m_inlineDepth, "]");
+    dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, "Inlining CallSiteIndex range: ", firstInlineCallSiteIndex, " -> ", lastInlineCallSiteIndex, " [", inlining->depth(), "]");
 
     return { };
 }
@@ -5769,7 +6129,7 @@ auto OMGIRGenerator::addCall(unsigned callProfileIndex, FunctionSpaceIndex funct
     return { };
 }
 
-auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceIndex functionIndexSpace, const TypeDefinition& signature, ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
+auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceIndex functionIndexSpace, const TypeDefinition& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
 {
     if (!m_info.isImportedFunctionFromFunctionIndexSpace(functionIndexSpace)) {
         // Record the callee so the callee knows to look for it in updateCallsitesToCallUs.
@@ -5798,27 +6158,6 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     m_makesCalls = true;
     if (callType == CallType::TailCall)
         m_makesTailCalls = true;
-
-    auto fillResults = [&] (Value* callResult) {
-        ASSERT(returnType == callResult->type());
-
-        switch (returnType.kind()) {
-        case B3::Void: {
-            break;
-        }
-        case B3::Tuple: {
-            const Vector<B3::Type>& tuple = m_proc.tupleForType(returnType);
-            ASSERT(signature.as<FunctionSignature>()->returnCount() == tuple.size());
-            for (unsigned i = 0; i < signature.as<FunctionSignature>()->returnCount(); ++i)
-                results.append(m_currentBlock->appendNew<ExtractValue>(m_proc, origin(), tuple[i], callResult, i));
-            break;
-        }
-        default: {
-            results.append(callResult);
-            break;
-        }
-        }
-    };
 
     m_proc.requestCallArgAreaSizeInBytes(calleeStackSize);
 
@@ -5855,6 +6194,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
         // implement the IC to be over Context*.
         // https://bugs.webkit.org/show_bug.cgi?id=170375
         jumpDestination = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfImportFunctionStub(functionIndexSpace)));
+        m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_importFunctionStubs[functionIndexSpace], jumpDestination);
 
         if (isTailCallRootCaller) {
             auto [patchpoint, handle, prepareForCall] = createTailCallPatchpoint(m_currentBlock, signature, wasmCallerInfoAsCallee, wasmCalleeInfoAsCallee, args, { });
@@ -5866,7 +6206,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
         emitCallToImport(patchpoint, handle, prepareForCall);
 
         if (returnType != B3::Void)
-            fillResults(patchpoint);
+            fillCallResults(patchpoint, signature, results);
 
         // The call could have been to another WebAssembly instance, and / or could have modified our Memory.
         restoreWebAssemblyGlobalState(m_info.memory, instanceValue(), m_currentBlock);
@@ -5907,11 +6247,12 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
         return { };
     }
 
-    if (callType == CallType::Call && canInline(functionIndexSpace, callProfileIndex)) {
-        auto functionIndex = m_info.toCodeIndex(functionIndexSpace);
-        dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, " inlining call to ", functionIndex, " from ", m_functionIndex, " depth ", m_inlineDepth);
-        m_inlineRoot->m_inlinedBytes += m_info.functionWasmSizeImportSpace(functionIndexSpace);
-        return emitInlineDirectCall(functionIndex, signature, args, results);
+    if (callType == CallType::Call) {
+        if (auto* inlining = canInline(functionIndexSpace, callProfileIndex)) {
+            auto functionIndex = m_info.toCodeIndex(functionIndexSpace);
+            dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, " inlining call to ", functionIndex, " from ", m_functionIndex, " depth ", inlining->depth());
+            return emitInlineDirectCall(inlining, functionIndex, signature, args, results);
+        }
     }
 
     // We do not need to store |this| with JS instance since,
@@ -5924,7 +6265,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     if (useSignalingMemory() || m_info.memory.isShared())
         patchpoint->clobberLate(RegisterSetBuilder { GPRInfo::wasmBoundsCheckingSizeRegister });
 
-    fillResults(patchpoint);
+    fillCallResults(patchpoint, signature, results);
 
     if (m_info.callCanClobberInstance(functionIndexSpace)) {
         patchpoint->clobberLate(RegisterSetBuilder::wasmPinnedRegisters());
@@ -5933,6 +6274,64 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
 
     return { };
 }
+
+auto OMGIRGenerator::tryInliningPolymorphicCalls(unsigned callProfileIndex, Value* calleeInstance, Value* calleeCallee, const TypeDefinition& signature, const ArgumentList& args, CallType callType, bool isTailCallRootCaller, BasicBlock* continuation) -> Expected<Vector<ValueResults>, ErrorType>
+{
+    if (callProfileIndex >= m_inlining->callSites().size())
+        return { };
+
+    auto& callSite = m_inlining->callSites()[callProfileIndex];
+    if (callSite.isEmpty())
+        return { };
+
+    Vector<ValueResults> fastValuesList;
+    BasicBlock* slowCase = m_proc.addBlock();
+    BasicBlock* calleeCheck = m_proc.addBlock();
+
+    Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeInstance, instanceValue());
+    m_currentBlock->appendNewControlValue(m_proc, Branch, origin(), isSameContextInstance, FrequentedBlock(calleeCheck), FrequentedBlock(slowCase, FrequencyClass::Rare));
+    calleeCheck->addPredecessor(m_currentBlock);
+    slowCase->addPredecessor(m_currentBlock);
+
+    for (unsigned i = 0; i < callSite.size(); ++i) {
+        auto* inlining = callSite[i];
+        auto& callee = inlining->callee();
+
+        BasicBlock* nextCase = slowCase;
+        if ((i + 1) != callSite.size())
+            nextCase = m_proc.addBlock();
+        BasicBlock* directCall = m_proc.addBlock();
+
+        m_currentBlock = calleeCheck;
+        ValueResults fastValues;
+        Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(&const_cast<IPIntCallee&>(callee)))));
+        m_currentBlock->appendNewControlValue(m_proc, Branch, origin(), isSameCallee, FrequentedBlock(directCall), FrequentedBlock(nextCase));
+        directCall->addPredecessor(m_currentBlock);
+        nextCase->addPredecessor(m_currentBlock);
+
+        m_currentBlock = directCall;
+        auto result = emitDirectCall(callProfileIndex, callee.index(), signature, args, fastValues, callType);
+        if (!result.has_value()) [[unlikely]]
+            return makeUnexpected(result.error());
+
+        if (!isTailCallRootCaller) {
+            for (Value*& value : fastValues) {
+                auto* input = value;
+                value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
+            }
+            m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
+            continuation->addPredecessor(m_currentBlock);
+        }
+
+        calleeCheck = nextCase;
+        fastValuesList.append(WTFMove(fastValues));
+    }
+
+    m_currentBlock = slowCase;
+
+    return fastValuesList;
+}
+
 
 auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIndex, const TypeDefinition& originalSignature, ArgumentList& args, ResultList& results, CallType callType) -> PartialResult
 {
@@ -5957,25 +6356,49 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
         auto& tableInformation = m_info.table(tableIndex);
 
         if (tableInformation.maximum() && tableInformation.maximum().value() == tableInformation.initial()) {
+            // The buffer is immutable & non-control-dependent since this table is not resizable / reaching to the maximum size.
             callableFunctionBufferLength = constant(B3::Int32, tableInformation.initial(), origin());
-            if (!tableIndex)
-                callableFunctionBuffer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedTable0Buffer()));
-            else {
-                Value* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+            if (!tableIndex) {
+                auto* result = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedTable0Buffer()));
+                m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedTable0Buffer, result);
+                result->setReadsMutability(B3::Mutability::Immutable);
+                result->setControlDependent(false);
+                callableFunctionBuffer = result;
+            } else {
+                auto* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+                m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_tables[tableIndex], table);
+                table->setReadsMutability(B3::Mutability::Immutable);
+                table->setControlDependent(false);
+
                 if (!tableInformation.isImport()) {
                     // Table is fixed-sized and it is not imported one. Thus this is definitely fixed-sized FuncRefTable.
                     callableFunctionBuffer = m_currentBlock->appendNew<Value>(m_proc, Add, origin(), table, constant(pointerType(), safeCast<int32_t>(FuncRefTable::offsetOfFunctionsForFixedSizedTable())));
-                } else
-                    callableFunctionBuffer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), table, safeCast<int32_t>(FuncRefTable::offsetOfFunctions()));
+                } else {
+                    auto* result = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), table, safeCast<int32_t>(FuncRefTable::offsetOfFunctions()));
+                    m_heaps.decorateMemory(&m_heaps.WasmFuncRefTable_functions, result);
+                    result->setReadsMutability(B3::Mutability::Immutable);
+                    result->setControlDependent(false);
+                    callableFunctionBuffer = result;
+                }
             }
         } else {
             if (!tableIndex) {
                 callableFunctionBufferLength = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedTable0Length()));
+                m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedTable0Length, callableFunctionBufferLength);
+
                 callableFunctionBuffer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfCachedTable0Buffer()));
+                m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_cachedTable0Buffer, callableFunctionBuffer);
             } else {
-                Value* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+                auto* table = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), instanceValue(), safeCast<int32_t>(JSWebAssemblyInstance::offsetOfTable(m_info, tableIndex)));
+                m_heaps.decorateMemory(&m_heaps.JSWebAssemblyInstance_tables[tableIndex], table);
+                table->setReadsMutability(B3::Mutability::Immutable);
+                table->setControlDependent(false);
+
                 callableFunctionBufferLength = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), table, safeCast<int32_t>(Table::offsetOfLength()));
+                m_heaps.decorateMemory(&m_heaps.WasmTable_length, callableFunctionBufferLength);
+
                 callableFunctionBuffer = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), table, safeCast<int32_t>(FuncRefTable::offsetOfFunctions()));
+                m_heaps.decorateMemory(&m_heaps.WasmFuncRefTable_functions, callableFunctionBuffer);
             }
         }
     }
@@ -5990,7 +6413,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
         });
     }
 
-    calleeIndex = m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), calleeIndex);
+    calleeIndex = pointerOfInt32(calleeIndex);
 
     BasicBlock* continuation = m_proc.addBlock();
 
@@ -6000,42 +6423,22 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
     // FIXME: when we have trap handlers, we can just let the call fail because Signature::invalidIndex is 0. https://bugs.webkit.org/show_bug.cgi?id=177210
     static_assert(sizeof(WasmToWasmImportableFunction::typeIndex) == sizeof(uintptr_t), "Load codegen assumes ptr");
     Value* calleeCallee = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callableFunction, safeCast<int32_t>(FuncRefTable::Function::offsetOfFunction() + WasmToWasmImportableFunction::offsetOfBoxedCallee()));
+    m_heaps.decorateMemory(&m_heaps.WasmFuncRefTableFunction_boxedCallee, calleeCallee);
+
     Value* calleeInstance = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callableFunction, safeCast<int32_t>(FuncRefTable::Function::offsetOfFunction() + WasmToWasmImportableFunction::offsetOfTargetInstance()));
+    m_heaps.decorateMemory(&m_heaps.WasmFuncRefTableFunction_targetInstance, calleeInstance);
 
-    ValueResults fastValues;
-    if (m_profile->isCalled(callProfileIndex)) {
-        if (auto* callee = m_profile->callee(callProfileIndex)) {
-            if (callee->compilationMode() == Wasm::CompilationMode::IPIntMode) {
-                BasicBlock* slowCase = m_proc.addBlock();
-                BasicBlock* directCall = m_proc.addBlock();
+    auto inliningResult = tryInliningPolymorphicCalls(callProfileIndex, calleeInstance, calleeCallee, signature, args, callType, isTailCallRootCaller, continuation);
+    if (!inliningResult.has_value()) [[unlikely]]
+        return makeUnexpected(WTFMove(inliningResult.error()));
 
-                Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeInstance, instanceValue());
-                Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(callee))));
-                m_currentBlock->appendNewControlValue(m_proc, Branch, origin(), m_currentBlock->appendNew<Value>(m_proc, BitAnd, origin(), isSameContextInstance, isSameCallee), FrequentedBlock(directCall), FrequentedBlock(slowCase, FrequencyClass::Rare));
-                directCall->addPredecessor(m_currentBlock);
-                slowCase->addPredecessor(m_currentBlock);
-
-                m_currentBlock = directCall;
-                auto result = emitDirectCall(callProfileIndex, callee->index(), signature, args, fastValues, callType);
-                if (!result.has_value()) [[unlikely]]
-                    return result;
-
-                if (!isTailCallRootCaller) {
-                    for (Value*& value : fastValues) {
-                        auto* input = value;
-                        value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
-                    }
-                    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-                    continuation->addPredecessor(m_currentBlock);
-                }
-
-                m_currentBlock = slowCase;
-            }
-        }
-    }
+    auto fastValuesList = WTFMove(inliningResult.value());
 
     Value* calleeCodeLocation = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callableFunction, safeCast<int32_t>(FuncRefTable::Function::offsetOfFunction() + WasmToWasmImportableFunction::offsetOfEntrypointLoadLocation()));
+    m_heaps.decorateMemory(&m_heaps.WasmFuncRefTableFunction_entrypointLoadLocation, calleeCodeLocation);
+
     Value* calleeRTT = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callableFunction, safeCast<int32_t>(FuncRefTable::Function::offsetOfFunction() + WasmToWasmImportableFunction::offsetOfRTT()));
+    m_heaps.decorateMemory(&m_heaps.WasmFuncRefTableFunction_rtt, calleeRTT);
 
     auto signatureRTT = TypeInformation::getCanonicalRTT(originalSignature.index());
 
@@ -6061,13 +6464,19 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
             this->emitExceptionCheck(jit, origin, ExceptionType::BadSignature);
         });
 
-        Value* rttSize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), calleeRTT, safeCast<uint32_t>(RTT::offsetOfDisplaySizeExcludingThis()));
+        auto* rttSize = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, origin(), calleeRTT, safeCast<int32_t>(RTT::offsetOfDisplaySizeExcludingThis()));
+        m_heaps.decorateMemory(&m_heaps.WasmRTT_displaySizeExcludingThis, rttSize);
+
         CheckValue* checkRTTSize = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, BelowEqual, origin(), rttSize, constant(Int32, signatureRTT->displaySizeExcludingThis())));
         checkRTTSize->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::BadSignature);
         });
 
-        Value* displayEntry = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), calleeRTT, safeCast<uint32_t>(RTT::offsetOfData() + signatureRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+        auto* displayEntry = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), calleeRTT, safeCast<int32_t>(RTT::offsetOfData() + signatureRTT->displaySizeExcludingThis() * sizeof(RefPtr<const RTT>)));
+        m_heaps.decorateMemory(&m_heaps.WasmRTT_data[signatureRTT->displaySizeExcludingThis()], displayEntry);
+        displayEntry->setReadsMutability(B3::Mutability::Immutable);
+        displayEntry->setControlDependent(false);
+
         CheckValue* checkRTTDisplayEntry = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, NotEqual, origin(), displayEntry, constant(pointerType(), std::bit_cast<uintptr_t>(signatureRTT.ptr()))));
         checkRTTDisplayEntry->setGenerator([=, this, origin = this->origin()](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
             this->emitExceptionCheck(jit, origin, ExceptionType::BadSignature);
@@ -6080,6 +6489,7 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
     }
 
     Value* calleeCode = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), calleeCodeLocation);
+    m_heaps.decorateMemory(&m_heaps.WasmWasmCallableFunctionLocation_value, calleeCode);
 
     ValueResults slowValues;
     auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCallee, signature, args, slowValues, callType);
@@ -6099,9 +6509,9 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
             auto* slowValue = slowValues[i];
             auto* phi = m_currentBlock->appendNew<Value>(m_proc, Phi, slowValue->child(0)->type(), origin());
             slowValue->as<UpsilonValue>()->setPhi(phi);
-            if (!fastValues.isEmpty()) {
+            for (auto& fastValues : fastValuesList) {
                 auto* fastValue = fastValues[i];
-                fastValue->as<UpsilonValue>()->setPhi(phi);
+                fastValue->as<B3::UpsilonValue>()->setPhi(phi);
             }
             results.append(push(phi));
         }
@@ -6134,7 +6544,7 @@ auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const TypeDefinition&
     // can be to the js for our stack check calculation.
     m_maxNumJSCallArguments = std::max(m_maxNumJSCallArguments, static_cast<uint32_t>(args.size()));
 
-    ptrdiff_t offset = safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfTargetInstance());
+    int32_t offset = safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfTargetInstance());
     bool canTrap = false;
     if (calleeArg.type().isNullable())
         canTrap = emitNullCheckBeforeAccess(callee, offset);
@@ -6144,45 +6554,25 @@ auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const TypeDefinition&
         return input;
     };
 
-    Value* calleeInstance = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), pointerType(), origin(), callee, offset);
-    Value* calleeCallee = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callee, safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfBoxedCallee()));
+    Value* calleeInstance = m_currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(Load), pointerType(), origin(), pointerOfWasmRef(callee), offset);
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyFunctionBase_targetInstance, calleeInstance);
+
+    Value* calleeCallee = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), pointerOfWasmRef(callee), safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfBoxedCallee()));
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyFunctionBase_boxedCallee, calleeCallee);
 
     BasicBlock* continuation = m_proc.addBlock();
 
-    ValueResults fastValues;
-    if (m_profile->isCalled(callProfileIndex)) {
-        if (auto* callee = m_profile->callee(callProfileIndex)) {
-            if (callee->compilationMode() == Wasm::CompilationMode::IPIntMode) {
-                BasicBlock* slowCase = m_proc.addBlock();
-                BasicBlock* directCall = m_proc.addBlock();
+    auto inliningResult = tryInliningPolymorphicCalls(callProfileIndex, calleeInstance, calleeCallee, signature, args, callType, isTailCallRootCaller, continuation);
+    if (!inliningResult.has_value()) [[unlikely]]
+        return makeUnexpected(WTFMove(inliningResult.error()));
 
-                Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeInstance, instanceValue());
-                Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(callee))));
-                m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), m_currentBlock->appendNew<Value>(m_proc, B3::BitAnd, origin(), isSameContextInstance, isSameCallee), FrequentedBlock(directCall), FrequentedBlock(slowCase));
-                directCall->addPredecessor(m_currentBlock);
-                slowCase->addPredecessor(m_currentBlock);
+    auto fastValuesList = WTFMove(inliningResult.value());
 
-                m_currentBlock = directCall;
-                auto result = emitDirectCall(callProfileIndex, callee->index(), signature, args, fastValues, callType);
-                if (!result.has_value()) [[unlikely]]
-                    return result;
+    Value* calleeCodeLocation = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), pointerOfWasmRef(callee), safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfEntrypointLoadLocation()));
+    m_heaps.decorateMemory(&m_heaps.WebAssemblyFunctionBase_entrypointLoadLocation, calleeCodeLocation);
 
-                if (!isTailCallRootCaller) {
-                    for (Value*& value : fastValues) {
-                        auto* input = value;
-                        value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
-                    }
-                    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-                    continuation->addPredecessor(m_currentBlock);
-                }
-
-                m_currentBlock = slowCase;
-            }
-        }
-    }
-
-    Value* calleeCodeLocation = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), callee, safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfEntrypointLoadLocation()));
     Value* calleeCode = m_currentBlock->appendNew<MemoryValue>(m_proc, Load, pointerType(), origin(), calleeCodeLocation);
+    m_heaps.decorateMemory(&m_heaps.WasmWasmCallableFunctionLocation_value, calleeCode);
 
     ValueResults slowValues;
     auto result = emitIndirectCall(calleeInstance, calleeCode, calleeCallee, signature, args, slowValues, callType);
@@ -6202,7 +6592,7 @@ auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const TypeDefinition&
             auto* slowValue = slowValues[i];
             auto* phi = m_currentBlock->appendNew<Value>(m_proc, Phi, slowValue->child(0)->type(), origin());
             slowValue->as<B3::UpsilonValue>()->setPhi(phi);
-            if (!fastValues.isEmpty()) {
+            for (auto& fastValues : fastValuesList) {
                 auto* fastValue = fastValues[i];
                 fastValue->as<B3::UpsilonValue>()->setPhi(phi);
             }
@@ -6302,7 +6692,10 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
     Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator);
 
     auto result = makeUnique<InternalFunction>();
+    InliningDecision inliningDecision(module, profiledCallee);
+    inliningDecision.expand();
 
+    AbstractHeapRepository heaps;
     compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();
     compilationContext.procedure = makeUniqueWithoutFastMallocCheck<Procedure>(info.usesSIMD(functionIndex));
 
@@ -6327,12 +6720,18 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
     procedure.code().setForceIRCRegisterAllocation();
 
     result->outgoingJITDirectCallees = FixedBitVector(info.internalFunctionCount());
-    OMGIRGenerator irGenerator(compilationContext, module, calleeGroup, info, profiledCallee, callee, procedure, unlinkedWasmToWasmCalls, result->outgoingJITDirectCallees, result->osrEntryScratchBufferSize, mode, compilationMode, functionIndex, loopIndexForOSREntry);
+    OMGIRGenerator irGenerator(heaps, compilationContext, module, calleeGroup, info, profiledCallee, inliningDecision.root(), callee, procedure, unlinkedWasmToWasmCalls, result->outgoingJITDirectCallees, result->osrEntryScratchBufferSize, mode, compilationMode, functionIndex, loopIndexForOSREntry);
     FunctionParser<OMGIRGenerator> parser(irGenerator, function.data, signature, info);
     WASM_FAIL_IF_HELPER_FAILS(parser.parse());
 
     irGenerator.insertEntrySwitch();
     irGenerator.insertConstants();
+
+    // Make sure everything is decorated. This does a bunch of deferred decorating. This has
+    // to happen last because our abstract heaps are generated lazily. They have to be
+    // generated lazily because we have an infinite number of numbered, indexed, and
+    // absolute heaps. We only become aware of the ones we actually mention while lowering.
+    heaps.computeRangesAndDecorateInstructions();
 
     procedure.resetReachability();
     if (ASSERT_ENABLED)
@@ -6363,7 +6762,7 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
         ASSERT(checkSize || !needsOverflowCheck);
         if (!needsOverflowCheck)
             checkSize = stackCheckNotNeeded;
-        static_cast<OMGOSREntryCallee*>(&callee)->setStackCheckSize(checkSize);
+        uncheckedDowncast<OMGOSREntryCallee>(callee).setStackCheckSize(checkSize);
     }
 
     return result;

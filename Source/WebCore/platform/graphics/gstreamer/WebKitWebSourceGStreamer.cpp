@@ -578,7 +578,7 @@ static GstFlowReturn webKitWebSrcCreate(GstPushSrc* pushSrc, GstBuffer** buffer)
     return GST_FLOW_EOS;
 }
 
-static bool webKitWebSrcSetExtraHeader(StringView fieldId, const GValue* value, ResourceRequest& request)
+static bool webKitWebSrcSetExtraHeader(const String& fieldId, const GValue* value, ResourceRequest& request)
 {
     GUniquePtr<gchar> fieldContent;
 
@@ -592,9 +592,8 @@ static bool webKitWebSrcSetExtraHeader(StringView fieldId, const GValue* value, 
             fieldContent.reset(g_value_dup_string(&dest));
     }
 
-    auto field = fieldId.toStringWithoutCopying();
-    GST_DEBUG("Appending extra header: \"%s: %s\"", field.ascii().data(), fieldContent.get());
-    request.setHTTPHeaderField(field, String::fromLatin1(fieldContent.get()));
+    GST_DEBUG("Appending extra header: \"%s: %s\"", fieldId.ascii().data(), fieldContent.get());
+    request.setHTTPHeaderField(fieldId, String(byteCast<char8_t>(unsafeSpan(fieldContent.get()))));
     return true;
 }
 
@@ -626,7 +625,7 @@ static void webKitWebSrcMakeRequest(WebKitWebSrc* src, DataMutexLocker<WebKitWeb
     ASSERT(members->requestedPosition != members->stopPosition);
 
     GST_DEBUG_OBJECT(src, "Posting task to request R%u %s requestedPosition=%" G_GUINT64_FORMAT " stopPosition=%" G_GUINT64_FORMAT, members->requestNumber, priv->originalURI.data(), members->requestedPosition, members->stopPosition);
-    URL url { String::fromLatin1(priv->originalURI.data()) };
+    URL url { String(byteCast<char8_t>(unsafeSpan(priv->originalURI.data()))) };
 
     ResourceRequest request(WTFMove(url));
     request.setAllowCookies(true);
@@ -891,9 +890,9 @@ const gchar* const* webKitWebSrcGetProtocols(GType)
     return protocols.data();
 }
 
-static URL convertPlaybinURI(const char* uriString)
+static URL convertPlaybinURI(String&& uriString)
 {
-    return URL { String::fromLatin1(uriString) };
+    return URL { WTFMove(uriString) };
 }
 
 static gchar* webKitWebSrcGetUri(GstURIHandler* handler)
@@ -922,7 +921,7 @@ static gboolean webKitWebSrcSetUri(GstURIHandler* handler, const gchar* uri, GEr
         return FALSE;
     }
 
-    URL url = convertPlaybinURI(uri);
+    URL url = convertPlaybinURI(byteCast<char8_t>(unsafeSpan(uri)));
 
     if (!urlHasSupportedProtocol(url)) {
         g_set_error(error, GST_URI_ERROR, GST_URI_ERROR_BAD_URI, "Invalid URI '%s'", uri);

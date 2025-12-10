@@ -53,6 +53,12 @@ XRDeviceProxy::XRDeviceProxy(XRDeviceInfo&& deviceInfo, PlatformXRSystemProxy& x
 
     if (!deviceInfo.vrFeatures.contains(SessionFeature::WebGPU))
         deviceInfo.vrFeatures.append(SessionFeature::WebGPU);
+#if ENABLE(WEBXR_LAYERS)
+    if (!deviceInfo.vrFeatures.contains(SessionFeature::Layers))
+        deviceInfo.vrFeatures.append(SessionFeature::Layers);
+    if (!deviceInfo.arFeatures.contains(SessionFeature::Layers))
+        deviceInfo.arFeatures.append(SessionFeature::Layers);
+#endif
     if (!deviceInfo.vrFeatures.isEmpty())
         setSupportedFeatures(SessionMode::ImmersiveVr, deviceInfo.vrFeatures);
     if (!deviceInfo.arFeatures.isEmpty())
@@ -143,6 +149,44 @@ void XRDeviceProxy::submitFrame(Vector<PlatformXR::Device::Layer>&& layers)
 #endif
     }
 }
+
+#if ENABLE(WEBXR_HIT_TEST)
+void XRDeviceProxy::requestHitTestSource(const PlatformXR::HitTestOptions& init, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&& completionHandler)
+{
+    RefPtr xrSystem = m_xrSystem.get();
+    if (!xrSystem) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    xrSystem->requestHitTestSource(init, WTFMove(completionHandler));
+}
+
+void XRDeviceProxy::deleteHitTestSource(PlatformXR::HitTestSource source)
+{
+    RefPtr xrSystem = m_xrSystem.get();
+    if (!xrSystem)
+        return;
+    xrSystem->deleteHitTestSource(source);
+}
+
+void XRDeviceProxy::requestTransientInputHitTestSource(const PlatformXR::TransientInputHitTestOptions& init, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource>)>&& completionHandler)
+{
+    RefPtr xrSystem = m_xrSystem.get();
+    if (!xrSystem) {
+        completionHandler(WebCore::Exception { WebCore::ExceptionCode::InvalidStateError });
+        return;
+    }
+    xrSystem->requestTransientInputHitTestSource(init, WTFMove(completionHandler));
+}
+
+void XRDeviceProxy::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
+{
+    RefPtr xrSystem = m_xrSystem.get();
+    if (!xrSystem)
+        return;
+    xrSystem->deleteTransientInputHitTestSource(source);
+}
+#endif
 
 } // namespace WebKit
 

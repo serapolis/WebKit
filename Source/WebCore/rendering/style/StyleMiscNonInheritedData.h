@@ -26,18 +26,22 @@
 
 #pragma once
 
-#include <WebCore/LengthPoint.h>
+#include <WebCore/StyleAlignContent.h>
+#include <WebCore/StyleAlignItems.h>
+#include <WebCore/StyleAlignSelf.h>
 #include <WebCore/StyleAnimations.h>
 #include <WebCore/StyleAppearance.h>
 #include <WebCore/StyleAspectRatio.h>
 #include <WebCore/StyleBoxShadow.h>
 #include <WebCore/StyleContent.h>
-#include <WebCore/StyleContentAlignmentData.h>
-#include <WebCore/StyleMaskLayer.h>
+#include <WebCore/StyleJustifyContent.h>
+#include <WebCore/StyleJustifyItems.h>
+#include <WebCore/StyleJustifySelf.h>
+#include <WebCore/StyleMaskLayers.h>
 #include <WebCore/StyleObjectPosition.h>
 #include <WebCore/StyleOpacity.h>
 #include <WebCore/StyleOrder.h>
-#include <WebCore/StyleSelfAlignmentData.h>
+#include <WebCore/StyleResize.h>
 #include <WebCore/StyleTransitions.h>
 #include <memory>
 #include <wtf/DataRef.h>
@@ -91,12 +95,14 @@ public:
     Style::Content content;
     Style::BoxShadows boxShadow;
     Style::AspectRatio aspectRatio;
-    StyleContentAlignmentData alignContent;
-    StyleContentAlignmentData justifyContent;
-    StyleSelfAlignmentData alignItems;
-    StyleSelfAlignmentData alignSelf;
-    StyleSelfAlignmentData justifyItems;
-    StyleSelfAlignmentData justifySelf;
+
+    Style::AlignContent alignContent;
+    Style::AlignItems alignItems;
+    Style::AlignSelf alignSelf;
+    Style::JustifyContent justifyContent;
+    Style::JustifyItems justifyItems;
+    Style::JustifySelf justifySelf;
+
     Style::ObjectPosition objectPosition;
     Style::Order order;
 
@@ -113,7 +119,7 @@ public:
     PREFERRED_TYPE(bool) unsigned textOverflow : 1; // Whether or not lines that spill out should be truncated with "..."
     PREFERRED_TYPE(UserDrag) unsigned userDrag : 2;
     PREFERRED_TYPE(ObjectFit) unsigned objectFit : 3;
-    PREFERRED_TYPE(Resize) unsigned resize : 3;
+    PREFERRED_TYPE(Style::Resize) unsigned resize : 3;
 
 private:
     StyleMiscNonInheritedData();

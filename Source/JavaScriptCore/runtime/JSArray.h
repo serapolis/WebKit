@@ -133,8 +133,6 @@ public:
 
     JSString* fastToString(JSGlobalObject*);
 
-    JSArray* fastFlat(JSGlobalObject*, uint64_t depth, uint64_t length);
-
     ALWAYS_INLINE bool definitelyNegativeOneMiss() const;
 
     enum ShiftCountMode {
@@ -187,7 +185,7 @@ protected:
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
 
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-    JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
 private:
     bool isLengthWritable()
@@ -251,7 +249,7 @@ inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initia
         butterfly = Butterfly::fromBase(temp, 0, outOfLineStorage);
         butterfly->setVectorLength(vectorLength);
         butterfly->setPublicLength(initialLength);
-        Butterfly::clearOptimalVectorLengthGap(indexingType, butterfly, vectorLength, 0);
+        Butterfly::clearRange(indexingType, butterfly, 0, vectorLength);
     } else {
         ASSERT(
             indexingType == ArrayWithSlowPutArrayStorage
@@ -424,6 +422,7 @@ inline bool isJSArray(JSValue v) { return v.isCell() && isJSArray(v.asCell()); }
 JS_EXPORT_PRIVATE JSArray* constructArray(JSGlobalObject*, Structure*, const ArgList& values);
 JS_EXPORT_PRIVATE JSArray* constructArray(JSGlobalObject*, Structure*, const JSValue* values, unsigned length);
 JS_EXPORT_PRIVATE JSArray* constructArrayNegativeIndexed(JSGlobalObject*, Structure*, const JSValue* values, unsigned length);
+JS_EXPORT_PRIVATE JSArray* constructArrayPair(JSGlobalObject*, JSValue first, JSValue second);
 
 ALWAYS_INLINE uint64_t toLength(JSGlobalObject*, JSObject*);
 

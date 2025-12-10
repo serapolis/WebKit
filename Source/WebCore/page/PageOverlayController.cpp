@@ -28,6 +28,7 @@
 
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "DocumentView.h"
 #include "GraphicsContext.h"
 #include "GraphicsLayer.h"
 #include "LocalFrameInlines.h"
@@ -409,10 +410,10 @@ Vector<String> PageOverlayController::copyAccessibilityAttributesNames(bool para
     return { };
 }
 
-void PageOverlayController::paintContents(const GraphicsLayer* graphicsLayer, GraphicsContext& graphicsContext, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>)
+void PageOverlayController::paintContents(const GraphicsLayer& graphicsLayer, GraphicsContext& graphicsContext, const FloatRect& clipRect, OptionSet<GraphicsLayerPaintBehavior>)
 {
     for (auto overlayAndGraphicsLayer : m_overlayGraphicsLayers) {
-        if (overlayAndGraphicsLayer.value.ptr() != graphicsLayer)
+        if (overlayAndGraphicsLayer.value.ptr() != &graphicsLayer)
             continue;
 
         GraphicsContextStateSaver stateSaver(graphicsContext);
@@ -445,6 +446,11 @@ void PageOverlayController::didChangeOverlayBackgroundColor(PageOverlay& overlay
     ASSERT(m_pageOverlays.contains(&overlay));
     if (RefPtr layer = m_overlayGraphicsLayers.get(overlay))
         layer->setBackgroundColor(overlay.backgroundColor());
+}
+
+int PageOverlayController::overlayCount() const
+{
+    return m_overlayGraphicsLayers.computeSize();
 }
 
 bool PageOverlayController::shouldSkipLayerInDump(const GraphicsLayer*, OptionSet<LayerTreeAsTextOptions> options) const

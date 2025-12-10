@@ -38,6 +38,7 @@
 #include "ContainerNodeInlines.h"
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
+#include "DocumentPage.h"
 #include "DropShadowFilterOperationWithStyleColor.h"
 #include "EventRegion.h"
 #include "GraphicsContext.h"
@@ -107,7 +108,7 @@
 #include "LocalDefaultSystemAppearance.h"
 #endif
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 #include "AcceleratedEffect.h"
 #include "AcceleratedEffectStack.h"
 #include "AcceleratedEffectValues.h"
@@ -116,7 +117,7 @@
 #include <wtf/WeakListHashSet.h>
 #endif
 
-#if ENABLE(MODEL_PROCESS)
+#if ENABLE(MODEL_CONTEXT)
 #include "ModelContext.h"
 #endif
 
@@ -155,13 +156,15 @@ public:
     PaintedContentsInfo(RenderLayerBacking& inBacking)
         : m_backing(inBacking)
     {
-#if HAVE(SUPPORT_HDR_DISPLAY)
-        if (m_backing.renderer().document().drawsHDRContent()) {
-            m_hasHDRContent = RequestState::Unknown;
-            m_rendererHasHDRContent = RequestState::Unknown;
-        }
-#endif
     }
+
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    void setDetectsHDRContent()
+    {
+        m_hdrContent = RequestState::Unknown;
+        m_rendererHDRContent = RequestState::Unknown;
+    }
+#endif
 
     void determinePaintsBoxDecorations();
     bool paintsBoxDecorations()
@@ -174,7 +177,7 @@ public:
     bool isPaintsContentSatisfied() const
     {
 #if HAVE(SUPPORT_HDR_DISPLAY)
-        if (m_hasHDRContent == RequestState::Unknown)
+        if (m_hdrContent == RequestState::Unknown)
             return false;
 #endif
         return m_content != RequestState::Unknown;
@@ -191,14 +194,14 @@ public:
     bool paintsHDRContent()
     {
         determinePaintsContent();
-        return m_hasHDRContent == RequestState::True;
+        return m_hdrContent == RequestState::True;
     }
 #endif
 
     bool isContentsTypeSatisfied() const
     {
 #if HAVE(SUPPORT_HDR_DISPLAY)
-        if (m_rendererHasHDRContent == RequestState::Unknown)
+        if (m_rendererHDRContent == RequestState::Unknown)
             return false;
 #endif
         return m_contentsType != ContentsType::Unknown;
@@ -224,10 +227,10 @@ public:
     }
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    bool rendererHasHDRContent()
+    bool rendererHasHDRContent() // FIXME: Why do we need this?
     {
         determineContentsType();
-        return m_rendererHasHDRContent == RequestState::True;
+        return m_rendererHDRContent == RequestState::True;
     }
 #endif
 
@@ -235,8 +238,8 @@ public:
     RequestState m_boxDecorations { RequestState::Unknown };
     RequestState m_content { RequestState::Unknown };
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    RequestState m_hasHDRContent { RequestState::DontCare };
-    RequestState m_rendererHasHDRContent { RequestState::DontCare };
+    RequestState m_hdrContent { RequestState::DontCare };
+    RequestState m_rendererHDRContent { RequestState::DontCare };
 #endif
 
     ContentsType m_contentsType { ContentsType::Unknown };
@@ -255,12 +258,15 @@ void PaintedContentsInfo::determinePaintsContent()
     if (isPaintsContentSatisfied())
         return;
 
-    RenderLayer::PaintedContentRequest contentRequest(m_backing.owningLayer());
+    auto contentRequest = RenderLayer::PaintedContentRequest { };
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    contentRequest.setHDRRequestState(m_hdrContent);
+#endif
 
     m_backing.determinePaintsContent(contentRequest);
     m_content = contentRequest.hasPaintedContent;
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    m_hasHDRContent = contentRequest.hasHDRContent;
+    m_hdrContent = contentRequest.hasHDRContent;
 #endif
 }
 
@@ -279,8 +285,8 @@ void PaintedContentsInfo::determineContentsType()
         m_contentsType = ContentsType::Painted;
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    if (m_rendererHasHDRContent == RequestState::Unknown)
-        m_rendererHasHDRContent = m_backing.rendererHasHDRContent() ? RequestState::True : RequestState::False;
+    if (m_rendererHDRContent == RequestState::Unknown)
+        m_rendererHDRContent = m_backing.rendererHasHDRContent() ? RequestState::True : RequestState::False;
 #endif
 }
 
@@ -298,7 +304,7 @@ RenderLayerBacking::RenderLayerBacking(RenderLayer& layer)
 #if ENABLE(FULLSCREEN_API)
     auto isFullsizeBackdrop = [](const RenderElement& renderer) -> bool {
         auto& style = renderer.style();
-        if (style.pseudoElementType() != PseudoId::Backdrop || style.position() != PositionType::Fixed)
+        if (style.pseudoElementType() != PseudoElementType::Backdrop || style.position() != PositionType::Fixed)
             return false;
 
         if (style.hasTransform() || style.hasClip() || style.hasMask())
@@ -999,7 +1005,7 @@ bool RenderLayerBacking::shouldClipCompositedBounds() const
 
     if (renderer().effectiveCapturedInViewTransition())
         return false;
-    if (renderer().style().pseudoElementType() == PseudoId::ViewTransitionNew)
+    if (renderer().style().pseudoElementType() == PseudoElementType::ViewTransitionNew)
         return false;
 
     if (m_isFrameLayerWithTiledBacking)
@@ -1016,8 +1022,8 @@ static bool hasNonZeroTransformOrigin(const RenderLayerModelObject& renderer)
     auto& style = renderer.style();
     auto fixedTransformOriginX = style.transformOriginX().tryFixed();
     auto fixedTransformOriginY = style.transformOriginY().tryFixed();
-    return (fixedTransformOriginX && fixedTransformOriginX->value)
-        || (fixedTransformOriginY && fixedTransformOriginY->value);
+    return (fixedTransformOriginX && !fixedTransformOriginX->isZero())
+        || (fixedTransformOriginY && !fixedTransformOriginY->isZero());
 }
 
 bool RenderLayerBacking::updateCompositedBounds()
@@ -1316,24 +1322,13 @@ bool RenderLayerBacking::updateConfiguration(const RenderLayer* compositingAnces
     else if (is<RenderModel>(renderer())) {
         auto element = downcast<HTMLModelElement>(renderer().element());
 
-        // Some ModelPlayers use a platformLayer() and some pass the Model to the layer as contents,
-        // but this is a runtime decision.
-        if (element->usesPlatformLayer())
-            m_graphicsLayer->setContentsToPlatformLayer(element->platformLayer(), GraphicsLayer::ContentsLayerPurpose::Model);
-#if ENABLE(MODEL_PROCESS)
-        else if (auto modelContext = element->modelContext(); modelContext && element->document().settings().modelProcessEnabled()) {
-            modelContext->setBackgroundColor(rendererBackgroundColor());
-            m_graphicsLayer->setContentsToModelContext(*modelContext, GraphicsLayer::ContentsLayerPurpose::HostedModel);
-        }
-#endif
-        else if (auto model = element->model())
-            m_graphicsLayer->setContentsToModel(WTFMove(model), element->isInteractive() ? GraphicsLayer::ModelInteraction::Enabled : GraphicsLayer::ModelInteraction::Disabled);
-
+        element->configureGraphicsLayer(*m_graphicsLayer, rendererBackgroundColor());
         element->sizeMayHaveChanged();
 
         layerConfigChanged = true;
     }
 #endif // ENABLE(MODEL_ELEMENT)
+
     // FIXME: Why do we do this twice?
     if (CheckedPtr widget = dynamicDowncast<RenderWidget>(renderer())) {
         if (compositor.attachWidgetContentLayersIfNecessary(*widget).layerHierarchyChanged) {
@@ -1526,9 +1521,8 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
     const RenderStyle& style = renderer().style();
     const auto deviceScaleFactor = this->deviceScaleFactor();
 
-    bool isRunningAcceleratedTransformAnimation = false;
-    if (auto styleable = Styleable::fromRenderer(renderer()))
-        isRunningAcceleratedTransformAnimation = styleable->isRunningAcceleratedAnimationOfProperty(CSSPropertyTransform);
+    auto styleable = Styleable::fromRenderer(renderer());
+    bool isRunningAcceleratedTransformAnimation = styleable && styleable->isRunningAcceleratedTransformRelatedAnimation();
 
     updateTransform(style);
     updateOpacity(style);
@@ -1584,6 +1578,13 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
                         fixedPositionRect.moveBy(-LayoutPoint { entry.clippingLayer->position() });
                 }
             }
+
+            // RenderView's layer has a non-zero offsetFromGraphicsLayer in RTL content; we have to account
+            // for that to map rectForFixedPositionLayout from content to GraphicsLayer coordinates.
+            CheckedPtr renderViewLayer = renderer().view().layer();
+            ASSERT(renderViewLayer->isComposited());
+            fixedPositionRect.move(renderViewLayer->backing()->contentOffsetInCompositingLayer());
+
             m_viewportClippingLayer->setPosition(fixedPositionRect.location());
             m_viewportClippingLayer->setSize(fixedPositionRect.size());
             primaryLayerPosition.moveBy(-fixedPositionRect.location());
@@ -1697,8 +1698,8 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
             m_scrolledContentsLayer->setNeedsDisplay();
 
         m_scrolledContentsLayer->setSize(scrollSize);
-        m_scrolledContentsLayer->setScrollOffset(scrollOffset, GraphicsLayer::DontSetNeedsDisplay);
-        m_scrolledContentsLayer->setOffsetFromRenderer(toLayoutSize(scrollContainerBox.location()), GraphicsLayer::DontSetNeedsDisplay);
+        m_scrolledContentsLayer->setScrollOffset(scrollOffset, GraphicsLayer::ShouldSetNeedsDisplay::DoNotSet);
+        m_scrolledContentsLayer->setOffsetFromRenderer(toLayoutSize(scrollContainerBox.location()), GraphicsLayer::ShouldSetNeedsDisplay::DoNotSet);
         
         adjustTiledBackingCoverage();
     }
@@ -1716,11 +1717,11 @@ void RenderLayerBacking::updateGeometry(const RenderLayer* compositedAncestor)
     if (m_foregroundLayer) {
         FloatSize foregroundSize;
         FloatSize foregroundOffset;
-        GraphicsLayer::ShouldSetNeedsDisplay needsDisplayOnOffsetChange = GraphicsLayer::SetNeedsDisplay;
+        auto needsDisplayOnOffsetChange = GraphicsLayer::ShouldSetNeedsDisplay::Set;
         if (m_scrolledContentsLayer) {
             foregroundSize = m_scrolledContentsLayer->size();
             foregroundOffset = m_scrolledContentsLayer->offsetFromRenderer() - toLayoutSize(m_scrolledContentsLayer->scrollOffset());
-            needsDisplayOnOffsetChange = GraphicsLayer::DontSetNeedsDisplay;
+            needsDisplayOnOffsetChange = GraphicsLayer::ShouldSetNeedsDisplay::DoNotSet;
         } else if (hasClippingLayer()) {
             // If we have a clipping layer (which clips descendants), then the foreground layer is a child of it,
             // so that it gets correctly sorted with children. In that case, position relative to the clipping layer.
@@ -2041,6 +2042,11 @@ void RenderLayerBacking::updateDrawsContent(PaintedContentsInfo& contentsInfo)
         m_scrolledContentsLayer->setDrawsContent(hasScrollingPaintedContent);
         return;
     }
+
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    if (renderer().document().drawsHDRContent())
+        contentsInfo.setDetectsHDRContent();
+#endif
 
     bool hasPaintedContent = containsPaintedContent(contentsInfo);
 
@@ -2440,7 +2446,7 @@ bool RenderLayerBacking::needsRepaintOnCompositedScroll() const
     if (!hasScrollingLayer())
         return false;
 
-    if (renderer().style().backgroundLayers().hasImageWithAttachment(FillAttachment::LocalBackground))
+    if (Style::hasImageWithAttachment(renderer().style().backgroundLayers(), FillAttachment::LocalBackground))
         return true;
 
     if (auto scrollingCoordinator = m_owningLayer.page().scrollingCoordinator())
@@ -2933,13 +2939,13 @@ static bool canDirectlyCompositeBackgroundBackgroundImage(const RenderElement& r
         return false;
 
     auto& backgroundLayers = style.backgroundLayers();
-    if (backgroundLayers.size() > 1)
+    if (backgroundLayers.usedLength() > 1)
         return false;
 
-    if (!backgroundLayers.imagesAreLoaded(&renderer))
+    if (!Style::imagesAreLoaded(backgroundLayers, renderer))
         return false;
 
-    auto& layer = backgroundLayers.first();
+    auto& layer = backgroundLayers.usedFirst();
 
     if (layer.attachment() != FillAttachment::ScrollBackground)
         return false;
@@ -3035,7 +3041,7 @@ void RenderLayerBacking::updateDirectlyCompositedBackgroundImage(PaintedContents
         return;
     }
 
-    auto& backgroundLayer = style.backgroundLayers().first();
+    auto& backgroundLayer = style.backgroundLayers().usedFirst();
     auto backgroundBox = LayoutRect { backgroundBoxForSimpleContainerPainting() };
     // FIXME: Absolute paint location is required here.
     auto geometry = BackgroundPainter::calculateFillLayerImageGeometry(*renderBox(), renderBox(), backgroundLayer, { }, backgroundBox);
@@ -3195,7 +3201,7 @@ bool RenderLayerBacking::isSimpleContainerCompositingLayer(PaintedContentsInfo& 
     if (contentsInfo.paintsBoxDecorations() || contentsInfo.paintsContent())
         return false;
 
-    if (renderer().style().backgroundLayers().first().clip() == FillBox::Text)
+    if (renderer().style().backgroundLayers().usedFirst().clip() == FillBox::Text)
         return false;
     
     if (renderer().isDocumentElementRenderer() && m_owningLayer.isolatesCompositedBlending())
@@ -3267,12 +3273,14 @@ static std::optional<bool> intersectsWithAncestor(const RenderLayer& child, cons
     return overlap.intersects(ancestorCompositedBounds);
 }
 
-// Conservative test for having no rendered children.
 void RenderLayerBacking::determineNonCompositedLayerDescendantsPaintedContent(RenderLayer::PaintedContentRequest& request) const
 {
     bool hasPaintingDescendant = false;
     traverseVisibleNonCompositedDescendantLayers(m_owningLayer, [&hasPaintingDescendant, &request, this](const RenderLayer& layer) {
-        RenderLayer::PaintedContentRequest localRequest(m_owningLayer);
+        auto localRequest = RenderLayer::PaintedContentRequest { };
+#if HAVE(SUPPORT_HDR_DISPLAY)
+        localRequest.setHDRRequestState(request.hasHDRContent);
+#endif
         if (layer.isVisuallyNonEmpty(&localRequest)) {
             bool mayIntersect = intersectsWithAncestor(layer, m_owningLayer, compositedBounds()).value_or(true);
             if (mayIntersect) {
@@ -3281,8 +3289,8 @@ void RenderLayerBacking::determineNonCompositedLayerDescendantsPaintedContent(Re
             }
         }
 #if HAVE(SUPPORT_HDR_DISPLAY)
-        if (localRequest.probablyHasPaintedContent())
-            request.hasHDRContent = localRequest.hasHDRContent;
+        if (localRequest.probablyHasPaintedContent() && localRequest.hasHDRContent == RequestState::True)
+            request.hasHDRContent = RequestState::True;
 #endif
         return (hasPaintingDescendant && request.isSatisfied()) ? LayerTraversal::Stop : LayerTraversal::Continue;
     });
@@ -3465,6 +3473,10 @@ void RenderLayerBacking::contentChanged(ContentChangeType changeType, const std:
 
 #if ENABLE(MODEL_ELEMENT)
     if (changeType == ContentChangeType::Model) {
+#if ENABLE(GPU_PROCESS_MODEL)
+        if (m_graphicsLayer && m_graphicsLayer->drawsContent())
+            m_graphicsLayer->setNeedsDisplay();
+#endif
         compositor().scheduleCompositingLayerUpdate();
         return;
     }
@@ -3557,7 +3569,7 @@ LayoutRect RenderLayerBacking::contentsBox() const
 
 static LayoutRect backgroundRectForBox(const RenderBox& box)
 {
-    switch (box.style().backgroundLayers().first().clip()) {
+    switch (box.style().backgroundLayers().usedFirst().clip()) {
     case FillBox::BorderBox:
         return box.borderBoxRect();
     case FillBox::PaddingBox:
@@ -3613,7 +3625,7 @@ GraphicsLayer* RenderLayerBacking::childForSuperlayersExcludingViewTransitions()
         return m_ancestorClippingStack->firstLayer();
 
     if (RefPtr viewportConstrainedLayer = viewportClippingOrAnchorLayer())
-        return viewportConstrainedLayer.get();
+        return viewportConstrainedLayer.unsafeGet();
 
     if (m_contentsContainmentLayer)
         return m_contentsContainmentLayer.get();
@@ -3882,7 +3894,7 @@ OptionSet<RenderLayer::PaintLayerFlag> RenderLayerBacking::paintFlagsForLayer(co
     return paintFlags;
 }
 
-#if ENABLE(TOUCH_ACTION_REGIONS) || ENABLE(WHEEL_EVENT_REGIONS)
+#if ENABLE(TOUCH_ACTION_REGIONS) || ENABLE(WHEEL_EVENT_REGIONS) || ENABLE(TOUCH_EVENT_REGIONS)
 struct PatternDescription {
     ASCIILiteral name;
     FloatSize phase;
@@ -3964,7 +3976,7 @@ static RefPtr<Pattern> patternForTouchAction(TouchAction touchAction, FloatSize 
 }
 #endif
 
-#if ENABLE(WHEEL_EVENT_REGIONS)
+#if ENABLE(WHEEL_EVENT_REGIONS) || ENABLE(TOUCH_EVENT_REGIONS)
 static RefPtr<Pattern> patternForEventListenerRegionType(EventListenerRegionType type, FloatSize contentOffset, GraphicsContext& destContext)
 {
     auto patternAndPhase = [&]() -> PatternDescription {
@@ -3978,12 +3990,13 @@ static RefPtr<Pattern> patternForEventListenerRegionType(EventListenerRegionType
         case EventListenerRegionType::TouchStart:
         case EventListenerRegionType::TouchMove:
         case EventListenerRegionType::TouchEnd:
+        case EventListenerRegionType::TouchForceChange:
         case EventListenerRegionType::TouchCancel:
-            return { "touch"_s, { }, Color::lightGray.colorWithAlphaByte(128) };
+            return { "touch"_s, { }, Color::gray.colorWithAlphaByte(128) };
         case EventListenerRegionType::NonPassiveTouchStart:
         case EventListenerRegionType::NonPassiveTouchEnd:
-        case EventListenerRegionType::NonPassiveTouchCancel:
         case EventListenerRegionType::NonPassiveTouchMove:
+        case EventListenerRegionType::NonPassiveTouchForceChange:
             return { "sync touch"_s, { 0, 9 }, SRGBA<uint8_t> { 200, 200, 0, 128 } };
         case EventListenerRegionType::PointerDown:
         case EventListenerRegionType::PointerEnter:
@@ -3992,7 +4005,7 @@ static RefPtr<Pattern> patternForEventListenerRegionType(EventListenerRegionType
         case EventListenerRegionType::PointerOut:
         case EventListenerRegionType::PointerOver:
         case EventListenerRegionType::PointerUp:
-            return { "pointer"_s, { }, Color::lightGray.colorWithAlphaByte(128) };
+            return { "pointer"_s, { }, Color::gray.colorWithAlphaByte(128) };
         case EventListenerRegionType::NonPassivePointerDown:
         case EventListenerRegionType::NonPassivePointerEnter:
         case EventListenerRegionType::NonPassivePointerLeave:
@@ -4001,6 +4014,14 @@ static RefPtr<Pattern> patternForEventListenerRegionType(EventListenerRegionType
         case EventListenerRegionType::NonPassivePointerOver:
         case EventListenerRegionType::NonPassivePointerUp:
             return { "sync pointer"_s, { 0, 9 }, SRGBA<uint8_t> { 200, 200, 0, 128 } };
+        case EventListenerRegionType::GestureChange:
+        case EventListenerRegionType::GestureEnd:
+        case EventListenerRegionType::GestureStart:
+            return { "gesture"_s, { }, Color::lightGray.colorWithAlphaByte(128) };
+        case EventListenerRegionType::NonPassiveGestureChange:
+        case EventListenerRegionType::NonPassiveGestureEnd:
+        case EventListenerRegionType::NonPassiveGestureStart:
+            return { "sync gesture"_s, { 0, 9 }, SRGBA<uint8_t> { 200, 200, 0, 128 } };
         default:
             return { ""_s, { }, Color::black };
         }
@@ -4027,6 +4048,13 @@ void RenderLayerBacking::paintDebugOverlays(const GraphicsLayer* graphicsLayer, 
     auto visibleDebugOverlayRegions = OptionSet<DebugOverlayRegions>::fromRaw(renderer().settings().visibleDebugOverlayRegions());
     if (visibleDebugOverlayRegions.containsAny({ DebugOverlayRegions::TouchActionRegion, DebugOverlayRegions::WheelEventHandlerRegion })) {
         constexpr auto regionColor = Color::blue.colorWithAlphaByte(50);
+        context.setFillColor(regionColor);
+        for (auto rect : eventRegion.region().rects())
+            context.fillRect(rect);
+    }
+
+    if (visibleDebugOverlayRegions.contains(DebugOverlayRegions::TouchEventRegion)) {
+        static constexpr auto regionColor = Color::red.colorWithAlphaByte(50);
         context.setFillColor(regionColor);
         for (auto rect : eventRegion.region().rects())
             context.fillRect(rect);
@@ -4071,6 +4099,49 @@ void RenderLayerBacking::paintDebugOverlays(const GraphicsLayer* graphicsLayer, 
     }
 #endif
 
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    if (visibleDebugOverlayRegions.contains(DebugOverlayRegions::TouchEventRegion)) {
+        const auto& touchEventRegion = graphicsLayer->eventRegion().touchEventListenerRegion();
+
+        if (!touchEventRegion.asynchronousDispatchRegion.isEmpty()) {
+            if (RefPtr fillPattern = patternForEventListenerRegionType(EventListenerRegionType::TouchStart, graphicsLayer->offsetFromRenderer(), context)) {
+                context.setFillPattern(fillPattern.releaseNonNull());
+                for (auto rect : touchEventRegion.asynchronousDispatchRegion.rects())
+                    context.fillRect(rect);
+            }
+        }
+
+        for (const auto& [eventType, region] : touchEventRegion.eventSpecificSynchronousDispatchRegions) {
+            if (region.isEmpty())
+                continue;
+
+            EventListenerRegionType regionType;
+            switch (eventType) {
+            case EventTrackingRegionsEventType::Touchstart:
+                regionType = EventListenerRegionType::NonPassiveTouchStart;
+                break;
+            case EventTrackingRegionsEventType::Touchend:
+                regionType = EventListenerRegionType::NonPassiveTouchEnd;
+                break;
+            case EventTrackingRegionsEventType::Touchmove:
+                regionType = EventListenerRegionType::NonPassiveTouchMove;
+                break;
+            case EventTrackingRegionsEventType::Touchforcechange:
+                regionType = EventListenerRegionType::NonPassiveTouchForceChange;
+                break;
+            default:
+                continue;
+            }
+
+            if (RefPtr fillPattern = patternForEventListenerRegionType(regionType, graphicsLayer->offsetFromRenderer(), context)) {
+                context.setFillPattern(fillPattern.releaseNonNull());
+                for (auto rect : region.rects())
+                    context.fillRect(rect);
+            }
+        }
+    }
+#endif
+
 #if ENABLE(EDITABLE_REGION)
     if (visibleDebugOverlayRegions.contains(DebugOverlayRegions::EditableElementRegion)) {
         context.setFillColor(SRGBA<uint8_t> { 128, 0, 128, 50 });
@@ -4099,7 +4170,7 @@ void RenderLayerBacking::paintDebugOverlays(const GraphicsLayer* graphicsLayer, 
 }
 
 // Up-call from compositing layer drawing callback.
-void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, GraphicsContext& context, const FloatRect& clip, OptionSet<GraphicsLayerPaintBehavior> layerPaintBehavior)
+void RenderLayerBacking::paintContents(const GraphicsLayer& graphicsLayer, GraphicsContext& context, const FloatRect& clip, OptionSet<GraphicsLayerPaintBehavior> layerPaintBehavior)
 {
 #ifndef NDEBUG
     renderer().page().setIsPainting(true);
@@ -4122,17 +4193,17 @@ void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, Graph
     IntRect dirtyRect = enclosingIntRect(adjustedClipRect);
 
     if (!layerPaintBehavior.contains(GraphicsLayerPaintBehavior::ForceSynchronousImageDecode)) {
-        if (!graphicsLayer->repaintCount())
+        if (!graphicsLayer.repaintCount())
             layerPaintBehavior.add(GraphicsLayerPaintBehavior::DefaultAsynchronousImageDecode);
     }
 
-    if (graphicsLayer == m_graphicsLayer.get()
-        || graphicsLayer == m_foregroundLayer.get()
-        || graphicsLayer == m_backgroundLayer.get()
-        || graphicsLayer == m_maskLayer.get()
-        || graphicsLayer == m_scrolledContentsLayer.get()) {
+    if (&graphicsLayer == m_graphicsLayer.get()
+        || &graphicsLayer == m_foregroundLayer.get()
+        || &graphicsLayer == m_backgroundLayer.get()
+        || &graphicsLayer == m_maskLayer.get()
+        || &graphicsLayer == m_scrolledContentsLayer.get()) {
 
-        if (!graphicsLayer->paintingPhase().contains(GraphicsLayerPaintingPhase::OverflowContents))
+        if (!graphicsLayer.paintingPhase().contains(GraphicsLayerPaintingPhase::OverflowContents))
             dirtyRect.intersect(enclosingIntRect(compositedBoundsIncludingMargin()));
 
         // We have to use the same root as for hit testing, because both methods can compute and cache clipRects.
@@ -4143,31 +4214,32 @@ void RenderLayerBacking::paintContents(const GraphicsLayer* graphicsLayer, Graph
             behavior.add(PaintBehavior::DefaultAsynchronousImageDecode);
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
-        if (graphicsLayer->drawsHDRContent())
+        if (graphicsLayer.drawsHDRContent())
             behavior.add(PaintBehavior::DrawsHDRContent);
 #endif
 
-        paintIntoLayer(graphicsLayer, context, dirtyRect, behavior);
+        paintIntoLayer(&graphicsLayer, context, dirtyRect, behavior);
 
         auto visibleDebugOverlayRegions = OptionSet<DebugOverlayRegions>::fromRaw(renderer().settings().visibleDebugOverlayRegions());
-        if (visibleDebugOverlayRegions.containsAny({ DebugOverlayRegions::TouchActionRegion, DebugOverlayRegions::EditableElementRegion, DebugOverlayRegions::WheelEventHandlerRegion, DebugOverlayRegions::InteractionRegion }))
-            paintDebugOverlays(graphicsLayer, context);
 
-    } else if (graphicsLayer == layerForHorizontalScrollbar()) {
+        if (visibleDebugOverlayRegions.containsAny({ DebugOverlayRegions::TouchActionRegion, DebugOverlayRegions::TouchEventRegion, DebugOverlayRegions::EditableElementRegion, DebugOverlayRegions::WheelEventHandlerRegion, DebugOverlayRegions::InteractionRegion }))
+            paintDebugOverlays(&graphicsLayer, context);
+
+    } else if (&graphicsLayer == layerForHorizontalScrollbar()) {
         if (m_owningLayer.hasVisibleContent()) {
             auto* scrollableArea = m_owningLayer.scrollableArea();
             ASSERT(scrollableArea);
 
             paintScrollbar(scrollableArea->horizontalScrollbar(), context, dirtyRect);
         }
-    } else if (graphicsLayer == layerForVerticalScrollbar()) {
+    } else if (&graphicsLayer == layerForVerticalScrollbar()) {
         if (m_owningLayer.hasVisibleContent()) {
             auto* scrollableArea = m_owningLayer.scrollableArea();
             ASSERT(scrollableArea);
 
             paintScrollbar(scrollableArea->verticalScrollbar(), context, dirtyRect);
         }
-    } else if (graphicsLayer == layerForScrollCorner()) {
+    } else if (&graphicsLayer == layerForScrollCorner()) {
         auto* scrollableArea = m_owningLayer.scrollableArea();
         ASSERT(scrollableArea);
 
@@ -4343,6 +4415,10 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
     if (!hasOpacity && !hasRotate && !hasScale && !hasTranslate && !hasTransform && !hasFilter && !hasBackdropFilter)
         return false;
 
+    auto referenceBoxRect = renderer().transformReferenceBoxRect(renderer().style());
+    if (!renderer().isSVGLayerAwareRenderer())
+        referenceBoxRect = snappedIntRect(LayoutRect(referenceBoxRect));
+
     KeyframeValueList rotateVector(AnimatedProperty::Rotate);
     KeyframeValueList scaleVector(AnimatedProperty::Scale);
     KeyframeValueList translateVector(AnimatedProperty::Translate);
@@ -4361,16 +4437,16 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
         auto* tf = currentKeyframe.timingFunction();
 
         if (currentKeyframe.animatesProperty(CSSPropertyRotate))
-            rotateVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->rotate()).get(), tf));
+            rotateVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->rotate(), referenceBoxRect.size()).get(), tf));
 
         if (currentKeyframe.animatesProperty(CSSPropertyScale))
-            scaleVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->scale()).get(), tf));
+            scaleVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->scale(), referenceBoxRect.size()).get(), tf));
 
         if (currentKeyframe.animatesProperty(CSSPropertyTranslate))
-            translateVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->translate()).get(), tf));
+            translateVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->translate(), referenceBoxRect.size()).get(), tf));
 
         if (currentKeyframe.animatesProperty(CSSPropertyTransform))
-            transformVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->transform()), tf));
+            transformVector.insert(makeUnique<TransformAnimationValue>(offset, Style::toPlatform(keyframeStyle->transform(), referenceBoxRect.size()), tf));
 
         if (currentKeyframe.animatesProperty(CSSPropertyOpacity))
             opacityVector.insert(makeUnique<FloatAnimationValue>(offset, keyframeStyle->opacity().value.value, tf));
@@ -4384,29 +4460,25 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
 
     bool didAnimate = false;
 
-    auto referenceBoxRect = renderer().transformReferenceBoxRect(renderer().style());
-    if (!renderer().isSVGLayerAwareRenderer())
-        referenceBoxRect = snappedIntRect(LayoutRect(referenceBoxRect));
-
-    if (hasRotate && m_graphicsLayer->addAnimation(rotateVector, referenceBoxRect.size(), &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasRotate && m_graphicsLayer->addAnimation(rotateVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasScale && m_graphicsLayer->addAnimation(scaleVector, referenceBoxRect.size(), &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasScale && m_graphicsLayer->addAnimation(scaleVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasTranslate && m_graphicsLayer->addAnimation(translateVector, referenceBoxRect.size(), &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasTranslate && m_graphicsLayer->addAnimation(translateVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasTransform && m_graphicsLayer->addAnimation(transformVector, referenceBoxRect.size(), &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasTransform && m_graphicsLayer->addAnimation(transformVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasOpacity && m_graphicsLayer->addAnimation(opacityVector, IntSize { }, &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasOpacity && m_graphicsLayer->addAnimation(opacityVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasFilter && m_graphicsLayer->addAnimation(filterVector, IntSize { }, &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasFilter && m_graphicsLayer->addAnimation(filterVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
-    if (hasBackdropFilter && m_graphicsLayer->addAnimation(backdropFilterVector, IntSize { }, &animation, keyframes.acceleratedAnimationName(), timeOffset))
+    if (hasBackdropFilter && m_graphicsLayer->addAnimation(backdropFilterVector, &animation, keyframes.acceleratedAnimationName(), timeOffset))
         didAnimate = true;
 
     if (didAnimate) {
@@ -4417,8 +4489,8 @@ bool RenderLayerBacking::startAnimation(double timeOffset, const GraphicsLayerAn
     return didAnimate;
 }
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
-bool RenderLayerBacking::updateAcceleratedEffectsAndBaseValues()
+#if ENABLE(THREADED_ANIMATIONS)
+void RenderLayerBacking::updateAcceleratedEffectsAndBaseValues(HashSet<Ref<AcceleratedTimeline>>& timelines)
 {
     auto& renderer = this->renderer();
     OptionSet<AcceleratedEffectProperty> disallowedAcceleratedProperties;
@@ -4440,42 +4512,48 @@ bool RenderLayerBacking::updateAcceleratedEffectsAndBaseValues()
     }();
 
     AcceleratedEffects acceleratedEffects;
-    WeakListHashSet<AcceleratedEffect> weakAcceleratedEffects;
+    HashSet<Ref<AcceleratedTimeline>> effectTimelines;
     if (auto* effectStack = target->keyframeEffectStack()) {
-        auto animatesWidth = effectStack->containsProperty(CSSPropertyWidth);
-        auto animatesHeight = effectStack->containsProperty(CSSPropertyHeight);
-        for (const auto& effect : effectStack->sortedEffects()) {
-            if (!effect || !effect->canBeAccelerated())
-                continue;
-            if (animatesWidth || animatesHeight) {
-                auto& blendingKeyframes = effect->blendingKeyframes();
-                if ((animatesWidth && blendingKeyframes.hasWidthDependentTransform()) || (animatesHeight && blendingKeyframes.hasHeightDependentTransform()))
-                    disallowedAcceleratedProperties.add(transformRelatedAcceleratedProperties);
+        WeakListHashSet<AcceleratedEffect> weakAcceleratedEffects;
+        if (effectStack->allowsAcceleration()) {
+            auto animatesWidth = effectStack->containsProperty(CSSPropertyWidth);
+            auto animatesHeight = effectStack->containsProperty(CSSPropertyHeight);
+            for (const auto& effect : effectStack->sortedEffects()) {
+                if (!effect || !effect->canHaveAcceleratedRepresentation() || !effect->canBeAccelerated())
+                    continue;
+                if (animatesWidth || animatesHeight) {
+                    auto& blendingKeyframes = effect->blendingKeyframes();
+                    if ((animatesWidth && blendingKeyframes.hasWidthDependentTransform()) || (animatesHeight && blendingKeyframes.hasHeightDependentTransform()))
+                        disallowedAcceleratedProperties.add(transformRelatedAcceleratedProperties);
+                }
+                Ref acceleratedEffect = effect->acceleratedRepresentation(borderBoxRect, baseValues, disallowedAcceleratedProperties);
+                // FIXME: it feels like we should be able to assert here, or perhaps we could just fold this into the logic
+                // to determine whether we have an interpolating effect.
+                if (acceleratedEffect->animatedProperties().isEmpty())
+                    continue;
+                if (!hasInterpolatingEffect && effect->isRunningAccelerated())
+                    hasInterpolatingEffect = true;
+                effectTimelines.add(Ref { *acceleratedEffect->timeline() });
+                weakAcceleratedEffects.add(acceleratedEffect.ptr());
+                acceleratedEffects.append(WTFMove(acceleratedEffect));
             }
-            auto acceleratedEffect = AcceleratedEffect::create(*effect, borderBoxRect, baseValues, disallowedAcceleratedProperties);
-            if (!acceleratedEffect)
-                continue;
-            if (!hasInterpolatingEffect && effect->isRunningAccelerated())
-                hasInterpolatingEffect = true;
-            effect->setAcceleratedRepresentation(acceleratedEffect.get());
-            weakAcceleratedEffects.add(*acceleratedEffect);
-            acceleratedEffects.append(acceleratedEffect.releaseNonNull());
         }
         effectStack->setAcceleratedEffects(WTFMove(weakAcceleratedEffects));
     }
 
     // If all of the effects in the stack are either idle, paused or filling, then the
     // effect stack will not produce an interpolated value and we don't need to run
-    // any of these effects.
-    if (!hasInterpolatingEffect)
+    // any of these effects. Otherwise, add the timelines we've encountered for the
+    // effects to the general timelines list.
+    if (hasInterpolatingEffect)
+        timelines.addAll(effectTimelines);
+    else
         acceleratedEffects.clear();
 
     m_graphicsLayer->setAcceleratedEffectsAndBaseValues(WTFMove(acceleratedEffects), WTFMove(baseValues));
 
     m_owningLayer.setNeedsPostLayoutCompositingUpdate();
     m_owningLayer.setNeedsCompositingGeometryUpdate();
-
-    return hasInterpolatingEffect;
 }
 #endif
 

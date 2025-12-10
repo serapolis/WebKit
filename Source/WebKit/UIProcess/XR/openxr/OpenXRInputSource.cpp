@@ -68,6 +68,7 @@ OpenXRInputSource::~OpenXRInputSource()
         xrDestroySpace(m_pointerSpace);
 }
 
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
 XrResult OpenXRInputSource::initialize(OpenXRSystemProperties&& systemProperties)
 {
     String handednessName = handednessToString(m_handedness);
@@ -142,7 +143,21 @@ XrResult OpenXRInputSource::suggestBindings(SuggestedBindings& bindings) const
         }
     };
 
+    auto isInteractionPathSupported = [](const ASCIILiteral& path) {
+        if (path == handInteractionProfilePath) {
+#if defined(XR_EXT_hand_interaction)
+            return OpenXRExtensions::singleton().isExtensionSupported(XR_EXT_HAND_INTERACTION_EXTENSION_NAME ""_span);
+#else
+            return false;
+#endif
+        }
+        return true;
+    };
+
     for (const auto& profile : openXRInteractionProfiles) {
+        if (!isInteractionPathSupported(profile.path))
+            continue;
+
         CHECK_XRCMD(createBinding(profile.path, m_gripAction, makeString(m_subactionPathName, s_inputGripPath), bindings));
         CHECK_XRCMD(createBinding(profile.path, m_pointerAction, makeString(m_subactionPathName, s_inputAimPath), bindings));
 
@@ -201,6 +216,7 @@ std::optional<PlatformXR::FrameData::HandJointsVector> OpenXRInputSource::collec
     }
 #endif
 
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     XrHandJointLocationsEXT locations = createOpenXRStruct<XrHandJointLocationsEXT, XR_TYPE_HAND_JOINT_LOCATIONS_EXT>();
     Vector<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> jointLocations;
     locations.jointCount = XR_HAND_JOINT_COUNT_EXT;
@@ -222,6 +238,7 @@ std::optional<PlatformXR::FrameData::HandJointsVector> OpenXRInputSource::collec
         } else
             handJoints.append(std::nullopt);
     }
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     return handJoints;
 }
 #endif
@@ -303,7 +320,7 @@ XrResult OpenXRInputSource::updateInteractionProfile()
     m_profiles.clear();
     for (auto& profile : openXRInteractionProfiles) {
         if (equalSpans(profile.path.span(), unsafeSpan(buffer))) {
-            m_usingHandInteractionProfile = equalSpans(profile.path.span(), handInteractionProfileName.span());
+            m_usingHandInteractionProfile = equalSpans(profile.path.span(), handInteractionProfilePath.span());
             LOG(XR, "Input source %s using interaction profile %s", m_subactionPathName.utf8().data(), profile.path.span().data());
             for (const auto& id : profile.profileIds)
                 m_profiles.append(String::fromUTF8(id));
@@ -337,6 +354,7 @@ XrResult OpenXRInputSource::createAction(XrActionType actionType, const String& 
 
     return xrCreateAction(m_actionSet, &createInfo, &action);
 }
+IGNORE_CLANG_WARNINGS_END
 
 XrResult OpenXRInputSource::createButtonActions(OpenXRButtonType type, const String& prefix, OpenXRButtonActions& actions) const
 {

@@ -30,15 +30,6 @@
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
-struct RenderBlockFlowRareData;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::RenderBlockFlowRareData> : std::true_type { };
-}
-
-namespace WebCore {
 
 class FloatingObjects;
 class LineBreaker;
@@ -149,6 +140,9 @@ protected:
     void simplifiedNormalFlowLayout() override;
     LayoutUnit shiftForAlignContent(LayoutUnit intrinsicLogicalHeight, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom);
 
+    void computeOverflow(LayoutUnit oldClientAfterEdge, OptionSet<ComputeOverflowOptions> = { }) override;
+    void addOverflowFromInFlowChildren(OptionSet<ComputeOverflowOptions> = { }) override;
+
     // RenderBlockFlows override these methods, since they are the only class that supports margin collapsing.
     LayoutUnit collapsedMarginBefore() const final { return maxPositiveMarginBefore() - maxNegativeMarginBefore(); }
     LayoutUnit collapsedMarginAfter() const final { return maxPositiveMarginAfter() - maxNegativeMarginAfter(); }
@@ -165,69 +159,40 @@ public:
     MarginValues marginValuesForChild(RenderBox& child) const;
 
     class MarginInfo {
-        // Collapsing flags for whether we can collapse our margins with our children's margins.
-        bool m_canCollapseWithChildren : 1;
-        bool m_canCollapseMarginBeforeWithChildren : 1;
-        bool m_canCollapseMarginAfterWithChildren : 1;
-
-        // Whether or not we are a quirky container, i.e., do we collapse away top and bottom
-        // margins in our container. Table cells and the body are the common examples. We
-        // also have a custom style property for Safari RSS to deal with TypePad blog articles.
-        bool m_quirkContainer : 1;
-
-        // This flag tracks whether we are still looking at child margins that can all collapse together at the beginning of a block.  
-        // They may or may not collapse with the top margin of the block (|m_canCollapseTopWithChildren| tells us that), but they will
-        // always be collapsing with one another. This variable can remain set to true through multiple iterations 
-        // as long as we keep encountering self-collapsing blocks.
-        bool m_atBeforeSideOfBlock : 1;
-
-        // This flag is set when we know we're examining bottom margins and we know we're at the bottom of the block.
-        bool m_atAfterSideOfBlock : 1;
-
-        // These variables are used to detect quirky margins that we need to collapse away (in table cells
-        // and in the body element).
-        bool m_hasMarginBeforeQuirk : 1;
-        bool m_hasMarginAfterQuirk : 1;
-        bool m_determinedMarginBeforeQuirk : 1;
-
-        // These flags track the previous maximal positive and negative margins.
-        LayoutUnit m_positiveMargin;
-        LayoutUnit m_negativeMargin;
-
     public:
-        MarginInfo(const RenderBlockFlow&, LayoutUnit beforeBorderPadding, LayoutUnit afterBorderPadding);
+        enum class IgnoreScrollbarForAfterMargin : bool { No, Yes };
+        MarginInfo(const RenderBlockFlow&, IgnoreScrollbarForAfterMargin = IgnoreScrollbarForAfterMargin::Yes);
+        MarginInfo(bool canCollapseWithChildren, bool canCollapseMarginBeforeWithChildren, bool canCollapseMarginAfterWithChildren, bool quirkContainer, bool atBeforeSideOfBlock, bool atAfterSideOfBlock,  bool hasMarginBeforeQuirk, bool hasMarginAfterQuirk, bool determinedMarginBeforeQuirk, LayoutUnit positiveMargin, LayoutUnit negativeMargin);
+        MarginInfo() = default;
 
-        void setAtBeforeSideOfBlock(bool b) { m_atBeforeSideOfBlock = b; }
-        void setAtAfterSideOfBlock(bool b) { m_atAfterSideOfBlock = b; }
+        void setAtBeforeSideOfBlock(bool atBeforeSideOfBlock) { m_atBeforeSideOfBlock = atBeforeSideOfBlock; }
+        void setAtAfterSideOfBlock(bool atAfterSideOfBlock) { m_atAfterSideOfBlock = atAfterSideOfBlock; }
         void clearMargin()
         {
-            m_positiveMargin = 0;
-            m_negativeMargin = 0;
+            m_positiveMargin = { };
+            m_negativeMargin = { };
         }
-        void setHasMarginBeforeQuirk(bool b) { m_hasMarginBeforeQuirk = b; }
-        void setHasMarginAfterQuirk(bool b) { m_hasMarginAfterQuirk = b; }
-        void setDeterminedMarginBeforeQuirk(bool b) { m_determinedMarginBeforeQuirk = b; }
-        void setPositiveMargin(LayoutUnit p) { m_positiveMargin = p; }
-        void setNegativeMargin(LayoutUnit n) { m_negativeMargin = n; }
-        void setPositiveMarginIfLarger(LayoutUnit p)
+        void setHasMarginBeforeQuirk(bool hasMarginBeforeQuirk) { m_hasMarginBeforeQuirk = hasMarginBeforeQuirk; }
+        void setHasMarginAfterQuirk(bool hasMarginAfterQuirk) { m_hasMarginAfterQuirk = hasMarginAfterQuirk; }
+        void setDeterminedMarginBeforeQuirk(bool determinedMarginBeforeQuirk) { m_determinedMarginBeforeQuirk = determinedMarginBeforeQuirk; }
+        void setPositiveMargin(LayoutUnit positiveMargin) { m_positiveMargin = positiveMargin; }
+        void setNegativeMargin(LayoutUnit negativeMargin) { m_negativeMargin = negativeMargin; }
+        void setPositiveMarginIfLarger(LayoutUnit positiveMargin) { m_positiveMargin = std::max(positiveMargin, m_positiveMargin); }
+        void setNegativeMarginIfLarger(LayoutUnit negativeMargin) { m_negativeMargin = std::max(negativeMargin, m_negativeMargin); }
+        void setMargin(LayoutUnit positiveMargin, LayoutUnit negativeMargin)
         {
-            if (p > m_positiveMargin)
-                m_positiveMargin = p;
+            setPositiveMargin(positiveMargin);
+            setNegativeMargin(negativeMargin);
         }
-        void setNegativeMarginIfLarger(LayoutUnit n)
-        {
-            if (n > m_negativeMargin)
-                m_negativeMargin = n;
-        }
-
-        void setMargin(LayoutUnit p, LayoutUnit n) { m_positiveMargin = p; m_negativeMargin = n; }
-        void setCanCollapseMarginAfterWithChildren(bool collapse) { m_canCollapseMarginAfterWithChildren = collapse; }
+        void setCanCollapseMarginAfterWithChildren(bool canCollapse) { m_canCollapseMarginAfterWithChildren = canCollapse; }
 
         bool atBeforeSideOfBlock() const { return m_atBeforeSideOfBlock; }
+        bool atAfterSideOfBlock() const { return m_atAfterSideOfBlock; }
         bool canCollapseWithMarginBefore() const { return m_atBeforeSideOfBlock && m_canCollapseMarginBeforeWithChildren; }
         bool canCollapseWithMarginAfter() const { return m_atAfterSideOfBlock && m_canCollapseMarginAfterWithChildren; }
         bool canCollapseMarginBeforeWithChildren() const { return m_canCollapseMarginBeforeWithChildren; }
         bool canCollapseMarginAfterWithChildren() const { return m_canCollapseMarginAfterWithChildren; }
+        bool canCollapseWithChildren() const { return m_canCollapseWithChildren; }
         bool quirkContainer() const { return m_quirkContainer; }
         bool determinedMarginBeforeQuirk() const { return m_determinedMarginBeforeQuirk; }
         bool hasMarginBeforeQuirk() const { return m_hasMarginBeforeQuirk; }
@@ -235,12 +200,49 @@ public:
         LayoutUnit positiveMargin() const { return m_positiveMargin; }
         LayoutUnit negativeMargin() const { return m_negativeMargin; }
         LayoutUnit margin() const { return m_positiveMargin - m_negativeMargin; }
+
+    private:
+        // Collapsing flags for whether we can collapse our margins with our children's margins.
+        bool m_canCollapseWithChildren : 1 { false };
+        bool m_canCollapseMarginBeforeWithChildren : 1 { false };
+        bool m_canCollapseMarginAfterWithChildren : 1 { false };
+
+        // Whether or not we are a quirky container, i.e., do we collapse away top and bottom
+        // margins in our container. Table cells and the body are the common examples. We
+        // also have a custom style property for Safari RSS to deal with TypePad blog articles.
+        bool m_quirkContainer : 1 { false };
+
+        // This flag tracks whether we are still looking at child margins that can all collapse together at the beginning of a block.
+        // They may or may not collapse with the top margin of the block (|m_canCollapseTopWithChildren| tells us that), but they will
+        // always be collapsing with one another. This variable can remain set to true through multiple iterations
+        // as long as we keep encountering self-collapsing blocks.
+        bool m_atBeforeSideOfBlock : 1 { true };
+
+        // This flag is set when we know we're examining bottom margins and we know we're at the bottom of the block.
+        bool m_atAfterSideOfBlock : 1 { false };
+
+        // These variables are used to detect quirky margins that we need to collapse away (in table cells
+        // and in the body element).
+        bool m_hasMarginBeforeQuirk : 1 { false };
+        bool m_hasMarginAfterQuirk : 1 { false };
+        bool m_determinedMarginBeforeQuirk : 1 { false };
+
+        // These flags track the previous maximal positive and negative margins.
+        LayoutUnit m_positiveMargin;
+        LayoutUnit m_negativeMargin;
     };
 
-    bool shouldTrimChildMargin(MarginTrimType, const RenderBox&) const;
+    bool shouldTrimChildMargin(Style::MarginTrimSide, const RenderBox&) const;
     void performBlockStepSizing(RenderBox& child, LayoutUnit blockStepSizeForChild) const;
 
     void layoutBlockChild(RenderBox& child, MarginInfo&, LayoutUnit& previousFloatLogicalBottom, LayoutUnit& maxFloatLogicalBottom);
+    struct BlockPositionAndMargin {
+        LayoutUnit childLogicalTop;
+        LayoutUnit containerLogicalBottom; // Note that with self collapsing block, logicalBottom is not necessarily childLogicalTop + child's logicalHeight.
+        MarginInfo marginInfo;
+    };
+    BlockPositionAndMargin layoutBlockChildFromInlineLayout(RenderBox& child, LayoutUnit blockLogicalTop, MarginInfo); // Called from IFC when laying out block in inline.
+
     void adjustOutOfFlowBlock(RenderBox& child, const MarginInfo&);
     void adjustFloatingBlock(const MarginInfo&);
 
@@ -257,7 +259,7 @@ public:
     LayoutUnit clearFloatsIfNeeded(RenderBox& child, MarginInfo&, LayoutUnit oldTopPosMargin, LayoutUnit oldTopNegMargin, LayoutUnit yPos);
     LayoutUnit estimateLogicalTopPosition(RenderBox& child, const MarginInfo&, LayoutUnit& estimateWithoutPagination);
     void marginBeforeEstimateForChild(RenderBox&, LayoutUnit&, LayoutUnit&) const;
-    void handleAfterSideOfBlock(LayoutUnit top, LayoutUnit bottom, MarginInfo&);
+    LayoutUnit handleAfterSideOfBlock(MarginInfo&, LayoutUnit contentBoxLogicalHeight);
     void setCollapsedBottomMargin(const MarginInfo&);
 
     bool childrenPreventSelfCollapsing() const final;
@@ -282,7 +284,6 @@ public:
     bool subtreeContainsFloats() const;
     bool subtreeContainsFloat(const RenderBox&) const;
 
-    void computeOverflow(LayoutUnit oldClientAfterEdge, bool recomputeFloats = false) override;
     Position positionForPoint(const LayoutPoint&, HitTestSource) override;
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) override;
 
@@ -345,7 +346,9 @@ public:
 
     void setChildrenInline(bool) final;
 
-    bool hasLines() const;
+    bool hasContentfulInlineOrBlockLine() const;
+    bool hasContentfulInlineLine() const;
+    bool hasBlocksInInlineLayout() const;
 
     enum InvalidationReason : uint8_t {
         InternalMove,       // (anon) block is moved or collapsed
@@ -410,7 +413,7 @@ public:
     std::optional<LayoutUnit> lowestInitialLetterLogicalBottom() const;
 
 protected:
-    bool isChildEligibleForMarginTrim(MarginTrimType, const RenderBox&) const final;
+    bool isChildEligibleForMarginTrim(Style::MarginTrimSide, const RenderBox&) const final;
 
     bool shouldResetLogicalHeightBeforeLayout() const override { return true; }
 
@@ -458,7 +461,6 @@ protected:
 
     virtual void computeColumnCountAndWidth();
 
-protected:
     // Called to lay out the legend for a fieldset or the ruby text of a ruby run. Also used by multi-column layout to handle
     // the flow thread child.
     void layoutExcludedChildren(RelayoutChildren) override;
@@ -506,18 +508,20 @@ private:
     bool hitTestFloats(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset) override;
     bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
-    void addOverflowFromInlineChildren() override;
+    void addOverflowFromInlineChildren();
 
     GapRects inlineSelectionGaps(RenderBlock& rootBlock, const LayoutPoint& rootBlockPhysicalPosition, const LayoutSize& offsetFromRootBlock,
         LayoutUnit& lastLogicalTop, LayoutUnit& lastLogicalLeft, LayoutUnit& lastLogicalRight, const LogicalSelectionOffsetCaches&, const PaintInfo*) override;
     
     PositionWithAffinity positionForPointWithInlineChildren(const LayoutPoint& pointInLogicalContents, HitTestSource) override;
-    void addFocusRingRectsForInlineChildren(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*) const override;
 
     bool hasSvgTextLayout() const;
 
     bool hasInlineLayout() const;
     void layoutInlineContent(RelayoutChildren, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom);
+    bool markInlineContentDirtyForLayout(RelayoutChildren);
+    void updateRepaintTopAndBottomAfterLayout(RelayoutChildren, std::optional<LayoutRect> partialRepaintRect, std::pair<float, float> oldContentTopAndBottomIncludingInkOverflow, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom);
+    std::optional<LayoutUnit> updateLineClampStateAndLogicalHeightAfterLayout();
     bool tryComputePreferredWidthsUsingInlinePath(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth);
     void setStaticPositionsForSimpleOutOfFlowContent();
 

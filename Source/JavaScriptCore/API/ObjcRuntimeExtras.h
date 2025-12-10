@@ -34,12 +34,6 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-template<typename T, typename U>
-inline std::unique_ptr<T, WTF::SystemFree<T>> adoptSystem(U value)
-{
-    return std::unique_ptr<T, WTF::SystemFree<T>>(value);
-}
-
 inline bool protocolImplementsProtocol(Protocol *candidate, Protocol *target)
 {
     auto protocolProtocols = protocol_copyProtocolListSpan(candidate);
@@ -125,7 +119,7 @@ class StringRange {
     WTF_MAKE_NONCOPYABLE(StringRange);
 public:
     StringRange(const char* begin, const char* end)
-        : m_string({ begin, end })
+        : m_string(std::span { begin, end })
     { }
     operator const char*() const LIFETIME_BOUND { return m_string.data(); }
     const char* get() const LIFETIME_BOUND { return m_string.data(); }

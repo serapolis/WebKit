@@ -30,14 +30,17 @@
 
 #include "GPUConnectionToWebProcess.h"
 #include "Logging.h"
+#include "ModelObjectHeap.h"
 #include "RemoteAdapter.h"
 #include "RemoteCompositorIntegration.h"
+#include "RemoteDDMesh.h"
 #include "RemoteGPUMessages.h"
 #include "RemoteGPUProxyMessages.h"
 #include "RemotePresentationContext.h"
 #include "RemoteRenderingBackend.h"
 #include "StreamServerConnection.h"
 #include "WebGPUObjectHeap.h"
+#include <WebCore/DDMesh.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/RenderingResourceIdentifier.h>
@@ -64,6 +67,7 @@ RemoteGPU::RemoteGPU(WebGPUIdentifier identifier, GPUConnectionToWebProcess& gpu
     , m_workQueue(IPC::StreamConnectionWorkQueue::create("WebGPU work queue"_s))
     , m_streamConnection(WTFMove(streamConnection))
     , m_objectHeap(WebGPU::ObjectHeap::create())
+    , m_modelObjectHeap(DDModel::ObjectHeap::create())
     , m_identifier(identifier)
     , m_renderingBackend(renderingBackend)
 {
@@ -126,6 +130,7 @@ void RemoteGPU::workQueueUninitialize()
     streamConnection->invalidate();
     m_streamConnection = nullptr;
     Ref { m_objectHeap }->clear();
+    Ref { m_modelObjectHeap }->clear();
     m_backing = nullptr;
 }
 
@@ -257,6 +262,22 @@ void RemoteGPU::paintNativeImageToImageBuffer(WebCore::NativeImage& nativeImage,
         semaphore.signal();
     });
     semaphore.wait();
+}
+
+void RemoteGPU::createModelBacking(unsigned width, unsigned height, DDModelIdentifier identifier, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback)
+{
+    assertIsCurrent(workQueue());
+
+    Ref objectHeap = m_modelObjectHeap.get();
+
+    RefPtr gpu = m_backing.get();
+    auto mesh = gpu->createModelBacking(width, height, WTFMove(callback));
+#if ENABLE(GPU_PROCESS_MODEL)
+    auto remoteMesh = RemoteDDMesh::create(*m_gpuConnectionToWebProcess.get(), *this, *mesh, objectHeap, Ref { *m_streamConnection }, identifier);
+    objectHeap->addObject(identifier, remoteMesh);
+#else
+    UNUSED_PARAM(mesh);
+#endif
 }
 
 void RemoteGPU::isValid(WebGPUIdentifier identifier, CompletionHandler<void(bool, bool)>&& completionHandler)

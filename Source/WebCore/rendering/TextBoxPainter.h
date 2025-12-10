@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 #include "InlineIteratorTextBox.h"
 #include "PaintInfo.h"
 #include "RenderObject.h"
+#include "StylePrimitiveNumeric.h"
 #include "TextBoxSelectableRange.h"
 #include "TextDecorationPainter.h"
 #include "TextRun.h"
@@ -53,7 +54,7 @@ public:
 
     void paint();
 
-    static inline FloatSize rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<>>& offset, WritingMode);
+    static inline FloatSize rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<CSS::AllUnzoomed>>& offset, WritingMode, const Style::ZoomFactor&);
 
 protected:
     auto& textBox() const { return m_textBox; }
@@ -84,13 +85,13 @@ protected:
     std::pair<unsigned, unsigned> selectionStartEnd() const;
     MarkedText createMarkedTextFromSelectionInBox();
     const FontCascade& fontCascade() const;
-    WritingMode writingMode() const { return m_style.writingMode(); }
+    WritingMode writingMode() const { return m_style->writingMode(); }
     FloatPoint textOriginFromPaintRect(const FloatRect&) const;
     bool isInsideShapedContent() const;
 
     struct DecoratingBox {
         InlineIterator::InlineBoxIterator inlineBox;
-        const RenderStyle& style;
+        const CheckedRef<const RenderStyle> style;
         TextDecorationPainter::Styles textDecorationStyles;
         FloatPoint location;
     };
@@ -99,9 +100,9 @@ protected:
 
     // FIXME: We could just talk to the display box directly.
     const InlineIterator::BoxModernPath m_textBox;
-    const RenderText& m_renderer;
-    const Document& m_document;
-    const RenderStyle& m_style;
+    const CheckedRef<const RenderText> m_renderer;
+    const CheckedRef<const Document> m_document;
+    const CheckedRef<const RenderStyle> m_style;
     const FloatRect m_logicalRect;
     const TextRun m_paintTextRun;
     PaintInfo& m_paintInfo;
@@ -116,12 +117,26 @@ protected:
     bool m_compositionWithCustomUnderlines { false };
 };
 
-inline FloatSize TextBoxPainter::rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<>>& offset, WritingMode writingMode)
+inline FloatSize TextBoxPainter::rotateShadowOffset(const SpaceSeparatedPoint<Style::Length<CSS::AllUnzoomed>>& offset, WritingMode writingMode, const Style::ZoomFactor& zoomFactor)
 {
-    if (writingMode.isHorizontal())
-        return { offset.x().value, offset.y().value };
-    if (writingMode.isLineOverLeft()) // sideways-lr
-        return { -offset.y().value, offset.x().value };
-    return { offset.y().value, -offset.x().value };
+    if (writingMode.isHorizontal()) {
+        return {
+            offset.x().resolveZoom(zoomFactor),
+            offset.y().resolveZoom(zoomFactor),
+        };
+    }
+
+    if (writingMode.isLineOverLeft()) { // sideways-lr
+        return {
+            -offset.y().resolveZoom(zoomFactor),
+             offset.x().resolveZoom(zoomFactor),
+        };
+    }
+
+    return {
+         offset.y().resolveZoom(zoomFactor),
+        -offset.x().resolveZoom(zoomFactor),
+    };
 }
-}
+
+} // namespace WebCore

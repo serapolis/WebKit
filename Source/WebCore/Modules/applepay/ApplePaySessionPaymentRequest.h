@@ -184,6 +184,11 @@ public:
     void setMerchantCategoryCode(const String& merchantCategoryCode) { m_merchantCategoryCode = merchantCategoryCode; }
 #endif
 
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    std::optional<bool> isDelegatedRequest() const { return m_isDelegatedRequest; }
+    void setIsDelegatedRequest(const std::optional<bool> isDelegatedRequest) { m_isDelegatedRequest = isDelegatedRequest; }
+#endif
+
     ApplePaySessionPaymentRequest(String&& countryCode
         , String&& currencyCode
         , ContactFields&& requiredBillingContactFields
@@ -229,6 +234,9 @@ public:
 #endif
 #if ENABLE(APPLE_PAY_MERCHANT_CATEGORY_CODE)
         , String&& merchantCategoryCode
+#endif
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+        , std::optional<bool> isDelegatedRequest
 #endif
         )
             : m_countryCode(WTFMove(countryCode))
@@ -276,6 +284,9 @@ public:
 #endif
 #if ENABLE(APPLE_PAY_MERCHANT_CATEGORY_CODE)
             , m_merchantCategoryCode(WTFMove(merchantCategoryCode))
+#endif
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+            , m_isDelegatedRequest(isDelegatedRequest)
 #endif
             { }
 
@@ -344,6 +355,10 @@ private:
 
 #if ENABLE(APPLE_PAY_MERCHANT_CATEGORY_CODE)
     String m_merchantCategoryCode;
+#endif
+
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    std::optional<bool> m_isDelegatedRequest;
 #endif
 };
 

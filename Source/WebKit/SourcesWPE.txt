@@ -40,6 +40,7 @@ NetworkProcess/cache/NetworkCacheDataGLib.cpp
 NetworkProcess/cache/NetworkCacheIOChannelGLib.cpp
 
 NetworkProcess/glib/DNSCache.cpp
+NetworkProcess/glib/NetworkMDNSRegisterGLib.cpp
 NetworkProcess/glib/WebKitCachedResolver.cpp
 NetworkProcess/glib/WebKitOverridingResolver.cpp
 
@@ -53,6 +54,9 @@ NetworkProcess/soup/WebSocketTaskSoup.cpp
 NetworkProcess/webrtc/LibWebRTCSocketClient.cpp
 NetworkProcess/webrtc/NetworkRTCMonitor.cpp
 NetworkProcess/webrtc/NetworkRTCProvider.cpp
+NetworkProcess/webrtc/NetworkRTCSharedMonitor.cpp
+
+NetworkProcess/webrtc/rice/RiceBackend.cpp
 
 Platform/IPC/android/ArgumentCodersAndroid.cpp
 
@@ -106,6 +110,7 @@ Shared/wpe/WebKeyboardEventWPE.cpp
 
 UIProcess/DefaultUndoController.cpp
 UIProcess/LegacySessionStateCodingNone.cpp
+UIProcess/ViewSnapshotStore.cpp
 UIProcess/WebGrammarDetail.cpp
 UIProcess/WebMemoryPressureHandler.cpp @no-unify
 UIProcess/WebViewportAttributes.cpp
@@ -120,6 +125,8 @@ UIProcess/API/C/wpe/WKView.cpp
 UIProcess/API/C/wpe/WKPagePrivateWPE.cpp
 
 Shared/API/c/wpe/WKEventWPE.cpp
+
+Shared/Extensions/wpe/WebExtensionUtilitiesWPE.cpp
 
 UIProcess/API/glib/APIContentRuleListStoreGLib.cpp @no-unify
 UIProcess/API/glib/InputMethodFilter.cpp @no-unify
@@ -144,6 +151,7 @@ UIProcess/API/glib/WebKitFormClient.cpp @no-unify
 UIProcess/API/glib/WebKitFormSubmissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationManager.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationPermissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitImage.cpp @no-unify
 UIProcess/API/glib/WebKitInitialize.cpp @no-unify
 UIProcess/API/glib/WebKitInjectedBundleClient.cpp @no-unify
 UIProcess/API/glib/WebKitInputMethodContext.cpp @no-unify
@@ -180,6 +188,7 @@ UIProcess/API/glib/WebKitUserContentManager.cpp @no-unify
 UIProcess/API/glib/WebKitUserMediaPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitVersion.cpp @no-unify
 UIProcess/API/glib/WebKitWebContext.cpp @no-unify
+UIProcess/API/glib/WebKitWebExtensionMatchPattern.cpp @no-unify
 UIProcess/API/glib/WebKitWebResource.cpp @no-unify
 UIProcess/API/glib/WebKitWebResourceLoadManager.cpp @no-unify
 UIProcess/API/glib/WebKitWebView.cpp @no-unify
@@ -217,6 +226,10 @@ UIProcess/Automation/libwpe/WebAutomationSessionWPE.cpp
 UIProcess/Automation/glib/BidiBrowserAgentGlib.cpp @no-unify
 
 UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
+
+UIProcess/Extensions/glib/WebExtensionGLib.cpp
+
+UIProcess/Extensions/wpe/WebExtensionWPE.cpp
 
 UIProcess/Gamepad/libwpe/UIGamepadProviderLibWPE.cpp
 
@@ -260,6 +273,8 @@ UIProcess/WebsiteData/soup/WebsiteDataStoreSoup.cpp
 
 UIProcess/linux/MemoryPressureMonitor.cpp
 
+UIProcess/skia/ViewSnapshotSkia.cpp
+
 UIProcess/soup/WebProcessPoolSoup.cpp
 
 UIProcess/wpe/AcceleratedBackingStore.cpp
@@ -270,8 +285,10 @@ UIProcess/wpe/WPEUtilities.cpp
 UIProcess/wpe/WebPageProxyWPE.cpp
 UIProcess/wpe/WebPasteboardProxyWPE.cpp
 UIProcess/wpe/WebPreferencesWPE.cpp
+UIProcess/wpe/WebContextMenuProxyWPE.cpp
 
 UIProcess/XR/openxr/OpenXRExtensions.cpp
+UIProcess/XR/openxr/OpenXRHitTestManager.cpp
 UIProcess/XR/openxr/OpenXRInput.cpp
 UIProcess/XR/openxr/OpenXRInputSource.cpp
 UIProcess/XR/openxr/OpenXRLayer.cpp
@@ -298,6 +315,8 @@ WebProcess/Inspector/wpe/WebInspectorUIWPE.cpp
 
 WebProcess/MediaCache/WebMediaKeyStorageManager.cpp
 
+WebProcess/Network/webrtc/rice/RiceBackendProxy.cpp
+
 WebProcess/WebCoreSupport/glib/WebEditorClientGLib.cpp
 
 WebProcess/WebCoreSupport/soup/WebFrameNetworkingContext.cpp
@@ -307,7 +326,6 @@ WebProcess/WebCoreSupport/wpe/WebEditorClientWPE.cpp
 
 WebProcess/WebPage/CoordinatedGraphics/AcceleratedSurface.cpp
 WebProcess/WebPage/CoordinatedGraphics/CoordinatedSceneState.cpp
-WebProcess/WebPage/CoordinatedGraphics/CompositingRunLoop.cpp
 WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
 WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 WebProcess/WebPage/CoordinatedGraphics/ThreadedCompositor.cpp

@@ -41,6 +41,8 @@
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "ExceptionOr.h"
+#include "InspectorInstrumentation.h"
+#include "LargestContentfulPaint.h"
 #include "LocalFrame.h"
 #include "Logging.h"
 #include "PerformanceEntry.h"
@@ -71,15 +73,13 @@ static Seconds timePrecision { 1_ms };
 
 static bool isSignpostEnabled()
 {
-    static bool flag = false;
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        const char* value = getenv("WebKitPerformanceSignpostEnabled");
-        if (value) {
+    static bool flag = [] {
+        if (const char* value = getenv("WebKitPerformanceSignpostEnabled")) {
             if (auto result = parseInteger<int>(StringView::fromLatin1(value)); result && result.value())
-                flag = true;
+                return true;
         }
-    });
+        return false;
+    }();
     return flag;
 }
 
@@ -211,6 +211,8 @@ Vector<Ref<PerformanceEntry>> Performance::getEntries() const
     if (m_firstContentfulPaint)
         entries.append(*m_firstContentfulPaint);
 
+    // getEntries should not include largest-contentful-paint.
+
     if (m_firstInput)
         entries.append(*m_firstInput);
 
@@ -230,6 +232,8 @@ Vector<Ref<PerformanceEntry>> Performance::getEntriesByType(const String& entryT
 
     if (m_firstContentfulPaint && entryType == "paint"_s)
         entries.append(*m_firstContentfulPaint);
+
+    // getEntriesByType should not include largest-contentful-paint.
 
     if (m_userTiming) {
         if (entryType == "mark"_s)
@@ -262,6 +266,8 @@ Vector<Ref<PerformanceEntry>> Performance::getEntriesByName(const String& name, 
     if (m_firstContentfulPaint && (entryType.isNull() || entryType == "paint"_s) && name == "first-contentful-paint"_s)
         entries.append(*m_firstContentfulPaint);
 
+    // getEntriesByName should not include largest-contentful-paint.
+
     if (m_userTiming) {
         if (entryType.isNull() || entryType == "mark"_s)
             entries.appendVector(m_userTiming->getMarks(name));
@@ -291,6 +297,9 @@ void Performance::appendBufferedEntriesByType(const String& entryType, Vector<Re
     if (entryType == "paint"_s && m_firstContentfulPaint)
         entries.append(*m_firstContentfulPaint);
 
+    if (entryType == "largest-contentful-paint"_s && m_largestContentfulPaint)
+        entries.append(*m_largestContentfulPaint);
+
     if (entryType == "event"_s)
         entries.appendVector(m_eventTimingBuffer);
 
@@ -318,9 +327,21 @@ void Performance::processEventEntry(const PerformanceEventTimingCandidate& candi
     static constexpr Seconds minDurationCutoffBeforeRounding = PerformanceEventTiming::minimumDurationThreshold - (PerformanceEventTiming::durationResolution / 2);
     static constexpr Seconds defaultDurationCutoffBeforeRounding = PerformanceEventTiming::defaultDurationThreshold - (PerformanceEventTiming::durationResolution / 2);
 
+    // The event timing spec requires us to set first-input and call
+    // setDispatchedInputEvent() when an entry with nonzero interactionID has
+    // its duration set, and only if hasDispatchedInputEvent() is false. This, however,
+    // causes inconsistent behavior: a pointerdown event that had its duration assigned
+    // before receiving an interactionID wouldn't qualify for first-input.
+    //
+    // We instead set first-input and call setDispatchedInputEvent() here; ongoing
+    // spec discussion at https://github.com/w3c/event-timing/issues/159 :
     if (!m_firstInput && !candidate.interactionID.isUnassigned()) {
         m_firstInput = PerformanceEventTiming::create(candidate, true);
         queueEntry(*m_firstInput);
+        if (RefPtr document = dynamicDowncast<Document>(*scriptExecutionContext())) {
+            if (RefPtr window = document->window())
+                window->setDispatchedInputEvent();
+        }
     }
 
     if (candidate.duration < minDurationCutoffBeforeRounding)
@@ -351,11 +372,23 @@ void Performance::setResourceTimingBufferSize(unsigned size)
     m_resourceTimingBufferFullFlag = false;
 }
 
-void Performance::reportFirstContentfulPaint()
+void Performance::reportFirstContentfulPaint(DOMHighResTimeStamp timestamp)
 {
+    if (RefPtr context = scriptExecutionContext())
+        InspectorInstrumentation::didEnqueueFirstContentfulPaint(*context);
+
     ASSERT(!m_firstContentfulPaint);
-    m_firstContentfulPaint = PerformancePaintTiming::createFirstContentfulPaint(now());
+    m_firstContentfulPaint = PerformancePaintTiming::createFirstContentfulPaint(timestamp);
     queueEntry(*m_firstContentfulPaint);
+}
+
+void Performance::enqueueLargestContentfulPaint(Ref<LargestContentfulPaint>&& paintEntry)
+{
+    if (RefPtr context = scriptExecutionContext())
+        InspectorInstrumentation::didEnqueueLargestContentfulPaint(*context, paintEntry.get());
+
+    m_largestContentfulPaint = RefPtr { WTFMove(paintEntry) };
+    queueEntry(*m_largestContentfulPaint);
 }
 
 void Performance::addNavigationTiming(DocumentLoader& documentLoader, Document& document, CachedResource& resource, const DocumentLoadTiming& timing, const NetworkLoadMetrics& metrics)

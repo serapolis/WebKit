@@ -96,6 +96,7 @@ public:
         case AnyIntUse:
         case DoubleRepAnyIntUse:
         case NotDoubleUse:
+        case NotOtherUse:
         case NeitherDoubleNorHeapBigIntNorStringUse:
         case NeitherDoubleNorHeapBigIntUse:
             return;
@@ -436,7 +437,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
 
     case PutByValDirect:
     case PutByVal:
-    case PutByValAlias:
+    case PutByValDirectResolved:
     case PutByValMegamorphic:
         return node->arrayMode().modeForPut().alreadyChecked(
             graph, node, state.forNode(graph.varArgChild(node, 0)));
@@ -779,6 +780,12 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetInternalField:
     case PutInternalField:
     case DataViewSet:
+    case ResolvePromiseFirstResolving:
+    case RejectPromiseFirstResolving:
+    case FulfillPromiseFirstResolving:
+    case PromiseResolve:
+    case PromiseReject:
+    case PromiseThen:
     case SetAdd:
     case MapSet:
     case MapOrSetDelete:

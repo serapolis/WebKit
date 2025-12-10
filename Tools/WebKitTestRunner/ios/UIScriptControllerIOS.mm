@@ -91,7 +91,7 @@ SOFT_LINK_CLASS(UIKit, UIPhysicalKeyboardEvent)
     for (UIView *subview in self.subviews.reverseObjectEnumerator) {
         CGPoint convertedPoint = [subview convertPoint:point fromView:self];
         if (RetainPtr frontmostView = [subview _wtr_frontmostViewAtPoint:convertedPoint])
-            return frontmostView.get();
+            return frontmostView.unsafeGet();
     }
 
     if (![self.layer.presentationLayer containsPoint:point])
@@ -1100,6 +1100,11 @@ JSRetainPtr<JSStringRef> UIScriptControllerIOS::uiViewTreeAsText() const
     return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsText]));
 }
 
+JSRetainPtr<JSStringRef> UIScriptControllerIOS::uiViewTreeAsTextForViewWithLayerID(unsigned long long layerID) const
+{
+    return adopt(JSStringCreateWithCFString((CFStringRef)[webView() _uiViewTreeAsTextForViewWithLayerID:layerID]));
+}
+
 bool UIScriptControllerIOS::mayContainEditableElementsInRect(unsigned x, unsigned y, unsigned width, unsigned height)
 {
     auto contentRect = CGRectMake(x, y, width, height);
@@ -1303,6 +1308,16 @@ void UIScriptControllerIOS::setDidDismissPopoverCallback(JSValueRef callback)
     }).get();
 }
 
+void UIScriptControllerIOS::setDidPresentViewControllerCallback(JSValueRef callback)
+{
+    UIScriptController::setDidPresentViewControllerCallback(callback);
+    webView().didPresentViewControllerCallback = makeBlockPtr([this, protectedThis = Ref { *this }] {
+        if (!m_context)
+            return;
+        m_context->fireCallback(CallbackTypeDidPresentViewController);
+    }).get();
+}
+
 JSObjectRef UIScriptControllerIOS::rectForMenuAction(JSStringRef jsAction) const
 {
     auto action = adoptCF(JSStringCopyCFString(kCFAllocatorDefault, jsAction));
@@ -1442,6 +1457,21 @@ void UIScriptControllerIOS::setSelectedColorForColorPicker(double red, double gr
 void UIScriptControllerIOS::setKeyboardInputModeIdentifier(JSStringRef identifier)
 {
     TestController::singleton().setKeyboardInputModeIdentifier(toWTFString(identifier));
+}
+
+void UIScriptControllerIOS::setFocusStartsInputSessionPolicy(JSStringRef policyJS)
+{
+    RetainPtr webView = this->webView();
+    auto policyString = toWTFString(policyJS);
+
+    if (policyString == "allow"_s)
+        webView.get().focusStartsInputSessionPolicy = _WKFocusStartsInputSessionPolicyAllow;
+    else if (policyString == "disallow"_s)
+        webView.get().focusStartsInputSessionPolicy = _WKFocusStartsInputSessionPolicyDisallow;
+    else if (policyString == "auto"_s)
+        webView.get().focusStartsInputSessionPolicy = _WKFocusStartsInputSessionPolicyAuto;
+    else
+        NSLog(@"setFocusStartsInputSessionPolicy received an invalid policy `%s`.", policyString.utf8().data());
 }
 
 // FIXME: Write this in terms of HIDEventGenerator once we know how to reset caps lock state
@@ -1690,6 +1720,16 @@ JSRetainPtr<JSStringRef> UIScriptControllerIOS::frontmostViewAtPoint(int x, int 
         return adopt(JSStringCreateWithUTF8CString(class_getName([view class])));
 
     return nil;
+}
+
+bool UIScriptControllerIOS::didCallEnsurePositionInformationIsUpToDateSinceLastCheck() const
+{
+    return webView().didCallEnsurePositionInformationIsUpToDateSinceLastCheck;
+}
+
+void UIScriptControllerIOS::clearEnsurePositionInformationIsUpToDateTracking()
+{
+    [webView() clearEnsurePositionInformationIsUpToDateTracking];
 }
 
 }

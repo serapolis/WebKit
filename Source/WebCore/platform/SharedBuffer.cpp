@@ -76,7 +76,7 @@ std::optional<Ref<FragmentedSharedBuffer>> FragmentedSharedBuffer::fromIPCData(I
         if (useUnixDomainSockets || size < minimumPageSize) {
             SharedBufferBuilder builder;
             builder.appendSpans(data);
-            return builder.take();
+            return builder.takeBuffer();
         }
         return std::nullopt;
     }, [](std::optional<WebCore::SharedMemoryHandle>&& handle) -> std::optional<Ref<FragmentedSharedBuffer>> {
@@ -135,7 +135,13 @@ auto FragmentedSharedBuffer::toIPCData() const -> IPCData
             return segment.segment->span();
         });
     }
-
+#if PLATFORM(COCOA)
+    if (m_segments.size() == 1) {
+        Ref segment = m_segments[0].segment;
+        if (segment->containsMappedFileData())
+            return SharedMemoryHandle::createVMShare(segment->span(), SharedMemory::Protection::ReadOnly);
+    }
+#endif
     RefPtr sharedMemoryBuffer = SharedMemory::copyBuffer(*this);
     return sharedMemoryBuffer->createHandle(SharedMemory::Protection::ReadOnly);
 }
@@ -587,29 +593,6 @@ bool DataSegment::containsMappedFileData() const
     return std::holds_alternative<FileSystem::MappedFileData>(m_immutableData);
 }
 
-SharedBufferBuilder::SharedBufferBuilder(RefPtr<FragmentedSharedBuffer>&& buffer)
-{
-    if (!buffer)
-        return;
-    initialize(buffer.releaseNonNull());
-}
-
-SharedBufferBuilder& SharedBufferBuilder::operator=(RefPtr<FragmentedSharedBuffer>&& buffer)
-{
-    m_buffer = nullptr;
-    if (!buffer)
-        return *this;
-    initialize(buffer.releaseNonNull());
-    return *this;
-}
-
-void SharedBufferBuilder::initialize(Ref<FragmentedSharedBuffer>&& buffer)
-{
-    ASSERT(!m_buffer);
-    m_segments.reserveInitialCapacity(buffer->segmentsCount());
-    append(buffer);
-}
-
 RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
 {
     if (isEmpty())
@@ -618,7 +601,7 @@ RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
     return RefPtr { m_buffer }->tryCreateArrayBuffer();
 }
 
-Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
+Ref<FragmentedSharedBuffer> SharedBufferBuilder::takeBuffer()
 {
     if (isEmpty())
         return SharedBuffer::create();
@@ -628,16 +611,16 @@ Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
     return buffer;
 }
 
-Ref<SharedBuffer> SharedBufferBuilder::takeAsContiguous()
+Ref<SharedBuffer> SharedBufferBuilder::takeBufferAsContiguous()
 {
-    return take()->makeContiguous();
+    return takeBuffer()->makeContiguous();
 }
 
-RefPtr<ArrayBuffer> SharedBufferBuilder::takeAsArrayBuffer()
+RefPtr<ArrayBuffer> SharedBufferBuilder::takeBufferAsArrayBuffer()
 {
     if (isEmpty())
         return ArrayBuffer::tryCreate();
-    return take()->tryCreateArrayBuffer();
+    return takeBuffer()->tryCreateArrayBuffer();
 }
 
 void SharedBufferBuilder::updateBufferIfNeeded() const

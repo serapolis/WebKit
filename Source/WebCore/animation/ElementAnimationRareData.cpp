@@ -42,6 +42,7 @@ ElementAnimationRareData::ElementAnimationRareData()
 
 ElementAnimationRareData::~ElementAnimationRareData()
 {
+    ASSERT(!m_keyframeEffectStack || !m_keyframeEffectStack->hasEffects());
 }
 
 KeyframeEffectStack& ElementAnimationRareData::ensureKeyframeEffectStack()
@@ -55,7 +56,7 @@ void ElementAnimationRareData::setAnimationsCreatedByMarkup(CSSAnimationCollecti
 {
     if (m_keyframeEffectStack) {
         for (auto& animation : m_animationsCreatedByMarkup) {
-            if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(animation->effect()))
+            if (RefPtr keyframeEffect = animation->keyframeEffect())
                 m_keyframeEffectStack->removeEffect(*keyframeEffect);
         }
     }

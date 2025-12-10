@@ -152,6 +152,7 @@ public:
     v(NeedTermination) \
     v(NeedWatchdogCheck) \
     v(NeedDebuggerBreak) \
+    v(NeedStopTheWorld) \
     v(NeedExceptionHandling)
 
 #define DECLARE_VMTRAPS_EVENT_BIT_SHIFT(event__)  event__##BitShift,
@@ -237,15 +238,17 @@ public:
     {
         ASSERT(!(event & ~AllEvents));
         clearTrapWithoutCancellingThreadStop(event);
+        // Trap bit must be cleared before we update the thread stop request.
         if (isAsyncEvent(event))
-            cancelThreadStopIfNeeded();
+            updateThreadStopRequestIfNeeded();
     }
     ALWAYS_INLINE CONCURRENT_SAFE void fireTrap(Event event)
     {
         ASSERT(!(event & ~AllEvents));
         m_trapBits.exchangeOr(event);
+        // Trap bit must be set before we update the thread stop request.
         if (isAsyncEvent(event))
-            requestThreadStopIfNeeded(event);
+            updateThreadStopRequestIfNeeded();
     }
 
     // The following returns true if a trap was handled.
@@ -283,14 +286,18 @@ public:
 
     VM& vm() const;
 
+    void requestStop() { m_stack.requestStop(); }
+    void cancelStop() { m_stack.cancelStop(); }
+
 private:
     ALWAYS_INLINE void clearTrapWithoutCancellingThreadStop(Event event)
     {
         m_trapBits.exchangeAnd(~event);
     }
 
-    JS_EXPORT_PRIVATE CONCURRENT_SAFE void cancelThreadStopIfNeeded();
-    JS_EXPORT_PRIVATE CONCURRENT_SAFE void requestThreadStopIfNeeded(Event);
+    CONCURRENT_SAFE void cancelThreadStopIfNeeded() WTF_REQUIRES_LOCK(m_trapSignalingLock);
+    CONCURRENT_SAFE void requestThreadStopIfNeeded(Locker<Lock>&) WTF_REQUIRES_LOCK(m_trapSignalingLock);
+    JS_EXPORT_PRIVATE CONCURRENT_SAFE void updateThreadStopRequestIfNeeded();
 
     JS_EXPORT_PRIVATE void deferTerminationSlow(DeferAction);
     JS_EXPORT_PRIVATE void undoDeferTerminationSlow(DeferAction);
@@ -319,6 +326,10 @@ private:
     bool m_threadStopRequested { false };
     bool m_trapsDeferred { false };
 
+    // Protects against a race between VMManager::requestResumeAll() and VMManager::notifyVMActivation()
+    // to increment their m_numberOfActiveVMs.
+    bool m_hasBeenCountedAsActive { false };
+
     Box<Lock> m_trapSignalingLock;
     Box<Condition> m_condition;
 
@@ -329,6 +340,7 @@ private:
     friend class LLIntOffsetsExtractor;
     friend class SignalSender;
     friend class DeferTraps;
+    friend class VMManager;
 };
 
 class DeferTraps {

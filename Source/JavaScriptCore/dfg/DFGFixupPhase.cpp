@@ -1357,7 +1357,7 @@ private:
 
         case PutByValDirect:
         case PutByVal:
-        case PutByValAlias: {
+        case PutByValDirectResolved: {
             Edge& child1 = m_graph.varArgChild(node, 0);
             Edge& child2 = m_graph.varArgChild(node, 1);
             Edge& child3 = m_graph.varArgChild(node, 2);
@@ -3549,6 +3549,12 @@ private:
         case CallCustomAccessorSetter:
         case MultiGetByVal:
         case MultiPutByVal:
+        case ResolvePromiseFirstResolving:
+        case RejectPromiseFirstResolving:
+        case FulfillPromiseFirstResolving:
+        case PromiseResolve:
+        case PromiseReject:
+        case PromiseThen:
             break;
 #else // not ASSERT_ENABLED
         default:

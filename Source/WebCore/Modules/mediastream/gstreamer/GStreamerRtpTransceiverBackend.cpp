@@ -66,11 +66,11 @@ std::unique_ptr<GStreamerRtpReceiverBackend> GStreamerRtpTransceiverBackend::cre
     return WTF::makeUnique<GStreamerRtpReceiverBackend>(GRefPtr(m_rtcTransceiver));
 }
 
-std::unique_ptr<GStreamerRtpSenderBackend> GStreamerRtpTransceiverBackend::createSenderBackend(WeakPtr<GStreamerPeerConnectionBackend>&& backend, GStreamerRtpSenderBackend::Source&& source, GUniquePtr<GstStructure>&& initData)
+Ref<GStreamerRtpSenderBackend> GStreamerRtpTransceiverBackend::createSenderBackend(WeakPtr<GStreamerPeerConnectionBackend>&& backend, GStreamerRtpSenderBackend::Source&& source, GUniquePtr<GstStructure>&& initData)
 {
     GRefPtr<GstWebRTCRTPSender> sender;
     g_object_get(m_rtcTransceiver.get(), "sender", &sender.outPtr(), nullptr);
-    return WTF::makeUnique<GStreamerRtpSenderBackend>(WTFMove(backend), WTFMove(sender), WTFMove(source), WTFMove(initData));
+    return GStreamerRtpSenderBackend::create(WTFMove(backend), WTFMove(sender), WTFMove(source), WTFMove(initData));
 }
 
 RTCRtpTransceiverDirection GStreamerRtpTransceiverBackend::direction() const
@@ -160,14 +160,14 @@ ExceptionOr<void> GStreamerRtpTransceiverBackend::setCodecPreferences(const Vect
     if (currentCaps && gst_caps_get_size(currentCaps.get()) > 0) {
         auto structure = gst_caps_get_structure(currentCaps.get(), 0);
         if (auto msIdValue = gstStructureGetString(structure, "a-msid"_s))
-            msid = msIdValue.toString();
+            msid = msIdValue.span();
 
         gstStructureForeach(structure, [&](auto id, const auto& value) -> bool {
             auto key = gstIdToString(id);
             if (!key.startsWith("extmap-"_s))
                 return true;
 
-            extensions.add(key.toString(), String::fromLatin1(g_value_get_string(value)));
+            extensions.add(key, byteCast<char8_t>(unsafeSpan(g_value_get_string(value))));
             return true;
         });
     }

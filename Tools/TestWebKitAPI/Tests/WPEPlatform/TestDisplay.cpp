@@ -48,6 +48,24 @@ static void testDisplayConnect(WPEMockPlatformTest* test, gconstpointer)
     g_assert_error(error.get(), WPE_DISPLAY_ERROR, WPE_DISPLAY_ERROR_CONNECTION_FAILED);
 }
 
+static void testDisplayDisconnected(WPEMockPlatformTest* test, gconstpointer)
+{
+    GUniqueOutPtr<GError> error;
+    g_assert_true(wpe_display_connect(test->display(), &error.outPtr()));
+    g_assert_no_error(error.get());
+
+    gboolean displayDisconnected = FALSE;
+    auto displayDisconnectedID = g_signal_connect(test->display(), "disconnected", G_CALLBACK(+[](WPEDisplay*, GError* error, gboolean* displayDisconnected) {
+        *displayDisconnected = TRUE;
+        g_assert_error(error, WPE_DISPLAY_ERROR, WPE_DISPLAY_ERROR_CONNECTION_LOST);
+    }), &displayDisconnected);
+
+    wpeDisplayMockDisconnect(WPE_DISPLAY_MOCK(test->display()));
+    g_assert_true(displayDisconnected);
+
+    g_signal_handler_disconnect(test->display(), displayDisconnectedID);
+}
+
 static void testDisplayPrimary(WPEMockPlatformTest* test, gconstpointer)
 {
     // The first created display is always the primary.
@@ -86,47 +104,47 @@ static void testDisplayDRMNodes(WPEMockPlatformTest* test, gconstpointer)
     g_assert_cmpstr(wpe_drm_device_get_render_node(device), ==, "/dev/dri/mockD128");
 }
 
-static void testDisplayDMABufFormats(WPEMockPlatformTest* test, gconstpointer)
+static void testDisplayBufferFormats(WPEMockPlatformTest* test, gconstpointer)
 {
-    g_assert_null(wpe_display_get_preferred_dma_buf_formats(test->display()));
+    g_assert_null(wpe_display_get_preferred_buffer_formats(test->display()));
 
     wpeDisplayMockUseFakeDRMNodes(WPE_DISPLAY_MOCK(test->display()), TRUE);
-    wpeDisplayMockUseFakeDMABufFormats(WPE_DISPLAY_MOCK(test->display()), TRUE);
-    auto* formats = wpe_display_get_preferred_dma_buf_formats(test->display());
-    g_assert_true(WPE_IS_BUFFER_DMA_BUF_FORMATS(formats));
+    wpeDisplayMockUseFakeBufferFormats(WPE_DISPLAY_MOCK(test->display()), TRUE);
+    auto* formats = wpe_display_get_preferred_buffer_formats(test->display());
+    g_assert_true(WPE_IS_BUFFER_FORMATS(formats));
     test->assertObjectIsDeletedWhenTestFinishes(formats);
 
 #if USE(LIBDRM)
-    auto* device = wpe_buffer_dma_buf_formats_get_device(formats);
+    auto* device = wpe_buffer_formats_get_device(formats);
     g_assert_nonnull(device);
     g_assert_cmpstr(wpe_drm_device_get_primary_node(device), ==, "/dev/dri/mock0");
     g_assert_cmpstr(wpe_drm_device_get_render_node(device), ==, "/dev/dri/mockD128");
 
-    g_assert_cmpuint(wpe_buffer_dma_buf_formats_get_n_groups(formats), ==, 2);
-    g_assert_cmpuint(wpe_buffer_dma_buf_formats_get_group_usage(formats, 0), ==, WPE_BUFFER_DMA_BUF_FORMAT_USAGE_SCANOUT);
-    auto* targetDevice = wpe_buffer_dma_buf_formats_get_group_device(formats, 0);
+    g_assert_cmpuint(wpe_buffer_formats_get_n_groups(formats), ==, 2);
+    g_assert_cmpuint(wpe_buffer_formats_get_group_usage(formats, 0), ==, WPE_BUFFER_FORMAT_USAGE_SCANOUT);
+    auto* targetDevice = wpe_buffer_formats_get_group_device(formats, 0);
     g_assert_nonnull(targetDevice);
     g_assert_cmpstr(wpe_drm_device_get_primary_node(targetDevice), ==, "/dev/dri/mock1");
     g_assert_null(wpe_drm_device_get_render_node(targetDevice));
-    g_assert_cmpuint(wpe_buffer_dma_buf_formats_get_group_n_formats(formats, 0), ==, 1);
-    g_assert_true(wpe_buffer_dma_buf_formats_get_format_fourcc(formats, 0, 0) == DRM_FORMAT_XRGB8888);
-    auto* modifiers = wpe_buffer_dma_buf_formats_get_format_modifiers(formats, 0, 0);
+    g_assert_cmpuint(wpe_buffer_formats_get_group_n_formats(formats, 0), ==, 1);
+    g_assert_true(wpe_buffer_formats_get_format_fourcc(formats, 0, 0) == DRM_FORMAT_XRGB8888);
+    auto* modifiers = wpe_buffer_formats_get_format_modifiers(formats, 0, 0);
     g_assert_cmpuint(modifiers->len, ==, 2);
     guint64* modifier = &g_array_index(modifiers, guint64, 0);
     g_assert_cmpuint(*modifier, ==, DRM_FORMAT_MOD_VIVANTE_SUPER_TILED);
     modifier = &g_array_index(modifiers, guint64, 1);
     g_assert_cmpuint(*modifier, ==, DRM_FORMAT_MOD_VIVANTE_TILED);
 
-    g_assert_cmpuint(wpe_buffer_dma_buf_formats_get_group_usage(formats, 1), ==, WPE_BUFFER_DMA_BUF_FORMAT_USAGE_RENDERING);
-    g_assert_null(wpe_buffer_dma_buf_formats_get_group_device(formats, 1));
-    g_assert_cmpuint(wpe_buffer_dma_buf_formats_get_group_n_formats(formats, 1), ==, 2);
-    g_assert_true(wpe_buffer_dma_buf_formats_get_format_fourcc(formats, 1, 0) == DRM_FORMAT_XRGB8888);
-    modifiers = wpe_buffer_dma_buf_formats_get_format_modifiers(formats, 1, 0);
+    g_assert_cmpuint(wpe_buffer_formats_get_group_usage(formats, 1), ==, WPE_BUFFER_FORMAT_USAGE_RENDERING);
+    g_assert_null(wpe_buffer_formats_get_group_device(formats, 1));
+    g_assert_cmpuint(wpe_buffer_formats_get_group_n_formats(formats, 1), ==, 2);
+    g_assert_true(wpe_buffer_formats_get_format_fourcc(formats, 1, 0) == DRM_FORMAT_XRGB8888);
+    modifiers = wpe_buffer_formats_get_format_modifiers(formats, 1, 0);
     g_assert_cmpuint(modifiers->len, ==, 1);
     modifier = &g_array_index(modifiers, guint64, 0);
     g_assert_cmpuint(*modifier, ==, DRM_FORMAT_MOD_LINEAR);
-    g_assert_true(wpe_buffer_dma_buf_formats_get_format_fourcc(formats, 1, 1) == DRM_FORMAT_ARGB8888);
-    modifiers = wpe_buffer_dma_buf_formats_get_format_modifiers(formats, 1, 1);
+    g_assert_true(wpe_buffer_formats_get_format_fourcc(formats, 1, 1) == DRM_FORMAT_ARGB8888);
+    modifiers = wpe_buffer_formats_get_format_modifiers(formats, 1, 1);
     g_assert_cmpuint(modifiers->len, ==, 1);
     modifier = &g_array_index(modifiers, guint64, 0);
     g_assert_cmpuint(*modifier, ==, DRM_FORMAT_MOD_LINEAR);
@@ -294,10 +312,11 @@ static void testDisplayCreateView(WPEMockPlatformTest* test, gconstpointer)
 void beforeAll()
 {
     WPEMockPlatformTest::add("Display", "connect", testDisplayConnect);
+    WPEMockPlatformTest::add("Display", "disconnected", testDisplayDisconnected);
     WPEMockPlatformTest::add("Display", "primary", testDisplayPrimary);
     WPEMockPlatformTest::add("Display", "keymap", testDisplayKeymap);
     WPEMockPlatformTest::add("Display", "drm-nodes", testDisplayDRMNodes);
-    WPEMockPlatformTest::add("Display", "dmabuf-formats", testDisplayDMABufFormats);
+    WPEMockPlatformTest::add("Display", "buffer-formats", testDisplayBufferFormats);
     WPEMockPlatformTest::add("Display", "explicit-sync", testDisplayExplicitSync);
     WPEMockPlatformTest::add("Display", "screens", testDisplayScreens);
     WPEMockAvailableInputDevicesTest::add("Display", "available-input-devices", testDisplayAvailableInputDevices);

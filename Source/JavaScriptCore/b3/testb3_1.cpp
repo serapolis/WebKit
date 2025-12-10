@@ -135,7 +135,7 @@ void testRotLWithImmShift(T valueInt, int32_t shift)
 template<typename T>
 void testComputeDivisionMagic(T value, T magicMultiplier, unsigned shift)
 {
-    DivisionMagic<T> magic = computeDivisionMagic(value);
+    DivisionMagic<T> magic = computeSignedDivisionMagic(value);
     CHECK_EQ(magic.magicMultiplier, magicMultiplier);
     CHECK_EQ(magic.shift, shift);
 }
@@ -894,6 +894,8 @@ void run(const TestConfig* config)
     RUN(testConstDoubleMove());
     RUN(testConstFloatMove());
 
+    RUN(testLoadImmutable());
+
     RUN_UNARY(testSShrCompare32, int32OperandsMore());
     RUN_UNARY(testSShrCompare64, int64OperandsMore());
 
@@ -984,8 +986,8 @@ void run(const TestConfig* config)
 bool g_dumpB3AfterGeneration = false;
 
 #if ENABLE(JIT_OPERATION_VALIDATION) || ENABLE(JIT_OPERATION_DISASSEMBLY)
-extern const JSC::JITOperationAnnotation startOfJITOperationsInTestB3 __asm("section$start$__DATA_CONST$__jsc_ops");
-extern const JSC::JITOperationAnnotation endOfJITOperationsInTestB3 __asm("section$end$__DATA_CONST$__jsc_ops");
+extern const JSC::JITOperationAnnotation startOfJITOperationsInTestB3 __asm__("section$start$__DATA_CONST$__jsc_ops");
+extern const JSC::JITOperationAnnotation endOfJITOperationsInTestB3 __asm__("section$end$__DATA_CONST$__jsc_ops");
 #endif
 
 int main(int argc, char** argv)

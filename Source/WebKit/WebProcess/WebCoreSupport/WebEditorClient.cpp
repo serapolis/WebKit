@@ -51,6 +51,7 @@
 #include <WebCore/KeyboardEvent.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameView.h>
+#include <WebCore/NodeDocument.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/Page.h>
 #include <WebCore/Range.h>
@@ -82,7 +83,7 @@ bool WebEditorClient::smartInsertDeleteEnabled()
     RefPtr page = m_page.get();
     return page ? page->isSmartInsertDeleteEnabled() : false;
 }
- 
+
 bool WebEditorClient::isSelectTrailingWhitespaceEnabled() const
 {
     RefPtr page = m_page.get();
@@ -144,7 +145,7 @@ bool WebEditorClient::shouldChangeSelectedRange(const std::optional<SimpleRange>
     RefPtr page = m_page.get();
     return page ? page->injectedBundleEditorClient().shouldChangeSelectedRange(*page, fromRange, toRange, affinity, stillSelecting) : false;
 }
-    
+
 bool WebEditorClient::shouldApplyStyle(const StyleProperties& style, const std::optional<SimpleRange>& range)
 {
     RefPtr page = m_page.get();
@@ -435,7 +436,7 @@ void WebEditorClient::textFieldDidEndEditing(Element& element)
     if (!inputElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.document().frame());
+    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -450,11 +451,14 @@ void WebEditorClient::textDidChangeInTextField(Element& element)
 
     bool initiatedByUserTyping = UserTypingGestureIndicator::processingUserTypingGesture() && UserTypingGestureIndicator::focusedElementAtGestureStart() == inputElement;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.document().frame());
+    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
         page->injectedBundleFormClient().textDidChangeInTextField(page.get(), *inputElement, webFrame.get(), initiatedByUserTyping);
+
+    if (initiatedByUserTyping)
+        inputElement->dispatchUserTextInputEvent();
 }
 
 void WebEditorClient::textDidChangeInTextArea(Element& element)
@@ -463,11 +467,14 @@ void WebEditorClient::textDidChangeInTextArea(Element& element)
     if (!textAreaElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.document().frame());
+    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
         page->injectedBundleFormClient().textDidChangeInTextArea(page.get(), *textAreaElement, webFrame.get());
+
+    if (UserTypingGestureIndicator::processingUserTypingGesture())
+        textAreaElement->dispatchUserTextInputEvent();
 }
 
 #if !PLATFORM(IOS_FAMILY)
@@ -537,7 +544,7 @@ bool WebEditorClient::doTextFieldCommandFromEvent(Element& element, KeyboardEven
     if (!getActionTypeForKeyEvent(event, actionType))
         return false;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.document().frame());
+    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
     ASSERT(webFrame);
 
     RefPtr page = m_page.get();
@@ -550,7 +557,7 @@ void WebEditorClient::textWillBeDeletedInTextField(Element& element)
     if (!inputElement)
         return;
 
-    auto webFrame = WebFrame::fromCoreFrame(*element.document().frame());
+    auto webFrame = WebFrame::fromCoreFrame(*element.protectedDocument()->protectedFrame());
     ASSERT(webFrame);
 
     if (RefPtr page = m_page.get())
@@ -672,6 +679,17 @@ void WebEditorClient::requestCheckingOfString(TextCheckingRequest& request, cons
     page->addTextCheckingRequest(requestID, request);
 
     page->send(Messages::WebPageProxy::RequestCheckingOfString(requestID, request.data(), insertionPointFromCurrentSelection(currentSelection)));
+}
+
+void WebEditorClient::requestExtendedCheckingOfString(TextCheckingRequest& request, const WebCore::VisibleSelection& currentSelection)
+{
+    auto requestID = TextCheckerRequestID::generate();
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+    page->addTextCheckingRequest(requestID, request);
+
+    page->send(Messages::WebPageProxy::RequestExtendedCheckingOfString(requestID, request.data(), insertionPointFromCurrentSelection(currentSelection)));
 }
 
 void WebEditorClient::willChangeSelectionForAccessibility()

@@ -91,8 +91,6 @@ public:
     explicit WebExtensionMatchPattern(const String& pattern, RefPtr<API::Error>&);
     explicit WebExtensionMatchPattern(const String& scheme, const String& host, const String& path, RefPtr<API::Error>&);
 
-    ~WebExtensionMatchPattern() = default;
-
     static URLSchemeSet& extensionSchemes();
     static URLSchemeSet& validSchemes();
     static URLSchemeSet& supportedSchemes();
@@ -156,15 +154,6 @@ HashSet<String> toStrings(const WebExtensionMatchPattern::MatchPatternSet&);
 } // namespace WebKit
 
 namespace WTF {
-
-struct WebExtensionMatchPatternHash {
-    static unsigned hash(const WebKit::WebExtensionMatchPattern& pattern) { return pattern.hash(); }
-    static bool equal(const WebKit::WebExtensionMatchPattern& a, const WebKit::WebExtensionMatchPattern& b) { return a == b; }
-    static const bool safeToCompareToEmptyOrDeleted = false;
-};
-
-template<typename T> struct DefaultHash;
-template<> struct DefaultHash<WebKit::WebExtensionMatchPattern> : WebExtensionMatchPatternHash { };
 
 template<> struct HashTraits<WebKit::WebExtensionMatchPattern> : SimpleClassHashTraits<WebKit::WebExtensionMatchPattern> {
     static const bool emptyValueIsZero = false;

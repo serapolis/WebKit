@@ -14,7 +14,7 @@ set(WPEPlatform_SOURCES
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBuffer.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferAndroid.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABuf.cpp
-    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABufFormats.cpp
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferFormats.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferSHM.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEClipboard.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEColor.cpp
@@ -49,7 +49,7 @@ set(WPEPlatform_INSTALLED_HEADERS
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBuffer.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferAndroid.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABuf.h
-    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABufFormats.h
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferFormats.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferSHM.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEClipboard.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEColor.h
@@ -103,20 +103,13 @@ set(WPEPlatform_PRIVATE_INCLUDE_DIRECTORIES
     "${WPEPlatform_DERIVED_SOURCES_DIR}/wpe"
     "${WEBKIT_DIR}/WPEPlatform"
     "${WEBKIT_DIR}/WPEPlatform/wpe"
-    "${WTF_FRAMEWORK_HEADERS_DIR}"
-)
-
-set(WPEPlatform_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
 )
 
 set(WPEPlatform_LIBRARIES
     Epoxy::Epoxy
-    WTF
-    ${GLIB_GIO_LIBRARIES}
-    ${GLIB_GOBJECT_LIBRARIES}
-    ${GLIB_LIBRARIES}
-    ${LIBXKBCOMMON_LIBRARIES}
+    GLib::Gio
+    WebKit::WTF
+    XkbCommon::XkbCommon
 )
 
 if (USE_GBM)
@@ -188,9 +181,11 @@ if (ENABLE_WPE_PLATFORM_WAYLAND)
 endif ()
 
 add_library(WPEPlatform OBJECT ${WPEPlatform_SOURCES})
+target_compile_options(WPEPlatform PRIVATE ${DEVELOPER_MODE_CXX_FLAGS})
 target_include_directories(WPEPlatform PRIVATE ${WPEPlatform_PRIVATE_INCLUDE_DIRECTORIES})
 target_include_directories(WPEPlatform SYSTEM PRIVATE ${WPEPlatform_SYSTEM_INCLUDE_DIRECTORIES})
 target_link_libraries(WPEPlatform ${WPEPlatform_LIBRARIES})
+add_dependencies(WPEPlatform WPEPlatformGeneratedEnumTypesHeader)
 
 GI_INTROSPECT(WPEPlatform ${WPE_API_VERSION} wpe/wpe-platform.h
     TARGET WebKit

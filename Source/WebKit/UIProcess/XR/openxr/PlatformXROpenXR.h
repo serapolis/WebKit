@@ -51,7 +51,7 @@ public:
     void getPrimaryDeviceInfo(WebPageProxy&, DeviceInfoCallback&&) override;
     void requestPermissionOnSessionFeatures(WebPageProxy&, const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, const PlatformXR::Device::FeatureList&, FeatureListCallback&&) override;
 
-    void createLayerProjection(uint32_t, uint32_t, bool) override;
+    void createLayerProjection(uint32_t, uint32_t, bool, CompletionHandler<void(std::optional<PlatformXR::LayerHandle>)>&&) override;
 
     void startSession(WebPageProxy&, WeakPtr<PlatformXRCoordinatorSessionEventClient>&&, const WebCore::SecurityOriginData&, PlatformXR::SessionMode, const PlatformXR::Device::FeatureList&, std::optional<WebCore::XRCanvasConfiguration>&&) override;
     void endSessionIfExists(WebPageProxy&) override;
@@ -59,10 +59,17 @@ public:
     void scheduleAnimationFrame(WebPageProxy&, std::optional<PlatformXR::RequestData>&&, PlatformXR::Device::RequestFrameCallback&& onFrameUpdateCallback) override;
     void submitFrame(WebPageProxy&, Vector<XRDeviceLayer>&&) override;
 
+#if ENABLE(WEBXR_HIT_TEST)
+    void requestHitTestSource(WebPageProxy&, const PlatformXR::HitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::HitTestSource>)>&&) override;
+    void deleteHitTestSource(WebPageProxy&, PlatformXR::HitTestSource) override;
+    void requestTransientInputHitTestSource(WebPageProxy&, const PlatformXR::TransientInputHitTestOptions&, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::TransientInputHitTestSource>)>&&) override;
+    void deleteTransientInputHitTestSource(WebPageProxy&, PlatformXR::TransientInputHitTestSource) override;
+#endif
+
 private:
     void createInstance();
-    RefPtr<WebCore::GLDisplay> createGLDisplay() const;
-    void initializeDevice();
+    RefPtr<WebCore::GLDisplay> createGLDisplay(bool isForTesting) const;
+    void initializeDevice(bool isForTesting);
     void initializeSystem();
     void initializeBlendModes();
     void collectViewConfigurations();
@@ -74,12 +81,15 @@ private:
         WebCore::PageIdentifier pageIdentifier;
         Box<RenderState> renderState;
         RefPtr<WorkQueue> renderQueue;
+        bool didStart { false };
     };
     using State = Variant<Idle, Active>;
 
     void createSessionIfNeeded();
     void handleSessionStateChange();
     void tryInitializeGraphicsBinding();
+    void cleanupAllResources();
+    void cleanupInstanceAndAssociatedResources();
     void cleanupSessionAndAssociatedResources();
     bool collectSwapchainFormatsIfNeeded();
     enum class PollResult : bool;
@@ -90,6 +100,7 @@ private:
     void beginFrame(Box<RenderState>);
     void endFrame(Box<RenderState>, Vector<XRDeviceLayer>&&);
     void renderLoop(Box<RenderState>);
+    XrEnvironmentBlendMode blendModeForSessionMode(Box<RenderState>) const;
 
     XRDeviceIdentifier m_deviceIdentifier { XRDeviceIdentifier::generate() };
     XrInstance m_instance { XR_NULL_HANDLE };
@@ -112,10 +123,16 @@ private:
     Vector<XrView> m_views;
     HashMap<PlatformXR::LayerHandle, std::unique_ptr<OpenXRLayer>> m_layers;
     Vector<int64_t> m_supportedSwapchainFormats;
+#if OS(ANDROID)
+    XrGraphicsBindingOpenGLESAndroidKHR m_graphicsBinding;
+#else
     XrGraphicsBindingEGLMNDX m_graphicsBinding;
+#endif
     std::unique_ptr<WebCore::GLContext> m_glContext;
     XrSpace m_localSpace { XR_NULL_HANDLE };
     XrSpace m_floorSpace { XR_NULL_HANDLE };
+
+    PlatformXR::LayerHandle m_nextLayerHandle { 1 };
 };
 
 } // namespace WebKit

@@ -685,6 +685,7 @@ static constexpr bool unreachableForValue = false;
 #define RELEASE_LOG(channel, ...) ((void)0)
 #define RELEASE_LOG_ERROR(channel, ...) LOG_ERROR(__VA_ARGS__)
 #define RELEASE_LOG_FAULT(channel, ...) LOG_ERROR(__VA_ARGS__)
+#define RELEASE_LOG_FAULT_WITH_PAYLOAD(channel, message) LOG_ERROR("%s", message)
 #define RELEASE_LOG_INFO(channel, ...) ((void)0)
 #define RELEASE_LOG_DEBUG(channel, ...) ((void)0)
 
@@ -704,6 +705,7 @@ static constexpr bool unreachableForValue = false;
 #define RELEASE_LOG(channel, ...) SUPPRESS_UNCOUNTED_LOCAL os_log(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__)
 #define RELEASE_LOG_ERROR(channel, ...) SUPPRESS_UNCOUNTED_LOCAL os_log_error(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__)
 #define RELEASE_LOG_FAULT(channel, ...) SUPPRESS_UNCOUNTED_LOCAL os_log_fault(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__)
+#define RELEASE_LOG_FAULT_WITH_PAYLOAD(channel, message) os_fault_with_payload(OS_REASON_WEBKIT, 0, nullptr, 0, message, 0)
 #define RELEASE_LOG_INFO(channel, ...) SUPPRESS_UNCOUNTED_LOCAL os_log_info(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__)
 #define RELEASE_LOG_DEBUG(channel, ...) SUPPRESS_UNCOUNTED_LOCAL os_log_debug(LOG_CHANNEL(channel).osLogChannel, __VA_ARGS__)
 #define RELEASE_LOG_WITH_LEVEL(channel, logLevel, ...) do { \
@@ -731,6 +733,7 @@ static constexpr bool unreachableForValue = false;
 #define RELEASE_LOG(channel, ...) LOG_ANDROID_SEND(channel, VERBOSE, __VA_ARGS__)
 #define RELEASE_LOG_ERROR(channel, ...) LOG_ANDROID_SEND(channel, ERROR, __VA_ARGS__)
 #define RELEASE_LOG_FAULT(channel, ...) LOG_ANDROID_SEND(channel, FATAL, __VA_ARGS__)
+#define RELEASE_LOG_FAULT_WITH_PAYLOAD(channel, message) LOG_ANDROID_SEND(channel, FATAL, "%s", message)
 #define RELEASE_LOG_INFO(channel, ...) LOG_ANDROID_SEND(channel, INFO, __VA_ARGS__)
 #define RELEASE_LOG_DEBUG(channel, ...) LOG_ANDROID_SEND(channel, DEBUG, __VA_ARGS__)
 
@@ -757,6 +760,7 @@ static constexpr bool unreachableForValue = false;
 #define RELEASE_LOG(channel, ...) SD_JOURNAL_SEND(channel, LOG_NOTICE, __FILE__, _STRINGIFY(__LINE__), __func__, __VA_ARGS__)
 #define RELEASE_LOG_ERROR(channel, ...) SD_JOURNAL_SEND(channel, LOG_ERR, __FILE__, _STRINGIFY(__LINE__), __func__, __VA_ARGS__)
 #define RELEASE_LOG_FAULT(channel, ...) SD_JOURNAL_SEND(channel, LOG_CRIT, __FILE__, _STRINGIFY(__LINE__), __func__, __VA_ARGS__)
+#define RELEASE_LOG_FAULT_WITH_PAYLOAD(channel, message) SD_JOURNAL_SEND(channel, LOG_CRIT, __FILE__, _STRINGIFY(__LINE__), __func__, "%s", message)
 #define RELEASE_LOG_INFO(channel, ...) SD_JOURNAL_SEND(channel, LOG_INFO, __FILE__, _STRINGIFY(__LINE__), __func__, __VA_ARGS__)
 #define RELEASE_LOG_DEBUG(channel, ...) SD_JOURNAL_SEND(channel, LOG_DEBUG, __FILE__, _STRINGIFY(__LINE__), __func__, __VA_ARGS__)
 
@@ -784,6 +788,7 @@ static constexpr bool unreachableForValue = false;
 #define RELEASE_LOG(channel, ...) LOGF(channel, 4, __VA_ARGS__)
 #define RELEASE_LOG_ERROR(channel, ...) LOGF(channel, 1, __VA_ARGS__)
 #define RELEASE_LOG_FAULT(channel, ...) LOGF(channel, 2, __VA_ARGS__)
+#define RELEASE_LOG_FAULT_WITH_PAYLOAD(channel, message) LOGF(channel, 2, "%s", message)
 #define RELEASE_LOG_INFO(channel, ...) LOGF(channel, 3, __VA_ARGS__)
 #define RELEASE_LOG_DEBUG(channel, ...) LOGF(channel, 4, __VA_ARGS__)
 
@@ -962,10 +967,10 @@ NO_RETURN_DUE_TO_CRASH ALWAYS_INLINE void WTFCrashWithInfo(int line, const char*
     uint64_t x1Value = reinterpret_cast<uintptr_t>(file);
     uint64_t x2Value = reinterpret_cast<uintptr_t>(function);
     uint64_t x3Value = static_cast<uint64_t>(static_cast<int64_t>(counter));
-    register uint64_t x0GPR asm(CRASH_ARG_GPR0) = x0Value;
-    register uint64_t x1GPR asm(CRASH_ARG_GPR1) = x1Value;
-    register uint64_t x2GPR asm(CRASH_ARG_GPR2) = x2Value;
-    register uint64_t x3GPR asm(CRASH_ARG_GPR3) = x3Value;
+    register uint64_t x0GPR __asm__(CRASH_ARG_GPR0) = x0Value;
+    register uint64_t x1GPR __asm__(CRASH_ARG_GPR1) = x1Value;
+    register uint64_t x2GPR __asm__(CRASH_ARG_GPR2) = x2Value;
+    register uint64_t x3GPR __asm__(CRASH_ARG_GPR3) = x3Value;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(x0GPR), "r"(x1GPR), "r"(x2GPR), "r"(x3GPR));
     __builtin_unreachable();
 }

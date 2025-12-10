@@ -34,11 +34,11 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DeviceOrientationClientMock);
 
 DeviceOrientationClientMock::DeviceOrientationClientMock()
-    : m_controller(0)
-    , m_timer(*this, &DeviceOrientationClientMock::timerFired)
-    , m_isUpdating(false)
+    : m_timer(*this, &DeviceOrientationClientMock::timerFired)
 {
 }
+
+DeviceOrientationClientMock::~DeviceOrientationClientMock() = default;
 
 void DeviceOrientationClientMock::setController(DeviceOrientationController* controller)
 {
@@ -47,7 +47,7 @@ void DeviceOrientationClientMock::setController(DeviceOrientationController* con
     ASSERT(m_controller);
 }
 
-void DeviceOrientationClientMock::startUpdating(const SecurityOriginData&)
+void DeviceOrientationClientMock::startUpdating()
 {
     m_isUpdating = true;
 }
@@ -68,7 +68,7 @@ void DeviceOrientationClientMock::setOrientation(RefPtr<DeviceOrientationData>&&
 void DeviceOrientationClientMock::timerFired()
 {
     m_timer.stop();
-    m_controller->didChangeDeviceOrientation(m_orientation.get());
+    CheckedPtr { m_controller }->didChangeDeviceOrientation(m_orientation.get());
 }
 
 } // namespace WebCore

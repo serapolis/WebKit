@@ -30,17 +30,8 @@
 #include "RealtimeMediaSource.h"
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-class LibWebRTCPeerConnectionBackend;
-}
-
 namespace webrtc {
 class IceCandidate;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::LibWebRTCPeerConnectionBackend> : std::true_type { };
 }
 
 namespace WebCore {
@@ -101,8 +92,8 @@ private:
     ExceptionOr<Ref<RTCRtpTransceiver>> addTransceiver(Ref<MediaStreamTrack>&&, const RTCRtpTransceiverInit&) final;
     void setSenderSourceFromTrack(LibWebRTCRtpSenderBackend&, MediaStreamTrack&);
 
-    RTCRtpTransceiver* existingTransceiver(Function<bool(LibWebRTCRtpTransceiverBackend&)>&&);
-    RTCRtpTransceiver& newRemoteTransceiver(std::unique_ptr<LibWebRTCRtpTransceiverBackend>&&, RealtimeMediaSource::Type);
+    RefPtr<RTCRtpTransceiver> existingTransceiver(Function<bool(LibWebRTCRtpTransceiverBackend&)>&&);
+    Ref<RTCRtpTransceiver> newRemoteTransceiver(std::unique_ptr<LibWebRTCRtpTransceiverBackend>&&, RealtimeMediaSource::Type);
 
     void collectTransceivers() final;
 

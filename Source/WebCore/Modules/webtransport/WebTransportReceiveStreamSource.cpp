@@ -26,8 +26,11 @@
 #include "config.h"
 #include "WebTransportReceiveStreamSource.h"
 
+#include "JSDOMException.h"
+#include "JSDOMGlobalObject.h"
 #include "JSWebTransportReceiveStream.h"
 #include "WebTransport.h"
+#include "WebTransportError.h"
 #include "WebTransportSession.h"
 
 namespace WebCore {
@@ -65,16 +68,37 @@ void WebTransportReceiveStreamSource::receiveBytes(std::span<const uint8_t> byte
         clean();
         return;
     }
-    auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
-    if (arrayBuffer)
-        memcpySpan(arrayBuffer->mutableSpan(), bytes);
-    if (!controller().enqueue(WTFMove(arrayBuffer)))
-        doCancel();
+    if (bytes.size()) {
+        auto arrayBuffer = ArrayBuffer::tryCreateUninitialized(bytes.size(), 1);
+        if (arrayBuffer)
+            memcpySpan(arrayBuffer->mutableSpan(), bytes);
+        if (!controller().enqueue(WTFMove(arrayBuffer)))
+            doCancel();
+    }
     if (withFin) {
         m_isClosed = true;
         controller().close();
         clean();
     }
+}
+
+void WebTransportReceiveStreamSource::receiveError(JSC::JSGlobalObject& globalObject, uint64_t errorCode)
+{
+    if (m_isCancelled || m_isClosed || !m_identifier)
+        return;
+
+    auto& jsDOMGlobalObject = *JSC::jsCast<JSDOMGlobalObject*>(&globalObject);
+    Locker<JSC::JSLock> locker(jsDOMGlobalObject.vm().apiLock());
+
+    auto error = WebTransportError::create(String(emptyString()), WebTransportErrorOptions {
+        WebTransportErrorSource::Stream,
+        static_cast<unsigned>(errorCode)
+    });
+
+    auto jsError = toJS(&globalObject, &jsDOMGlobalObject, error.get());
+    controller().error(globalObject, jsError);
+    clean();
+    m_isCancelled = true;
 }
 
 void WebTransportReceiveStreamSource::doCancel()

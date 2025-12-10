@@ -71,8 +71,9 @@
 #include "MediaQueryParser.h"
 #include "MediaQueryParserContext.h"
 #include "MutableCSSSelector.h"
-#include "NodeInlines.h"
 #include "NestingLevelIncrementer.h"
+#include "NodeDocument.h"
+#include "StyleColor.h"
 #include "StylePropertiesInlines.h"
 #include "StyleRule.h"
 #include "StyleRuleFunction.h"
@@ -491,6 +492,8 @@ RefPtr<StyleRuleBase> CSSParser::consumeAtRule(CSSParserTokenRange& range, Allow
         return consumePositionTryRule(prelude, block);
     case CSSAtRuleFunction:
         return consumeFunctionRule(prelude, block);
+    case CSSAtRuleInternalBaseAppearance:
+        return consumeInternalBaseAppearanceRule(prelude, block);
     default:
         return nullptr; // Parse error, unrecognised at-rule with block
     }
@@ -1287,6 +1290,28 @@ RefPtr<StyleRuleStartingStyle> CSSParser::consumeStartingStyleRule(CSSParserToke
     return StyleRuleStartingStyle::create(WTFMove(rules));
 }
 
+RefPtr<StyleRuleInternalBaseAppearance> CSSParser::consumeInternalBaseAppearanceRule(CSSParserTokenRange prelude, CSSParserTokenRange block)
+{
+    if (m_context.mode != UASheetMode)
+        return nullptr;
+
+    if (!prelude.atEnd())
+        return nullptr;
+
+    if (RefPtr observerWrapper = m_observerWrapper.get()) {
+        observerWrapper->observer().startRuleHeader(StyleRuleType::InternalBaseAppearance, observerWrapper->startOffset(prelude));
+        observerWrapper->observer().endRuleHeader(observerWrapper->endOffset(prelude));
+        observerWrapper->observer().startRuleBody(observerWrapper->previousTokenStartOffset(block));
+    }
+
+    auto rules = consumeNestedGroupRules(block);
+
+    if (RefPtr observerWrapper = m_observerWrapper.get())
+        observerWrapper->observer().endRuleBody(observerWrapper->endOffset(block));
+
+    return StyleRuleInternalBaseAppearance::create(WTFMove(rules));
+}
+
 RefPtr<StyleRuleLayer> CSSParser::consumeLayerRule(CSSParserTokenRange prelude, std::optional<CSSParserTokenRange> block)
 {
     auto preludeCopy = prelude;
@@ -1533,14 +1558,13 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
             range.consumeComponentValue();
     };
 
-    ParsedPropertyVector initialDeclarationBlock;
-    bool initialDeclarationBlockFinished = false;
+    std::unique_ptr<ParsedPropertyVector> initialDeclarationBlock;
     auto storeDeclarations = [&] {
         // We don't wrap the first declaration block, we store it until the end of the style rule.
         // For @function we always use the declaration block.
-        if (!initialDeclarationBlockFinished && ruleType != StyleRuleType::Function) {
-            initialDeclarationBlockFinished = true;
-            std::swap(initialDeclarationBlock, topContext().m_parsedProperties);
+        if (!initialDeclarationBlock && ruleType != StyleRuleType::Function) {
+            initialDeclarationBlock = makeUnique<ParsedPropertyVector>();
+            std::swap(*initialDeclarationBlock, topContext().m_parsedProperties);
             return;
         }
 
@@ -1641,8 +1665,8 @@ void CSSParser::consumeBlockContent(CSSParserTokenRange range, StyleRuleType rul
     storeDeclarations();
 
     // Restore the initial declaration block
-    if (!initialDeclarationBlock.isEmpty())
-        std::swap(initialDeclarationBlock, topContext().m_parsedProperties);
+    if (initialDeclarationBlock)
+        std::swap(*initialDeclarationBlock, topContext().m_parsedProperties);
 
     // Yield remaining comments
     if (useObserver) {

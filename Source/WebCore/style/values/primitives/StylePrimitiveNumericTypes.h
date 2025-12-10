@@ -88,18 +88,28 @@ template<CSS::Range nR = CSS::All, CSS::Range pR = nR, typename V = double> stru
 
     Number value { 0 };
 
-    constexpr NumberOrPercentageResolvedToNumber(typename Number::ResolvedValueType value)
-        : value { value }
-    {
-    }
-
     constexpr NumberOrPercentageResolvedToNumber(Number number)
         : value { number }
     {
     }
 
     constexpr NumberOrPercentageResolvedToNumber(Percentage percentage)
-        : value { percentage.value / 100.0 }
+        : value { percentage.value / static_cast<V>(100) }
+    {
+    }
+
+    constexpr NumberOrPercentageResolvedToNumber(typename Number::ResolvedValueType value)
+        : NumberOrPercentageResolvedToNumber { Number { value } }
+    {
+    }
+
+    constexpr NumberOrPercentageResolvedToNumber(CSS::ValueLiteral<CSS::NumberUnit::Number> literal)
+        : NumberOrPercentageResolvedToNumber { Number { literal } }
+    {
+    }
+
+    constexpr NumberOrPercentageResolvedToNumber(CSS::ValueLiteral<CSS::PercentageUnit::Percentage> literal)
+        : NumberOrPercentageResolvedToNumber { Percentage { literal } }
     {
     }
 

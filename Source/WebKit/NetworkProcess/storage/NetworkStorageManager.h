@@ -126,6 +126,7 @@ public:
     void moveData(OptionSet<WebsiteDataType>, WebCore::SecurityOriginData&& source, WebCore::SecurityOriginData&& target, CompletionHandler<void()>&&);
     void getOriginDirectory(WebCore::ClientOrigin&&, WebsiteDataType, CompletionHandler<void(const String&)>&&);
     void suspend(CompletionHandler<void()>&&);
+    bool isSuspended() const;
     void resume();
     void handleLowMemoryWarning();
     void syncLocalStorage(CompletionHandler<void()>&&);
@@ -279,7 +280,7 @@ private:
     const SuspendableWorkQueue& workQueue() const WTF_RETURNS_CAPABILITY(m_queue.get()) { return m_queue; }
     SuspendableWorkQueue& workQueue() WTF_RETURNS_CAPABILITY(m_queue.get()) { return m_queue; }
     OriginQuotaManager::Parameters originQuotaManagerParameters(const WebCore::ClientOrigin&);
-    WebCore::IDBServer::UniqueIDBDatabaseTransaction* idbTransaction(const WebCore::IDBRequestData&);
+    RefPtr<WebCore::IDBServer::UniqueIDBDatabaseTransaction> idbTransaction(const WebCore::IDBRequestData&);
     void setStorageSiteValidationEnabledInternal(bool);
     void addAllowedSitesForConnectionInternal(IPC::Connection::UniqueID, const Vector<WebCore::RegistrableDomain>&);
     bool isSiteAllowedForConnection(IPC::Connection::UniqueID, const WebCore::RegistrableDomain&) const;

@@ -22,6 +22,7 @@
 #include "config.h"
 #include "SVGFETurbulenceElement.h"
 
+#include "NodeDocument.h"
 #include "NodeName.h"
 #include "NodeInlines.h"
 #include "SVGDocumentExtensions.h"
@@ -40,14 +41,15 @@ inline SVGFETurbulenceElement::SVGFETurbulenceElement(const QualifiedName& tagNa
 {
     ASSERT(hasTagName(SVGNames::feTurbulenceTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::baseFrequencyAttr, &SVGFETurbulenceElement::m_baseFrequencyX, &SVGFETurbulenceElement::m_baseFrequencyY>();
         PropertyRegistry::registerProperty<SVGNames::numOctavesAttr, &SVGFETurbulenceElement::m_numOctaves>();
         PropertyRegistry::registerProperty<SVGNames::seedAttr, &SVGFETurbulenceElement::m_seed>();
         PropertyRegistry::registerProperty<SVGNames::stitchTilesAttr, SVGStitchOptions, &SVGFETurbulenceElement::m_stitchTiles>();
         PropertyRegistry::registerProperty<SVGNames::typeAttr, TurbulenceType, &SVGFETurbulenceElement::m_type>();
-    });
+    }
 }
 
 Ref<SVGFETurbulenceElement> SVGFETurbulenceElement::create(const QualifiedName& tagName, Document& document)
@@ -59,13 +61,13 @@ void SVGFETurbulenceElement::attributeChanged(const QualifiedName& name, const A
 {
     switch (name.nodeName()) {
     case AttributeNames::typeAttr: {
-        TurbulenceType propertyValue = SVGPropertyTraits<TurbulenceType>::fromString(newValue);
+        TurbulenceType propertyValue = SVGPropertyTraits<TurbulenceType>::fromString(*this, newValue);
         if (propertyValue != TurbulenceType::Unknown)
             Ref { m_type }->setBaseValInternal<TurbulenceType>(propertyValue);
         break;
     }
     case AttributeNames::stitchTilesAttr: {
-        SVGStitchOptions propertyValue = SVGPropertyTraits<SVGStitchOptions>::fromString(newValue);
+        SVGStitchOptions propertyValue = SVGPropertyTraits<SVGStitchOptions>::fromString(*this, newValue);
         if (propertyValue > 0)
             Ref { m_stitchTiles }->setBaseValInternal<SVGStitchOptions>(propertyValue);
         break;

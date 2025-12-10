@@ -38,7 +38,6 @@
 #include "Crypto.h"
 #include "CryptoKeyData.h"
 #include "DOMTimer.h"
-#include "DocumentInlines.h"
 #include "FontCustomPlatformData.h"
 #include "FontFaceSet.h"
 #include "FrameConsoleClient.h"
@@ -101,7 +100,7 @@ static HashSet<ScriptExecutionContextIdentifier>& allWorkerGlobalScopeIdentifier
     return identifiers;
 }
 
-static WorkQueue& sharedFileSystemStorageQueue()
+static WorkQueue& sharedFileSystemStorageQueueSingleton()
 {
     static NeverDestroyed<Ref<WorkQueue>> queue(WorkQueue::create("Shared File System Storage Queue"_s,  WorkQueue::QOS::Default));
     return queue.get();
@@ -145,7 +144,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
 
 WorkerGlobalScope::~WorkerGlobalScope()
 {
-    ASSERT(thread().thread() == &Thread::currentSingleton());
+    ASSERT(thread()->thread() == &Thread::currentSingleton());
 
     {
         Locker locker { allWorkerGlobalScopeIdentifiersLock };
@@ -156,7 +155,7 @@ WorkerGlobalScope::~WorkerGlobalScope()
     m_crypto = nullptr;
 
     // Notify proxy that we are going away. This can free the WorkerThread object, so do not access it after this.
-    if (auto* workerReportingProxy = thread().workerReportingProxy())
+    if (auto* workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->workerGlobalScopeDestroyed();
 }
 
@@ -170,7 +169,7 @@ void WorkerGlobalScope::prepareForDestruction()
 {
     WorkerOrWorkletGlobalScope::prepareForDestruction();
 
-    if (auto* trustedTypes = static_cast<WorkerGlobalScopeTrustedTypes*>(requireSupplement(WorkerGlobalScopeTrustedTypes::supplementName())))
+    if (auto* trustedTypes = downcast<WorkerGlobalScopeTrustedTypes>(requireSupplement(WorkerGlobalScopeTrustedTypes::supplementName())))
         trustedTypes->prepareForDestruction();
 
     if (settingsValues().serviceWorkersEnabled)
@@ -182,15 +181,16 @@ void WorkerGlobalScope::prepareForDestruction()
     if (m_storageConnection)
         m_storageConnection->scopeClosed();
 
-    if (m_fileSystemStorageConnection)
-        m_fileSystemStorageConnection->scopeClosed();
+    if (RefPtr fileSystemStorageConnection = m_fileSystemStorageConnection)
+        fileSystemStorageConnection->scopeClosed();
 }
 
 void WorkerGlobalScope::removeAllEventListeners()
 {
     WorkerOrWorkletGlobalScope::removeAllEventListeners();
-    m_performance->removeAllEventListeners();
-    m_performance->removeAllObservers();
+    Ref performance = *m_performance;
+    performance->removeAllEventListeners();
+    performance->removeAllObservers();
     m_reportingScope->removeAllObservers();
 }
 
@@ -227,11 +227,16 @@ SocketProvider* WorkerGlobalScope::socketProvider()
     return m_socketProvider.get();
 }
 
+RefPtr<SocketProvider> WorkerGlobalScope::protectedSocketProvider()
+{
+    return socketProvider();
+}
+
 RefPtr<RTCDataChannelRemoteHandlerConnection> WorkerGlobalScope::createRTCDataChannelRemoteHandlerConnection()
 {
     RefPtr<RTCDataChannelRemoteHandlerConnection> connection;
     callOnMainThreadAndWait([workerThread = Ref { thread() }, &connection]() mutable {
-        if (auto* workerLoaderProxy = workerThread->workerLoaderProxy())
+        if (CheckedPtr workerLoaderProxy = workerThread->workerLoaderProxy())
             connection = workerLoaderProxy->createRTCDataChannelRemoteHandlerConnection();
     });
     ASSERT(connection);
@@ -277,7 +282,7 @@ WorkerStorageConnection& WorkerGlobalScope::storageConnection()
 
 void WorkerGlobalScope::postFileSystemStorageTask(Function<void()>&& task)
 {
-    sharedFileSystemStorageQueue().dispatch(WTFMove(task));
+    sharedFileSystemStorageQueueSingleton().dispatch(WTFMove(task));
 }
 
 WorkerFileSystemStorageConnection& WorkerGlobalScope::getFileSystemStorageConnection(Ref<FileSystemStorageConnection>&& mainThreadConnection)
@@ -285,7 +290,7 @@ WorkerFileSystemStorageConnection& WorkerGlobalScope::getFileSystemStorageConnec
     if (!m_fileSystemStorageConnection)
         m_fileSystemStorageConnection = WorkerFileSystemStorageConnection::create(*this, WTFMove(mainThreadConnection));
     else if (m_fileSystemStorageConnection->mainThreadConnection() != mainThreadConnection.ptr()) {
-        m_fileSystemStorageConnection->connectionClosed();
+        Ref { *m_fileSystemStorageConnection }->connectionClosed();
         m_fileSystemStorageConnection = WorkerFileSystemStorageConnection::create(*this, WTFMove(mainThreadConnection));
     }
 
@@ -317,7 +322,7 @@ void WorkerGlobalScope::close()
         ASSERT_WITH_SECURITY_IMPLICATION(is<WorkerGlobalScope>(context));
         WorkerGlobalScope& workerGlobalScope = downcast<WorkerGlobalScope>(context);
         // Notify parent that this context is closed. Parent is responsible for calling WorkerThread::stop().
-        if (auto* workerReportingProxy = workerGlobalScope.thread().workerReportingProxy())
+        if (auto* workerReportingProxy = workerGlobalScope.thread()->workerReportingProxy())
             workerReportingProxy->workerGlobalScopeClosed();
     } });
 }
@@ -441,7 +446,7 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<Variant<Ref
         {
             NakedPtr<JSC::Exception> exception;
             ScriptSourceCode sourceCode(scriptLoader->script(), URL(scriptLoader->responseURL()), scriptLoader->isRedirected() ? URL(scriptLoader->url()) : URL());
-            sourceProvider = static_cast<ScriptBufferSourceProvider&>(sourceCode.provider());
+            sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
             script()->evaluate(sourceCode, exception);
             if (exception) {
                 if (mutedErrors)
@@ -464,7 +469,7 @@ EventTarget* WorkerGlobalScope::errorEventTarget()
 
 void WorkerGlobalScope::logExceptionToConsole(const String& errorMessage, const String& sourceURL, int lineNumber, int columnNumber, RefPtr<ScriptCallStack>&&)
 {
-    if (auto* workerReportingProxy = thread().workerReportingProxy())
+    if (auto* workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->postExceptionToWorkerObject(errorMessage, lineNumber, columnNumber, sourceURL);
 }
 
@@ -512,7 +517,7 @@ void WorkerGlobalScope::addMessage(MessageSource source, MessageLevel level, con
 std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(CryptoKeyData&& keyData)
 {
     Ref protectedThis { *this };
-    auto* workerLoaderProxy = thread().workerLoaderProxy();
+    auto* workerLoaderProxy = thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return std::nullopt;
 
@@ -529,7 +534,7 @@ std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(Cryp
 std::optional<Vector<uint8_t>> WorkerGlobalScope::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey)
 {
     Ref protectedThis { *this };
-    auto* workerLoaderProxy = thread().workerLoaderProxy();
+    auto* workerLoaderProxy = thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return std::nullopt;
 
@@ -567,7 +572,7 @@ CacheStorageConnection& WorkerGlobalScope::cacheStorageConnection()
         callOnMainThreadAndWait([workerThread = Ref { thread() }, &mainThreadConnection]() mutable {
             if (workerThread->runLoop().terminated())
                 return;
-            if (auto* workerLoaderProxy = workerThread->workerLoaderProxy())
+            if (CheckedPtr workerLoaderProxy = workerThread->workerLoaderProxy())
                 mainThreadConnection = workerLoaderProxy->createCacheStorageConnection();
         });
         if (!mainThreadConnection) {
@@ -582,7 +587,7 @@ CacheStorageConnection& WorkerGlobalScope::cacheStorageConnection()
 MessagePortChannelProvider& WorkerGlobalScope::messagePortChannelProvider()
 {
     if (!m_messagePortChannelProvider)
-        lazyInitialize(m_messagePortChannelProvider, makeUnique<WorkerMessagePortChannelProvider>(*this));
+        lazyInitialize(m_messagePortChannelProvider, WorkerMessagePortChannelProvider::create(*this));
     return *m_messagePortChannelProvider;
 }
 
@@ -606,7 +611,7 @@ void WorkerGlobalScope::createImageBitmap(ImageBitmap::Source&& source, int sx, 
 CSSValuePool& WorkerGlobalScope::cssValuePool()
 {
     if (!m_cssValuePool)
-        m_cssValuePool = makeUnique<CSSValuePool>();
+        lazyInitialize(m_cssValuePool, makeUnique<CSSValuePool>());
     return *m_cssValuePool;
 }
 
@@ -623,9 +628,9 @@ Ref<FontFaceSet> WorkerGlobalScope::fonts()
     return cssFontSelector()->fontFaceSet();
 }
 
-std::unique_ptr<FontLoadRequest> WorkerGlobalScope::fontLoadRequest(const String& url, bool, bool, LoadedFromOpaqueSource loadedFromOpaqueSource)
+RefPtr<FontLoadRequest> WorkerGlobalScope::fontLoadRequest(const String& url, bool, bool, LoadedFromOpaqueSource loadedFromOpaqueSource)
 {
-    return makeUnique<WorkerFontLoadRequest>(completeURL(url), loadedFromOpaqueSource);
+    return WorkerFontLoadRequest::create(completeURL(url), loadedFromOpaqueSource);
 }
 
 void WorkerGlobalScope::beginLoadingFontSoon(FontLoadRequest& request)
@@ -633,14 +638,9 @@ void WorkerGlobalScope::beginLoadingFontSoon(FontLoadRequest& request)
     downcast<WorkerFontLoadRequest>(request).load(*this);
 }
 
-WorkerThread& WorkerGlobalScope::thread() const
+Ref<WorkerThread> WorkerGlobalScope::thread() const
 {
-    return *static_cast<WorkerThread*>(workerOrWorkletThread());
-}
-
-Ref<WorkerThread> WorkerGlobalScope::protectedThread() const
-{
-    return thread();
+    return downcast<WorkerThread>(workerOrWorkletThread()).releaseNonNull();
 }
 
 void WorkerGlobalScope::releaseMemory(Synchronous synchronous)
@@ -708,7 +708,7 @@ void WorkerGlobalScope::addImportedScriptSourceProvider(const URL& url, ScriptBu
 
 void WorkerGlobalScope::reportErrorToWorkerObject(const String& errorMessage)
 {
-    if (auto* workerReportingProxy = thread().workerReportingProxy())
+    if (auto* workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->reportErrorToWorkerObject(errorMessage);
 }
 
@@ -716,8 +716,8 @@ void WorkerGlobalScope::clearDecodedScriptData()
 {
     ASSERT(isContextThread());
 
-    if (m_mainScriptSourceProvider)
-        m_mainScriptSourceProvider->clearDecodedData();
+    if (RefPtr provider = m_mainScriptSourceProvider.get())
+        provider->clearDecodedData();
 
     for (auto& sourceProviders : m_importedScriptsSourceProviders.values()) {
         for (Ref sourceProvider : sourceProviders)
@@ -734,8 +734,10 @@ void WorkerGlobalScope::updateSourceProviderBuffers(const ScriptBuffer& mainScri
 {
     ASSERT(isContextThread());
 
-    if (mainScript && m_mainScriptSourceProvider)
-        m_mainScriptSourceProvider->tryReplaceScriptBuffer(mainScript);
+    if (mainScript) {
+        if (RefPtr provider = m_mainScriptSourceProvider.get())
+            provider->tryReplaceScriptBuffer(mainScript);
+    }
 
     for (auto& pair : importedScripts) {
         auto it = m_importedScriptsSourceProviders.find(pair.key);

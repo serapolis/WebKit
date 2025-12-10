@@ -59,6 +59,7 @@ class DrawFocusRingPath;
 class DrawFocusRingRects;
 class DrawGlyphs;
 class DrawDisplayList;
+class DrawPlaceholder;
 class DrawImageBuffer;
 class DrawLine;
 class DrawLinesForText;
@@ -102,6 +103,9 @@ class ApplyStrokePattern;
 class BeginPage;
 class EndPage;
 class SetURLForRect;
+#if USE(SKIA)
+class DrawTextBlob;
+#endif
 
 using Item = Variant
     < ApplyDeviceScaleFactor
@@ -124,6 +128,7 @@ using Item = Variant
     , DrawFocusRingRects
     , DrawGlyphs
     , DrawDisplayList
+    , DrawPlaceholder
     , DrawImageBuffer
     , DrawLine
     , DrawLinesForText
@@ -167,6 +172,9 @@ using Item = Variant
     , BeginPage
     , EndPage
     , SetURLForRect
+#if USE(SKIA)
+    , DrawTextBlob
+#endif
 >;
 
 enum class AsTextFlag : uint8_t {

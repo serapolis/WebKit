@@ -36,11 +36,9 @@
 #include "CSSBorderImageSliceValue.h"
 #include "CSSBorderImageWidthValue.h"
 #include "CSSBoxShadowPropertyValue.h"
-#include "CSSCalcValue.h"
 #include "CSSCanvasValue.h"
 #include "CSSColorSchemeValue.h"
 #include "CSSColorValue.h"
-#include "CSSContentDistributionValue.h"
 #include "CSSCounterValue.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
@@ -125,8 +123,6 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBorderImageWidthValue>(*this));
     case BoxShadowProperty:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSBoxShadowPropertyValue>(*this));
-    case Calculation:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCalcValue>(*this));
     case Canvas:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCanvasValue>(*this));
     case Color:
@@ -135,8 +131,6 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
     case ColorScheme:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSColorSchemeValue>(*this));
 #endif
-    case ContentDistribution:
-        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSContentDistributionValue>(*this));
     case Counter:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSCounterValue>(*this));
     case Crossfade:

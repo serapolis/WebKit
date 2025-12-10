@@ -34,6 +34,7 @@
 #include "AXIsolatedObject.h"
 #include "AXIsolatedTree.h"
 #include "AXListHelpers.h"
+#include "AXLocalFrame.h"
 #include "AXLogger.h"
 #include "AXLoggerBase.h"
 #include "AXNotifications.h"
@@ -57,11 +58,12 @@
 #include "AccessibilitySpinButton.h"
 #include "AccessibilityTableColumn.h"
 #include "AccessibilityTableHeaderContainer.h"
+#include "AriaNotifyOptions.h"
 #include "CaretRectComputation.h"
 #include "ContainerNodeInlines.h"
 #include "CustomElementDefaultARIA.h"
 #include "DeprecatedGlobalSettings.h"
-#include "Document.h"
+#include "DocumentPage.h"
 #include "Editing.h"
 #include "Editor.h"
 #include "ElementAncestorIteratorInlines.h"
@@ -69,6 +71,7 @@
 #include "ElementRareData.h"
 #include "EventNames.h"
 #include "FocusController.h"
+#include "FrameLoader.h"
 #include "HTMLAreaElement.h"
 #include "HTMLButtonElement.h"
 #include "HTMLCanvasElement.h"
@@ -78,7 +81,6 @@
 #include "HTMLInputElement.h"
 #include "HTMLLabelElement.h"
 #include "HTMLMapElement.h"
-#include "HTMLMediaElement.h"
 #include "HTMLMeterElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptGroupElement.h"
@@ -114,7 +116,6 @@
 #include "RenderProgress.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSlider.h"
-#include "RenderStyleInlines.h"
 #include "RenderTable.h"
 #include "RenderTableCell.h"
 #include "RenderTableRow.h"
@@ -122,6 +123,7 @@
 #include "SVGElement.h"
 #include "ScriptDisallowedScope.h"
 #include "ScrollView.h"
+#include "Settings.h"
 #include "ShadowRoot.h"
 #include "TextBoundaries.h"
 #include "TextControlInnerElements.h"
@@ -136,6 +138,7 @@
 #include <wtf/text/MakeString.h>
 
 #if PLATFORM(COCOA)
+#include "AXLiveRegionManager.h"
 #include <wtf/spi/darwin/OSVariantSPI.h>
 #endif
 
@@ -209,9 +212,11 @@ std::atomic<bool> AXObjectCache::gForceDeferredSpellChecking = false;
 #if ENABLE(AX_THREAD_TEXT_APIS)
 std::atomic<bool> AXObjectCache::gAccessibilityThreadTextApisEnabled = false;
 #endif
+std::atomic<bool> AXObjectCache::gAccessibilityTextStitchingEnabled = false;
 std::atomic<bool> AXObjectCache::gForceInitialFrameCaching = false;
 #if PLATFORM(COCOA)
 std::atomic<bool> AXObjectCache::gAccessibilityDOMIdentifiersEnabled = false;
+std::atomic<bool> AXObjectCache::gShouldRepostNotificationsForTests = false;
 #endif
 
 bool AXObjectCache::accessibilityEnhancedUserInterfaceEnabled()
@@ -244,9 +249,9 @@ bool AXObjectCache::shouldServeInitialCachedFrame()
 static constexpr Seconds updateTreeSnapshotTimerInterval { 100_ms };
 #endif
 
-AXObjectCache::AXObjectCache(Page& page, Document* document)
+AXObjectCache::AXObjectCache(LocalFrame& localFrame, Document* document)
     : m_document(document)
-    , m_pageID(page.identifier())
+    , m_frameID(localFrame.frameID())
     , m_notificationPostTimer(*this, &AXObjectCache::notificationPostTimerFired)
 #if PLATFORM(COCOA)
     , m_passwordNotificationTimer(*this, &AXObjectCache::passwordNotificationTimerFired)
@@ -263,10 +268,10 @@ AXObjectCache::AXObjectCache(Page& page, Document* document)
 {
     AXTRACE(makeString("AXObjectCache::AXObjectCache 0x"_s, hex(reinterpret_cast<uintptr_t>(this))));
 #ifndef NDEBUG
-    if (m_pageID)
-        AXLOG(makeString("pageID "_s, m_pageID->loggingString()));
+    if (m_frameID)
+        AXLOG(makeString("frameID "_s, m_frameID->loggingString()));
     else
-        AXLOG("No pageID.");
+        AXLOG("No frameID.");
 #endif
     ASSERT(isMainThread());
 
@@ -277,6 +282,7 @@ AXObjectCache::AXObjectCache(Page& page, Document* document)
 #if ENABLE(AX_THREAD_TEXT_APIS)
     gAccessibilityThreadTextApisEnabled = DeprecatedGlobalSettings::accessibilityThreadTextApisEnabled();
 #endif
+    gAccessibilityTextStitchingEnabled = DeprecatedGlobalSettings::accessibilityTextStitchingEnabled();
 
 #if PLATFORM(COCOA)
     initializeUserDefaultValues();
@@ -284,12 +290,22 @@ AXObjectCache::AXObjectCache(Page& page, Document* document)
 
     // If loading completed before the cache was created, loading progress will have been reset to zero.
     // Consider loading progress to be 100% in this case.
-    m_loadingProgress = page.progress().estimatedProgress();
+    Page* page = localFrame.page();
+    if (page) {
+        m_loadingProgress = page->progress().estimatedProgress();
+        m_pageActivityState = page->activityState();
+    }
+
     if (m_loadingProgress <= 0)
         m_loadingProgress = 1;
 
-    if (m_pageID)
-        m_pageActivityState = page.activityState();
+#if PLATFORM(COCOA)
+    if (RefPtr document = m_document.get()) {
+        if (document->settings().isAriaLiveRegionManagementEnabled())
+            m_liveRegionManager = makeUnique<AXLiveRegionManager>(*this);
+    }
+#endif
+
     AXTreeStore::add(m_id, WeakPtr { this });
 }
 
@@ -308,10 +324,10 @@ AXObjectCache::~AXObjectCache()
     m_selectedTextRangeTimer.stop();
     m_updateTreeSnapshotTimer.stop();
 
-    if (m_pageID) {
-        if (auto tree = AXIsolatedTree::treeForPageID(*m_pageID))
+    if (m_frameID) {
+        if (auto tree = AXIsolatedTree::treeForFrameID(*m_frameID))
             tree->setPageActivityState({ });
-        AXIsolatedTree::removeTreeForPageID(*m_pageID);
+        AXIsolatedTree::removeTreeForFrameID(*m_frameID);
     }
 #endif
 
@@ -401,7 +417,7 @@ void AXObjectCache::updateCurrentModalNode()
         // Pick the document active modal <dialog> element if it exists.
         if (RefPtr activeModalDialog = document->activeModalDialog()) {
             ASSERT(m_modalElements.contains(activeModalDialog.get()));
-            return activeModalDialog.get();
+            return activeModalDialog.unsafeGet();
         }
 
         SetForScope retrievingCurrentModalNode(m_isRetrievingCurrentModalNode, true);
@@ -442,7 +458,7 @@ void AXObjectCache::updateCurrentModalNode()
         RefPtr object = getOrCreate(modalElementToReturn.get());
         if (!object || object->isAXHidden())
             return nullptr;
-        return modalElementToReturn.get();
+        return modalElementToReturn.unsafeGet();
     };
 
     RefPtr previousModal = m_currentModalElement.get();
@@ -527,6 +543,10 @@ AccessibilityObject* AXObjectCache::focusedImageMapUIElement(HTMLAreaElement& ar
 
 AccessibilityObject* AXObjectCache::focusedObjectForPage(const Page* page)
 {
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    return focusedObjectForLocalFrame();
+#endif
+
     ASSERT(isMainThread());
 
     if (!gAccessibilityEnabled)
@@ -539,6 +559,33 @@ AccessibilityObject* AXObjectCache::focusedObjectForPage(const Page* page)
     RefPtr document = focusedOrMainFrame->document();
     if (!document)
         return nullptr;
+
+    document->updateStyleIfNeeded();
+    if (RefPtr focusedElement = document->focusedElement())
+        return focusedObjectForNode(focusedElement.get());
+    return focusedObjectForNode(document.get());
+}
+
+AccessibilityObject* AXObjectCache::focusedObjectForLocalFrame()
+{
+    ASSERT(isMainThread());
+
+    if (!gAccessibilityEnabled)
+        return nullptr;
+
+    RefPtr document = this->document();
+    if (!document)
+        return nullptr;
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    // If there's one AXObjectCache per frame, then we should return null if focus is in a different frame.
+    RefPtr page = document->page();
+    RefPtr focusedOrMainFrame = page ? page->focusController().focusedOrMainFrame() : nullptr;
+    if (!focusedOrMainFrame)
+        return nullptr;
+    if (focusedOrMainFrame->document() != document.get())
+        return nullptr;
+#endif
 
     document->updateStyleIfNeeded();
     if (RefPtr focusedElement = document->focusedElement())
@@ -562,7 +609,7 @@ AccessibilityObject* AXObjectCache::focusedObjectForNode(Node* focusedNode)
 
     if (focus->isIgnored())
         return focus->parentObjectUnignored();
-    return focus.get();
+    return focus.unsafeGet();
 }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -570,7 +617,7 @@ void AXObjectCache::setIsolatedTreeFocusedObject(AccessibilityObject* focus)
 {
     ASSERT(isMainThread());
 
-    if (auto tree = AXIsolatedTree::treeForPageID(m_pageID))
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID))
         tree->setFocusedNodeID(focus ? std::optional { focus->objectID() } : std::nullopt);
 }
 #endif
@@ -674,7 +721,7 @@ AccessibilityObject* AXObjectCache::exportedGetOrCreate(Node& node)
 AccessibilityObject* AXObjectCache::getOrCreate(Widget& widget)
 {
     if (RefPtr object = get(widget))
-        return object.get();
+        return object.unsafeGet();
 
     RefPtr<AccessibilityObject> newObject;
     if (auto* scrollView = dynamicDowncast<ScrollView>(widget))
@@ -691,7 +738,7 @@ AccessibilityObject* AXObjectCache::getOrCreate(Widget& widget)
         return nullptr;
 
     cacheAndInitializeWrapper(*newObject, &widget);
-    return newObject.get();
+    return newObject.unsafeGet();
 }
 
 AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation isPartOfRelation)
@@ -699,10 +746,15 @@ AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation
     // `get` for this Node should've been attempted before calling this method.
     ASSERT(!get(node));
 
-    CheckedPtr renderer = node.renderer();
-    if (renderer) {
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    ASSERT(&node.document() == document());
+#endif
+
+    bool isYouTubeReplacement = false;
+    if (CheckedPtr renderer = nodeRendererIsValid(node) ? node.renderer() : nullptr) {
         if (!renderer->isYouTubeReplacement()) [[likely]]
             return getOrCreate(*renderer);
+        isYouTubeReplacement = true;
     }
 
     if (CheckedPtr document = dynamicDowncast<Document>(node)) [[unlikely]]
@@ -730,7 +782,7 @@ AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation
         } else
             object = AccessibilityListBoxOption::create(AXID::generate(), downcast<HTMLElement>(node), *this);
         cacheAndInitializeWrapper(*object, &node);
-        return object.get();
+        return object.unsafeGet();
     }
 
     bool inCanvasSubtree = lineageOfType<HTMLCanvasElement>(*composedParent).first();
@@ -752,14 +804,14 @@ AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation
         bool isAreaElement = is<HTMLAreaElement>(element);
         // YouTube embeds specifically create a render hierarchy with two elements that share a renderer.
         // In this instance, we want the <embed> element to associate its node with an AX element, so we need to create one here.
-        bool replacementWillCreateRenderer = renderer && renderer->isYouTubeReplacement();
+        bool replacementWillCreateRenderer = isYouTubeReplacement;
         if (!inCanvasSubtree && !insideMeterElement && !hasDisplayContents && !isPopover && !isNodeFocused(node) && !isAreaElement && !replacementWillCreateRenderer)
             return nullptr;
     }
 
     // The object may have already been created during relations update.
     if (RefPtr object = get(node))
-        return object.get();
+        return object.unsafeGet();
 
     // Fallback content is only focusable as long as the canvas is displayed and visible.
     // Update the style before Element::isFocusable() gets called.
@@ -777,7 +829,7 @@ AccessibilityObject* AXObjectCache::getOrCreateSlow(Node& node, IsPartOfRelation
     // it will disappear when this function is finished, leading to a use-after-free.
     if (newObject->isDetached())
         return nullptr;
-    return newObject.get();
+    return newObject.unsafeGet();
 }
 
 AccessibilityObject* AXObjectCache::getOrCreate(RenderObject& renderer)
@@ -786,11 +838,16 @@ AccessibilityObject* AXObjectCache::getOrCreate(RenderObject& renderer)
         return getOrCreate(renderer.node());
 
     if (RefPtr object = get(renderer))
-        return object.get();
+        return object.unsafeGet();
 
     // Don't create an object for this renderer if it's being destroyed.
     if (renderer.beingDestroyed())
         return nullptr;
+
+    // We should never create objects that have dirty layout. Doing so can cause
+    // incorrect accessibility tree updates and also for renderers to be deleted
+    // out from under us, causing memory safety issues (or CheckedPtr crashes if we're lucky).
+    AX_BROKEN_ASSERT(!renderer.needsLayout());
 
     Ref object = createObjectFromRenderer(renderer);
 
@@ -805,7 +862,7 @@ AccessibilityObject* AXObjectCache::getOrCreate(RenderObject& renderer)
     if (object->isDetached())
         return nullptr;
 
-    return object.ptr();
+    return object.unsafePtr();
 }
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -814,12 +871,18 @@ RefPtr<AXIsolatedTree> AXObjectCache::getOrCreateIsolatedTree()
     AXTRACE(makeString("AXObjectCache::getOrCreateIsolatedTree 0x"_s, hex(reinterpret_cast<uintptr_t>(this))));
     ASSERT(isMainThread());
 
-    if (!m_pageID)
+    if (!m_frameID)
         return nullptr;
 
-    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
-    if (tree)
-        return tree;
+    RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID);
+    if (tree) {
+        if (tree->treeID() == treeID())
+            return tree;
+
+        // The tree belongs to a different document (navigation occurred). Remove the old tree and create a new one.
+        AXIsolatedTree::removeTreeForFrameID(*m_frameID);
+        tree = nullptr;
+    }
 
     // A new isolated tree needs to be created. Initialize the GeometryManager primary screen rect to be ready when needed.
     m_geometryManager->initializePrimaryScreenRect();
@@ -846,7 +909,7 @@ void AXObjectCache::buildIsolatedTree()
 {
     m_buildIsolatedTreeTimer.stop();
 
-    if (!m_pageID)
+    if (!m_frameID)
         return;
 
     auto tree = AXIsolatedTree::create(*this);
@@ -906,6 +969,9 @@ AccessibilityObject* AXObjectCache::create(AccessibilityRole role)
     case AccessibilityRole::RemoteFrame:
         object = AXRemoteFrame::create(AXID::generate(), *this);
         break;
+    case AccessibilityRole::LocalFrame:
+        object = AXLocalFrame::create(AXID::generate(), *this);
+        break;
     case AccessibilityRole::SliderThumb:
         object = AccessibilitySliderThumb::create(AXID::generate(), *this);
         break;
@@ -926,7 +992,7 @@ AccessibilityObject* AXObjectCache::create(AccessibilityRole role)
         return nullptr;
 
     cacheAndInitializeWrapper(*object);
-    return object.get();
+    return object.unsafeGet();
 }
 
 void AXObjectCache::remove(AXID axID)
@@ -938,11 +1004,16 @@ void AXObjectCache::remove(AXID axID)
     if (!object)
         return;
 
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager)
+        m_liveRegionManager->unregisterLiveRegion(axID);
+#endif
+
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     unsigned liveRegionsRemoved = m_sortedLiveRegionIDs.removeAll(axID);
     unsigned webAreasRemoved = m_sortedNonRootWebAreaIDs.removeAll(axID);
 
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
         tree->queueNodeRemoval(*object);
 
         if (liveRegionsRemoved)
@@ -1136,7 +1207,7 @@ void AXObjectCache::onEventListenerAdded(Node& node, const AtomString& eventType
     if (!isClickEvent(eventType))
         return;
 
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
         if (RefPtr object = get(node))
             tree->queueNodeUpdate(object->objectID(), { AXProperty::HasClickHandler });
     }
@@ -1152,7 +1223,7 @@ void AXObjectCache::onEventListenerRemoved(Node& node, const AtomString& eventTy
     if (!isClickEvent(eventType))
         return;
 
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
         if (RefPtr object = get(node))
             tree->queueNodeUpdate(object->objectID(), { AXProperty::HasClickHandler });
     }
@@ -1166,11 +1237,11 @@ void AXObjectCache::updateLoadingProgress(double newProgressValue)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     ASSERT_WITH_MESSAGE(newProgressValue >= 0 && newProgressValue <= 1, "unexpected loading progress value: %f", newProgressValue);
-    if (m_pageID) {
+    if (m_frameID) {
         // Sometimes the isolated tree hasn't been created by the time we get loading progress updates,
         // so cache this value in the AXObjectCache too so we can give it to the tree upon creation.
         m_loadingProgress = newProgressValue;
-        if (auto tree = AXIsolatedTree::treeForPageID(*m_pageID))
+        if (auto tree = AXIsolatedTree::treeForFrameID(*m_frameID))
             tree->updateLoadingProgress(newProgressValue);
     }
 #else
@@ -1215,7 +1286,7 @@ void AXObjectCache::handleAllDeferredChildrenChanged()
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     RefPtr<AXIsolatedTree> tree;
     if (!m_deferredChildrenChangedList.isEmpty())
-        tree = AXIsolatedTree::treeForPageID(m_pageID);
+        tree = AXIsolatedTree::treeForFrameID(m_frameID);
 #endif
 
     // Because m_deferredChildrenChangedList can be appended to while we iterate, we have to process
@@ -1352,6 +1423,33 @@ void AXObjectCache::handleRowspanChanged(AccessibilityNodeObject& axCell)
 }
 #endif
 
+const Vector<AXStitchGroup>* AXObjectCache::stitchGroupsOwnedBy(AccessibilityObject& object)
+{
+    CheckedPtr renderBlockFlow = dynamicDowncast<RenderBlockFlow>(object.renderer());
+    if (!renderBlockFlow || renderBlockFlow->beingDestroyed())
+        return nullptr;
+
+    const auto& groups = m_stitchGroups.ensure(*renderBlockFlow, [&] {
+        return object.stitchGroups();
+    }).iterator->value;
+
+    return groups.isEmpty() ? nullptr : &groups;
+}
+
+void AXObjectCache::setDirtyStitchGroups(const RenderBlock& renderBlock)
+{
+    if (std::optional groups = m_stitchGroups.takeOptional(renderBlock)) {
+        UNUSED_PARAM(groups);
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+        if (std::optional axID = getAXID(const_cast<RenderBlock&>(renderBlock))) {
+            if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
+                tree->queueNodeUpdate(*axID, { AXProperty::StitchGroups });
+        }
+#endif
+    }
+}
+
 #if ENABLE(AX_THREAD_TEXT_APIS)
 void AXObjectCache::onTextRunsChanged(const RenderObject& renderer)
 {
@@ -1361,7 +1459,7 @@ void AXObjectCache::onTextRunsChanged(const RenderObject& renderer)
     }
 
     if (std::optional axID = getAXID(const_cast<RenderObject&>(renderer))) {
-        if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
+        if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
             tree->queueNodeUpdate(*axID, { AXProperty::TextRuns });
     }
 }
@@ -1393,14 +1491,42 @@ void AXObjectCache::handleLiveRegionCreated(Element& element)
 
     if (AXCoreObject::liveRegionStatusIsEnabled(liveRegionStatus)) {
         RefPtr axObject = getOrCreate(element);
+        if (!axObject)
+            return;
+
+#if PLATFORM(COCOA)
+        if (m_liveRegionManager) {
+            m_liveRegionManager->registerLiveRegion(*axObject, true);
+            return;
+        }
+#endif
+
 #if PLATFORM(MAC)
-        if (axObject)
-            deferSortForNewLiveRegion(*axObject);
+        deferSortForNewLiveRegion(*axObject);
 #endif // PLATFORM(MAC)
 
-        postNotification(axObject.get(), protectedDocument().get(), AXNotification::LiveRegionCreated);
+#if PLATFORM(COCOA)
+        if (!m_liveRegionManager)
+            postNotification(axObject.get(), protectedDocument().get(), AXNotification::LiveRegionCreated);
+#endif
     }
 }
+
+#if PLATFORM(COCOA)
+void AXObjectCache::initializeLiveRegionManager()
+{
+    if (!m_liveRegionManager || m_liveRegionManagerInitialized)
+        return;
+
+    m_liveRegionManagerInitialized = true;
+
+    RefPtr current = rootWebArea();
+    while ((current = current ? downcast<AccessibilityObject>(current->nextInPreOrder()) : nullptr)) {
+        if (current->supportsLiveRegion())
+            m_liveRegionManager->registerLiveRegion(*current);
+    }
+}
+#endif
 
 void AXObjectCache::deferElementAddedOrRemoved(Element* element)
 {
@@ -1429,7 +1555,7 @@ AccessibilityObject* AXObjectCache::getIncludingAncestors(RenderObject& renderer
 {
     for (CheckedPtr current = &renderer; current; current = current->parent()) {
         if (RefPtr object = get(*current))
-            return object.get();
+            return object.unsafeGet();
     }
     return nullptr;
 }
@@ -1544,6 +1670,13 @@ void AXObjectCache::notificationPostTimerFired()
         postPlatformNotification(note.first, note.second);
 }
 
+#if PLATFORM(COCOA)
+void AXObjectCache::setShouldRepostNotificationsForTests(bool value)
+{
+    gShouldRepostNotificationsForTests = value;
+}
+#endif
+
 void AXObjectCache::postNotification(RenderObject* renderer, AXNotification notification, PostTarget postTarget)
 {
     if (!renderer)
@@ -1635,6 +1768,47 @@ void AXObjectCache::postNotification(AccessibilityObject& object, AXNotification
         m_notificationPostTimer.startOneShot(0_s);
 }
 
+void AXObjectCache::postARIANotifyNotification(Node& node, const String& announcement, const AriaNotifyOptions& options)
+{
+    RefPtr object = getOrCreate(node);
+    if (!object)
+        return;
+
+    auto priority = NotifyPriority::Normal;
+    if (options.priority) {
+        switch (*options.priority) {
+        case AriaNotifyOptions::NotificationPriority::Normal:
+            priority = NotifyPriority::Normal;
+            break;
+        case AriaNotifyOptions::NotificationPriority::High:
+            priority = NotifyPriority::High;
+            break;
+        }
+    }
+
+    auto interruptBehavior = InterruptBehavior::None;
+    if (options.interrupt) {
+        switch (*options.interrupt) {
+        case AriaNotifyOptions::NotificationInterrupt::None:
+            interruptBehavior = InterruptBehavior::None;
+            break;
+        case AriaNotifyOptions::NotificationInterrupt::All:
+            interruptBehavior = InterruptBehavior::All;
+            break;
+        case AriaNotifyOptions::NotificationInterrupt::Pending:
+            interruptBehavior = InterruptBehavior::Pending;
+            break;
+        }
+    }
+
+    postPlatformARIANotifyNotification(announcement, priority, interruptBehavior, object->languageIncludingAncestors());
+}
+
+void AXObjectCache::postLiveRegionNotification(AccessibilityObject& object, LiveRegionStatus status, const AttributedString& announcement)
+{
+    postPlatformLiveRegionNotification(object, status, announcement);
+}
+
 void AXObjectCache::checkedStateChanged(Element& element)
 {
     postNotification(&element, AXNotification::CheckedStateChanged);
@@ -1704,11 +1878,11 @@ void AXObjectCache::handleRowCountChanged(AccessibilityObject* axObject, Documen
 
 void AXObjectCache::onPageActivityStateChange(OptionSet<ActivityState> newState)
 {
-    ASSERT(m_pageID);
+    ASSERT(m_frameID);
 
     m_pageActivityState = newState;
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (auto tree = AXIsolatedTree::treeForPageID(m_pageID))
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID))
         tree->setPageActivityState(newState);
 #endif
 }
@@ -1721,6 +1895,16 @@ static bool shouldDeferFocusChange(Element* element)
     auto* renderer = element->renderer();
     if (renderer && rendererNeedsDeferredUpdate(*renderer))
         return true;
+
+#if PLATFORM(IOS_FAMILY)
+    // Date/DateTimeLocal input fields present popovers in the UI process synchronously.
+    // The web process can infer that this will happen via a DOMActivateEvent, but this may be dispatched after the focused change event.
+    // Defer the focus until after BaseDateAndTimeInputType::showPicker is called and has set the appropriate state (willPresentDatePopover) on AXObjectCache.
+    if (RefPtr input = dynamicDowncast<HTMLInputElement>(element)) {
+        if (input->isDateField() || input->isDateTimeLocalField())
+            return true;
+    }
+#endif // PLATFORM(IOS_FAMILY)
 
     // We also want to defer handling focus changes for nodes that haven't yet attached their renderer.
     if (const auto* style = element->existingComputedStyle())
@@ -1808,6 +1992,16 @@ void AXObjectCache::deferModalChange(Element& element)
 
 void AXObjectCache::handleFocusedUIElementChanged(Element* oldElement, Element* newElement, UpdateModal updateModal)
 {
+#if PLATFORM(IOS_FAMILY)
+    if (willPresentDatePopover()) {
+        setWillPresentDatePopover(false);
+        if (RefPtr inputElement = dynamicDowncast<HTMLInputElement>(newElement)) {
+            if (inputElement->isDateField() || inputElement->isDateTimeLocalField())
+                return;
+        }
+    }
+#endif
+
     if (updateModal == UpdateModal::Yes)
         updateCurrentModalNode();
     handleMenuItemSelected(newElement);
@@ -1834,7 +2028,7 @@ void AXObjectCache::selectedChildrenChanged(RenderObject* renderer)
 void AXObjectCache::onScrollbarFrameRectChange(const Scrollbar& scrollbar)
 {
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (!m_pageID || !isIsolatedTreeEnabled())
+    if (!m_frameID || !isIsolatedTreeEnabled())
         return;
 
     if (RefPtr axScrollbar = get(const_cast<Scrollbar*>(&scrollbar)))
@@ -1929,6 +2123,13 @@ void AXObjectCache::onStyleChange(Element& element, OptionSet<Style::Change> cha
 
     if (oldStyle->cursorType() != newStyle->cursorType())
         postNotification(*object, AXNotification::CursorTypeChanged);
+
+    if (oldStyle->pointerEvents() != newStyle->pointerEvents())
+        postNotification(*object, AXNotification::PointerEventsChanged);
+
+    // Certain properties (e.g. AXProperty::ShowsCursorOnHover) cannot easily
+    // be diffed here so post this general notification for those.
+    updateIsolatedTree(*object, AXNotification::StyleChanged);
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 }
 
@@ -1950,7 +2151,7 @@ void AXObjectCache::onAccessibilityPaintStarted()
 
 void AXObjectCache::onAccessibilityPaintFinished()
 {
-    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
+    RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID);
     if (!tree)
         return;
 
@@ -1981,7 +2182,7 @@ bool AXObjectCache::onFontChange(Element& element, const RenderStyle* oldStyle, 
     if (!object)
         return false;
 
-    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
+    RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID);
     if (!tree)
         return false;
 
@@ -2002,7 +2203,7 @@ bool AXObjectCache::onTextColorChange(Element& element, const RenderStyle* oldSt
     if (!object)
         return false;
 
-    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
+    RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID);
     if (!tree)
         return false;
 
@@ -2037,7 +2238,7 @@ void AXObjectCache::onStyleChange(RenderText& renderText, StyleDifference differ
             return;
     }
 
-    RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID);
+    RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID);
     if (!tree)
         return;
 
@@ -2073,6 +2274,9 @@ void AXObjectCache::onStyleChange(RenderText& renderText, StyleDifference differ
 
     if (oldStyle->textDecorationColor() != newStyle.textDecorationColor())
         tree->queueNodeUpdate(object->objectID(), { { AXProperty::LinethroughColor, AXProperty::UnderlineColor } });
+
+    if (oldStyle->pointerEvents() != newStyle.pointerEvents())
+        postNotification(*object, AXNotification::PointerEventsChanged);
 #endif // ENABLE(AX_THREAD_TEXT_APIS)
 
 #else
@@ -2544,7 +2748,7 @@ void AXObjectCache::onSelectedTextChanged(const VisiblePositionRange& selection,
             m_selectedTextRangeTimer.restart();
     }
 
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
         if (selection.isNull())
             tree->setSelectedTextMarkerRange({ });
         else {
@@ -2568,15 +2772,23 @@ void AXObjectCache::onSelectedTextChanged(const VisiblePositionRange& selection,
 
 void AXObjectCache::frameLoadingEventNotification(LocalFrame* frame, AXLoadingEvent loadingEvent)
 {
-    if (!frame)
-        return;
-
-    // Delegate on the right platform
-    frameLoadingEventPlatformNotification(getOrCreate(frame->contentRenderer()), loadingEvent);
+    if (frame) {
+        // We pass the RenderView* (via contentRenderer()) rather than calling getOrCreate and passing
+        // that because some platforms don't handle all loading event types, and we don't want to call
+        // getOrCreate unnecessarily (because doing so is not always safe, and can do a fair amount of work).
+        frameLoadingEventPlatformNotification(frame->contentRenderer(), loadingEvent);
+    }
 }
 
 void AXObjectCache::postLiveRegionChangeNotification(AccessibilityObject& object)
 {
+#if PLATFORM(COCOA)
+    if (m_liveRegionManager) {
+        m_liveRegionManager->handleLiveRegionChange(object);
+        return;
+    }
+#endif
+
     if (m_liveRegionChangedPostTimer.isActive())
         m_liveRegionChangedPostTimer.stop();
 
@@ -2644,7 +2856,8 @@ void AXObjectCache::handleActiveDescendantChange(Element& element, const AtomStr
     AXTRACE("AXObjectCache::handleActiveDescendantChange"_s);
 
     // Use the element's document instead of the cache's document in case we're inside a frame that's managing focus.
-    if (!element.document().frame()->selection().isFocusedAndActive())
+    RefPtr frame = element.document().frame();
+    if (!frame || !frame->selection().isFocusedAndActive())
         return;
 
     RefPtr object = getOrCreate(element);
@@ -3095,11 +3308,31 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
         recomputeParentTableProperties(element, { TableProperty::CellSlots, TableProperty::Exposed });
     } else if (attrName == aria_sortAttr)
         postNotification(element, AXNotification::SortDirectionChanged);
-#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     else if (attrName == aria_ownsAttr) {
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
         if (oldValue.isEmpty() || newValue.isEmpty())
             updateIsolatedTree(get(*element), AXProperty::SupportsARIAOwns);
-    } else if (attrName == aria_braillelabelAttr)
+#endif
+        auto updateStitchGroups = [&] (const AtomString& ariaOwnsValue) {
+            // Stitch groups are computed by the containing block-flow, so loop over the owned DOM id's
+            // to find the associated element's containing-block flow and mark it dirty.
+            SpaceSplitString ids(ariaOwnsValue, SpaceSplitString::ShouldFoldCase::No);
+            for (auto& id : ids) {
+                if (RefPtr ownsTarget = element->treeScope().elementByIdResolvingReferenceTarget(id)) {
+                    CheckedPtr renderer = ownsTarget->renderer();
+                    if (auto* containingBlock = renderer ? renderer->containingBlock() : nullptr)
+                        setDirtyStitchGroups(*containingBlock);
+                }
+            }
+        };
+
+        // FIXME: aria-owns relationships can also change when an object's ID changes. We should update
+        // stitch groups in that case too.
+        updateStitchGroups(oldValue);
+        updateStitchGroups(newValue);
+    }
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    else if (attrName == aria_braillelabelAttr)
         postNotification(element, AXNotification::BrailleLabelChanged);
     else if (attrName == aria_brailleroledescriptionAttr)
         postNotification(element, AXNotification::BrailleRoleDescriptionChanged);
@@ -3165,7 +3398,7 @@ void AXObjectCache::dirtyIsolatedTreeRelations()
     AXTRACE("AXObjectCache::dirtyIsolatedTreeRelations"_s);
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
         tree->markRelationsDirty();
     startUpdateTreeSnapshotTimer();
 #endif
@@ -4036,7 +4269,7 @@ static Node* parentEditingBoundary(Node* node)
     while (boundary != documentElement && boundary->nonShadowBoundaryParentNode() && node->hasEditableStyle() == boundary->parentNode()->hasEditableStyle())
         boundary = boundary->nonShadowBoundaryParentNode();
 
-    return boundary.get();
+    return boundary.unsafeGet();
 }
 
 CharacterOffset AXObjectCache::nextBoundary(const CharacterOffset& characterOffset, BoundarySearchFunction searchFunction)
@@ -4609,7 +4842,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     AXLOGDeferredCollection("UnconnectedObjects"_s, m_deferredUnconnectedObjects);
-    if (auto tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
         m_deferredUnconnectedObjects.forEach([&tree] (auto& object) {
             tree->addUnconnectedNode(object);
         });
@@ -4722,7 +4955,7 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     if (m_deferredRegenerateIsolatedTree) {
-        if (auto tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+        if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
             // Re-generate the subtree rooted at the webarea.
             if (RefPtr webArea = rootWebArea()) {
                 AXLOG("Regenerating isolated tree from AXObjectCache::performDeferredCacheUpdate().");
@@ -4737,13 +4970,20 @@ void AXObjectCache::performDeferredCacheUpdate(ForceLayout forceLayout)
 
                 // In some cases, the ID of the focus after a dialog pops up doesn't match the ID in the last focus change notification, creating a mismatch between the isolated tree cached focused object ID and the actual focused object ID.
                 // For this reason, reset the focused object ID.
-                if (RefPtr focus = focusedObjectForPage(document->protectedPage().get()))
+                if (RefPtr focus = focusedObjectForLocalFrame())
                     tree->setFocusedNodeID(focus->objectID());
             }
         }
     }
     m_deferredRegenerateIsolatedTree = false;
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+
+#if PLATFORM(COCOA)
+    // Initialize the live region manager after the first cache update, so all existing
+    // live regions are registered with their initial state before any changes occur.
+    if (!m_liveRegionManagerInitialized)
+        initializeLiveRegionManager();
+#endif
 
     platformPerformDeferredCacheUpdate();
 }
@@ -4777,14 +5017,14 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
 {
     AXTRACE(makeString("AXObjectCache::updateIsolatedTree 0x"_s, hex(reinterpret_cast<uintptr_t>(this))));
 
-    if (!m_pageID) {
-        AXLOG("No pageID.");
+    if (!m_frameID) {
+        AXLOG("No frameID.");
         return;
     }
 
-    auto tree = AXIsolatedTree::treeForPageID(*m_pageID);
+    auto tree = AXIsolatedTree::treeForFrameID(*m_frameID);
     if (!tree) {
-        AXLOG("No isolated tree for m_pageID");
+        AXLOG("No isolated tree for m_frameID");
         return;
     }
 
@@ -4911,6 +5151,9 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
         case AXNotification::PositionInSetChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { { AXProperty::PosInSet, AXProperty::SupportsPosInSet } });
             break;
+        case AXNotification::PointerEventsChanged:
+            tree->updatePropertiesForSelfAndDescendants(notification.first.get(), { { AXProperty::HasCursorPointer, AXProperty::HasPointerEventsNone } });
+            break;
         case AXNotification::PopoverTargetChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { { AXProperty::SupportsExpanded, AXProperty::IsExpanded } });
             break;
@@ -4952,6 +5195,9 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<Ref<AccessibilityO
             break;
         case AXNotification::SpeakAsChanged:
             tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::SpeakAs });
+            break;
+        case AXNotification::StyleChanged:
+            tree->queueNodeUpdate(notification.first->objectID(), { AXProperty::ShowsCursorOnHover });
             break;
         case AXNotification::TextColorChanged:
             tree->updatePropertiesForSelfAndDescendants(notification.first.get(), { AXProperty::TextColor });
@@ -5025,7 +5271,7 @@ void AXObjectCache::updateIsolatedTree(AccessibilityObject* axObject, AXProperty
 
 void AXObjectCache::updateIsolatedTree(AccessibilityObject& axObject, AXProperty property) const
 {
-    if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
+    if (RefPtr tree = AXIsolatedTree::treeForFrameID(m_frameID))
         tree->queueNodeUpdate(axObject.objectID(), { property });
 }
 
@@ -5037,7 +5283,7 @@ void AXObjectCache::startUpdateTreeSnapshotTimer()
 
 void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) const
 {
-    if (!m_pageID)
+    if (!m_frameID)
         return;
 
     if (std::optional axID = getAXID(const_cast<RenderObject&>(renderer))) {
@@ -5060,7 +5306,7 @@ void AXObjectCache::onPaint(const RenderObject& renderer, IntRect&& paintRect) c
 
 void AXObjectCache::onPaint(const Widget& widget, IntRect&& paintRect) const
 {
-    if (!m_pageID)
+    if (!m_frameID)
         return;
     if (std::optional axID = m_widgetIdMapping.getOptional(const_cast<Widget&>(widget)))
         std::ignore = m_geometryManager->cacheRectIfNeeded(*axID, WTFMove(paintRect));
@@ -5070,7 +5316,7 @@ void AXObjectCache::onPaint(const RenderText& renderText, size_t lineIndex)
 {
     ASSERT(isMainThread());
 
-    if (!m_pageID)
+    if (!m_frameID)
         return;
 
     auto ensureResult = m_mostRecentlyPaintedText.ensure(renderText, [&] {
@@ -5453,7 +5699,7 @@ bool AXObjectCache::addRelation(AccessibilityObject* origin, AccessibilityObject
             addRelation(target, origin, symmetric, AddSymmetricRelation::No);
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-        if (auto tree = AXIsolatedTree::treeForPageID(m_pageID)) {
+        if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID)) {
             if (origin && origin->isIgnored())
                 deferAddUnconnectedNode(*origin);
             if (target && target->isIgnored())
@@ -5511,8 +5757,15 @@ bool AXObjectCache::removeRelation(Element& origin, AXRelation relation)
             removeRelationByID(targetID, object->objectID(), symmetric);
     }
 
-    if (removedRelation && relation == AXRelation::OwnerFor)
+    if (removedRelation && relation == AXRelation::OwnerFor) {
         childrenChanged(object.get());
+        // We also need to notify the object's natural parent it has changed children.
+        RefPtr node = object->node();
+        if (RefPtr parentNode = node ? composedParentIgnoringDocumentFragments(*node) : nullptr)
+            childrenChanged(get(*parentNode));
+        else if (CheckedPtr renderer = object->renderer())
+            childrenChanged(get(renderer->parent()));
+    }
 
     return removedRelation;
 }
@@ -5765,7 +6018,7 @@ void AXObjectCache::updateTreeSnapshotTimerFired()
 
 void AXObjectCache::processQueuedIsolatedNodeUpdates()
 {
-    if (auto tree = AXIsolatedTree::treeForPageID(m_pageID))
+    if (auto tree = AXIsolatedTree::treeForFrameID(m_frameID))
         tree->processQueuedNodeUpdates();
 }
 #endif
@@ -5782,12 +6035,7 @@ void AXObjectCache::onWidgetVisibilityChanged(RenderWidget& widget)
 #if PLATFORM(MAC)
 bool AXObjectCache::isAppleInternalInstall()
 {
-    static bool isInternal = false;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        isInternal = os_variant_allows_internal_security_policies("com.apple.Accessibility");
-    });
-
+    static bool isInternal = os_variant_allows_internal_security_policies("com.apple.Accessibility");
     return isInternal;
 }
 #endif // PLATFORM(COCOA)

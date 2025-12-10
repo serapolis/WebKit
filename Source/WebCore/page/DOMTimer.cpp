@@ -28,7 +28,7 @@
 #include "DOMTimer.h"
 
 #include "ContextDestructionObserverInlines.h"
-#include "DocumentInlines.h"
+#include "DocumentEventLoop.h"
 #include "HTMLPlugInElement.h"
 #include "InspectorInstrumentation.h"
 #include "Logging.h"
@@ -148,8 +148,8 @@ struct NestedTimersMap {
             nestedTimers.remove(timeoutId);
     }
 
-    const_iterator begin() const { return nestedTimers.begin(); }
-    const_iterator end() const { return nestedTimers.end(); }
+    const_iterator begin() const LIFETIME_BOUND { return nestedTimers.begin(); }
+    const_iterator end() const LIFETIME_BOUND { return nestedTimers.end(); }
 
 private:
     static NestedTimersMap& instance()
@@ -431,11 +431,11 @@ Seconds DOMTimer::intervalClampedToMinimum() const
     return interval;
 }
 
-std::optional<MonotonicTime> ScriptExecutionContext::alignedFireTime(bool hasReachedMaxNestingLevel, MonotonicTime fireTime) const
+MonotonicTime ScriptExecutionContext::alignedFireTime(bool hasReachedMaxNestingLevel, MonotonicTime fireTime) const
 {
     Seconds alignmentInterval = domTimerAlignmentInterval(hasReachedMaxNestingLevel);
     if (!alignmentInterval)
-        return std::nullopt;
+        return fireTime;
     
     static const double randomizedProportion = cryptographicallyRandomUnitInterval();
 

@@ -34,6 +34,7 @@
 #import "WKVideoView.h"
 #import <QuartzCore/QuartzCore.h>
 #import <WebCore/ContentsFormatCocoa.h>
+#import <WebCore/GraphicsLayerEnums.h>
 #import <WebCore/MediaPlayerEnumsCocoa.h>
 #import <WebCore/PlatformCAFilters.h>
 #import <WebCore/ScrollbarThemeMac.h>
@@ -133,7 +134,7 @@ static RetainPtr<CGColorRef> cgColorFromColor(const Color& color)
     return cachedCGColor(color);
 }
 
-static NSString *toCAFilterType(PlatformCALayer::FilterType type)
+static RetainPtr<NSString> toCAFilterType(PlatformCALayer::FilterType type)
 {
     switch (type) {
     case PlatformCALayer::FilterType::Linear:
@@ -311,7 +312,7 @@ static void applyVisualStylingToLayer(CALayer *layer, const AppleVisualEffectDat
     }
 
     // Despite the name, MTVisualStylingCreateDictionaryRepresentation returns an autoreleased object.
-    RetainPtr visualStylingDescription = PAL::softLink_CoreMaterial_MTVisualStylingCreateDictionaryRepresentation(recipe.get(), materialVisualStyleCategoryForAppleVisualEffect(effectData.effect), materialVisualStyleForAppleVisualEffect(effectData.effect), nil);
+    SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr visualStylingDescription = PAL::softLink_CoreMaterial_MTVisualStylingCreateDictionaryRepresentation(recipe.get(), materialVisualStyleCategoryForAppleVisualEffect(effectData.effect), materialVisualStyleForAppleVisualEffect(effectData.effect), nil);
 
     RetainPtr<NSArray<NSDictionary<NSString *, id> *>> filterDescriptionsArray = [visualStylingDescription objectForKey:@"filters"];
     RetainPtr filterDescription = [filterDescriptionsArray firstObject];
@@ -367,14 +368,14 @@ static void updateAppleVisualEffect(CALayer *layer, RemoteLayerTreeNode* layerTr
 
 #endif
 
-static void updateCustomAppearance(CALayer *layer, GraphicsLayer::CustomAppearance customAppearance)
+static void updateCustomAppearance(CALayer *layer, GraphicsLayerCustomAppearance customAppearance)
 {
 #if HAVE(RUBBER_BANDING)
     switch (customAppearance) {
-    case GraphicsLayer::CustomAppearance::None:
+    case GraphicsLayerCustomAppearance::None:
         ScrollbarThemeMac::removeOverhangAreaShadow(layer);
         break;
-    case GraphicsLayer::CustomAppearance::ScrollingShadow:
+    case GraphicsLayerCustomAppearance::ScrollingShadow:
         ScrollbarThemeMac::setUpOverhangAreaShadow(layer);
         break;
     }
@@ -449,17 +450,17 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
         Path path;
         if (properties.shapeRoundedRect)
             path.addRoundedRect(*properties.shapeRoundedRect);
-        dynamic_objc_cast<CAShapeLayer>(layer).path = path.platformPath();
+        dynamic_objc_cast<CAShapeLayer>(layer).path = path.protectedPlatformPath().get();
     }
 
     if (properties.changedProperties & LayerChange::ShapePathChanged)
-        dynamic_objc_cast<CAShapeLayer>(layer).path = properties.shapePath.platformPath();
+        dynamic_objc_cast<CAShapeLayer>(layer).path = properties.shapePath.protectedPlatformPath().get();
 
     if (properties.changedProperties & LayerChange::MinificationFilterChanged)
-        layer.minificationFilter = toCAFilterType(properties.minificationFilter);
+        layer.minificationFilter = toCAFilterType(properties.minificationFilter).get();
 
     if (properties.changedProperties & LayerChange::MagnificationFilterChanged)
-        layer.magnificationFilter = toCAFilterType(properties.magnificationFilter);
+        layer.magnificationFilter = toCAFilterType(properties.magnificationFilter).get();
 
     if (properties.changedProperties & LayerChange::BlendModeChanged)
         PlatformCAFilters::setBlendingFiltersOnLayer(layer, properties.blendMode);
@@ -501,11 +502,11 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
         PlatformCAFilters::setFiltersOnLayer(layer, properties.filters ? *properties.filters : FilterOperations(), layerTreeNode && layerTreeNode->backdropRootIsOpaque());
 
     if (properties.changedProperties & LayerChange::AnimationsChanged) {
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
-        if (layerTreeHost->threadedAnimationResolutionEnabled()) {
+#if ENABLE(THREADED_ANIMATIONS)
+        if (layerTreeHost->threadedAnimationsEnabled()) {
             LOG_WITH_STREAM(Animations, stream << "RemoteLayerTreePropertyApplier::applyProperties() for layer " << layerTreeNode->layerID() << " found " << properties.animationChanges.effects.size() << " effects.");
             layerTreeNode->setAcceleratedEffectsAndBaseValues(properties.animationChanges.effects, properties.animationChanges.baseValues, *layerTreeHost);
-        } else
+        }
 #endif
         PlatformCAAnimationRemote::updateLayerAnimations(layer, layerTreeHost, properties.animationChanges.addedAnimations, properties.animationChanges.keysOfAnimationsToRemove);
     }
@@ -544,7 +545,7 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 #endif
         ASSERT([playerLayer respondsToSelector:@selector(setVideoGravity:)]);
         if (RetainPtr webAVPlayerLayer = dynamic_objc_cast<WebAVPlayerLayer>(playerLayer))
-            [webAVPlayerLayer setVideoGravity:convertMediaPlayerToAVLayerVideoGravity(properties.videoGravity)];
+            [webAVPlayerLayer setVideoGravity:convertMediaPlayerToAVLayerVideoGravity(properties.videoGravity).get()];
     }
 #endif
 
@@ -558,7 +559,7 @@ void RemoteLayerTreePropertyApplier::applyProperties(RemoteLayerTreeNode& node, 
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
 
-    applyPropertiesToLayer(node.layer(), &node, layerTreeHost, properties);
+    applyPropertiesToLayer(node.protectedLayer().get(), &node, layerTreeHost, properties);
     if (properties.changedProperties & LayerChange::EventRegionChanged)
         node.setEventRegion(properties.eventRegion);
     updateMask(node, properties, relatedLayers);

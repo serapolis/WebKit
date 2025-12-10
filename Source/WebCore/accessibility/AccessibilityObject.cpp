@@ -50,7 +50,7 @@
 #include "ContainerNodeInlines.h"
 #include "CustomElementDefaultARIA.h"
 #include "DOMTokenList.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EditingInlines.h"
 #include "Editor.h"
 #include "ElementInlines.h"
@@ -70,7 +70,6 @@
 #include "HTMLDetailsElement.h"
 #include "HTMLFormControlElement.h"
 #include "HTMLInputElement.h"
-#include "HTMLMediaElement.h"
 #include "HTMLModelElement.h"
 #include "HTMLNames.h"
 #include "HTMLParserIdioms.h"
@@ -112,6 +111,7 @@
 #include "UserGestureIndicator.h"
 #include "VisibleUnits.h"
 #include <numeric>
+#include <ranges>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
@@ -119,6 +119,10 @@
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/unicode/CharacterNames.h>
+
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+#include "ModelPlayerAccessibilityChildren.h"
+#endif
 
 namespace WebCore {
 
@@ -456,7 +460,7 @@ std::optional<SimpleRange> AccessibilityObject::misspellingRange(const SimpleRan
                 return *misspellingRange;
         }
     } else {
-        for (auto& misspelling : makeReversedRange(misspellings)) {
+        for (auto& misspelling : misspellings | std::views::reverse) {
             auto misspellingRange = editor->rangeForTextCheckingResult(misspelling);
             if (misspellingRange && is_lt(treeOrder<ComposedTree>(misspellingRange->start, start.start)))
                 return *misspellingRange;
@@ -591,7 +595,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
         accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     }
 
-    return accessibleObject.get();
+    return accessibleObject.unsafeGet();
 }
 
 // FIXME: Usages of this function should be replaced by a new flag in AccessibilityObject::m_ancestorFlags.
@@ -1362,7 +1366,7 @@ IntRect AccessibilityObject::boundingBoxForQuads(RenderObject* obj, const Vector
         FloatRect r = quad.enclosingBoundingBox();
         if (!r.isEmpty()) {
             if (obj->style().hasUsedAppearance())
-                obj->theme().inflateRectForControlRenderer(*obj, r);
+                obj->theme().inflateRectForControlRenderer(downcast<RenderElement>(*obj), r);
             result.unite(r);
         }
     }
@@ -1372,10 +1376,10 @@ IntRect AccessibilityObject::boundingBoxForQuads(RenderObject* obj, const Vector
 bool AccessibilityObject::press()
 {
     // The presence of the actionElement will confirm whether we should even attempt a press.
-    RefPtr actionElem = actionElement();
-    if (!actionElem)
+    RefPtr actionElement = this->actionElement();
+    if (!actionElement)
         return false;
-    if (RefPtr frame = actionElem->document().frame())
+    if (RefPtr frame = actionElement->document().frame())
         frame->loader().resetMultipleFormSubmissionProtection();
 
     // Hit test at this location to determine if there is a sub-node element that should act
@@ -1398,8 +1402,8 @@ bool AccessibilityObject::press()
 
     // Prefer the actionElement instead of this node, if the actionElement is inside this node.
     RefPtr pressElement = this->element();
-    if (!pressElement || actionElem->isDescendantOf(*pressElement))
-        pressElement = WTFMove(actionElem);
+    if (!pressElement || actionElement->isDescendantOf(*pressElement))
+        pressElement = actionElement;
 
     ASSERT(pressElement);
     // Prefer the hit test element, if it is inside the target element.
@@ -1414,7 +1418,17 @@ bool AccessibilityObject::press()
         dispatchedEvent = dispatchTouchEvent();
 #endif
 
-    return dispatchedEvent || pressElement->accessKeyAction(true) || pressElement->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents);
+    if (dispatchedEvent)
+        return true;
+
+    if (RefPtr input = dynamicDowncast<HTMLInputElement>(*actionElement)) {
+        if (RefPtr inputType = input->isDateField() || input->isDateTimeLocalField() ? input->inputType() : nullptr) {
+            inputType->handleAccessibilityActivation();
+            return true;
+        }
+    }
+
+    return pressElement->accessKeyAction(true) || pressElement->dispatchSimulatedClick(nullptr, SendMouseUpDownEvents);
 }
 
 bool AccessibilityObject::dispatchTouchEvent()
@@ -1770,8 +1784,9 @@ bool AccessibilityObject::replacedNodeNeedsCharacter(Node& replacedNode)
     return true;
 }
 
-#if PLATFORM(COCOA) && ENABLE(MODEL_ELEMENT)
-Vector<RetainPtr<id>> AccessibilityObject::modelElementChildren()
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+
+ModelPlayerAccessibilityChildren AccessibilityObject::modelElementChildren()
 {
     RefPtr model = dynamicDowncast<HTMLModelElement>(node());
     if (!model)
@@ -1779,6 +1794,7 @@ Vector<RetainPtr<id>> AccessibilityObject::modelElementChildren()
 
     return model->accessibilityChildren();
 }
+
 #endif
 
 // Finds a RenderListItem parent given a node.
@@ -1863,11 +1879,11 @@ bool AccessibilityObject::shouldCacheStringValue() const
     if (CheckedPtr containingBlock = renderer->containingBlock()) {
         // Check for ::first-letter, which would require some special handling to serve off the main-thread
         // that we don't have right now.
-        if (containingBlock->style().hasPseudoStyle(PseudoId::FirstLetter))
+        if (containingBlock->style().hasPseudoStyle(PseudoElementType::FirstLetter))
             return true;
         if (containingBlock->isAnonymous()) {
             containingBlock = containingBlock->containingBlock();
-            return containingBlock && containingBlock->style().hasPseudoStyle(PseudoId::FirstLetter);
+            return containingBlock && containingBlock->style().hasPseudoStyle(PseudoElementType::FirstLetter);
         }
     }
     // Getting to the end means we can avoid caching string value.
@@ -2430,13 +2446,13 @@ bool AccessibilityObject::isModalNode() const
 }
 
 
-static RenderObject* nearestRendererFromNode(Node& node)
+static CheckedPtr<RenderObject> nearestRendererFromNode(Node& node)
 {
     CheckedPtr renderer = node.renderer();
     for (RefPtr ancestor = &node; ancestor && !renderer; ancestor = composedParentIgnoringDocumentFragments(*ancestor))
         renderer = ancestor->renderer();
 
-    return renderer.get();
+    return renderer;
 }
 
 static int zIndexFromRenderer(RenderObject* renderer)
@@ -2869,7 +2885,7 @@ bool AccessibilityObject::isLoaded() const
     return document && !document->parser();
 }
 
-RenderObject* AccessibilityObject::rendererOrNearestAncestor() const
+CheckedPtr<RenderObject> AccessibilityObject::rendererOrNearestAncestor() const
 {
     RefPtr node = this->node();
     return node ? nearestRendererFromNode(*node) : nullptr;
@@ -3045,7 +3061,7 @@ AccessibilityObject* AccessibilityObject::elementAccessibilityHitTest(const IntP
                 if (RefPtr remoteHostWidget = cache->getOrCreate(*widget)) {
                     remoteHostWidget->updateChildrenIfNecessary();
                     RefPtr scrollView = dynamicDowncast<AccessibilityScrollView>(*remoteHostWidget);
-                    return scrollView ? scrollView->remoteFrame().get() : nullptr;
+                    return scrollView ? scrollView->remoteFrame().unsafeGet() : nullptr;
                 }
             }
         }
@@ -3062,9 +3078,33 @@ AccessibilityObject* AccessibilityObject::elementAccessibilityHitTest(const IntP
 
 AccessibilityObject* AccessibilityObject::focusedUIElement() const
 {
+    CheckedPtr axObjectCache = this->axObjectCache();
+    return axObjectCache ? axObjectCache->focusedObjectForLocalFrame() : nullptr;
+}
+
+AccessibilityObject* AccessibilityObject::focusedUIElementInAnyLocalFrame() const
+{
     RefPtr page = this->page();
-    auto* axObjectCache = this->axObjectCache();
-    return page && axObjectCache ? axObjectCache->focusedObjectForPage(page.get()) : nullptr;
+    if (!page)
+        return nullptr;
+
+    RefPtr focusedOrMainFrame = page->focusController().focusedOrMainFrame();
+    if (!focusedOrMainFrame)
+        return nullptr;
+
+    RefPtr focusedDocument = focusedOrMainFrame->document();
+    if (!focusedDocument)
+        return nullptr;
+
+    auto* axObjectCache = focusedDocument->axObjectCache();
+    if (!axObjectCache)
+        return nullptr;
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    return axObjectCache->focusedObjectForLocalFrame();
+#else
+    return axObjectCache->focusedObjectForPage(page.get());
+#endif
 }
 
 void AccessibilityObject::setSelectedRows(AccessibilityChildrenVector&& selectedRows)
@@ -4151,11 +4191,6 @@ AccessibilityObject* AccessibilityObject::containingWebArea() const
     CheckedPtr cache = axObjectCache();
     RefPtr root = cache ? dynamicDowncast<AccessibilityScrollView>(cache->getOrCreate(frameView.get())) : nullptr;
     return root ? root->webAreaObject() : nullptr;
-}
-
-bool AccessibilityObject::isVisible() const
-{
-    return !isHidden();
 }
 
 } // namespace WebCore

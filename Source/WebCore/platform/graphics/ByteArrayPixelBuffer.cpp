@@ -113,11 +113,4 @@ RefPtr<PixelBuffer> ByteArrayPixelBuffer::createScratchPixelBuffer(const IntSize
     return ByteArrayPixelBuffer::tryCreate(m_format, size);
 }
 
-std::span<const uint8_t> ByteArrayPixelBuffer::span() const
-{
-    Ref data = m_data;
-    ASSERT(data->byteLength() == (m_size.area() * 4));
-    return data->span();
-}
-
 } // namespace WebCore

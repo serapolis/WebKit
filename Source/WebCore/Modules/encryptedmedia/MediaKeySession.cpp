@@ -36,10 +36,9 @@
 #include "CDMKeyGroupingStrategy.h"
 #include "ContextDestructionObserverInlines.h"
 #include "DOMPromiseProxy.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EventLoop.h"
 #include "EventNames.h"
-#include "FrameInlines.h"
 #include "JSMediaKeyStatusMap.h"
 #include "Logging.h"
 #include "MediaKeyMessageEvent.h"
@@ -82,7 +81,10 @@ MediaKeySession::MediaKeySession(Document& document, WeakPtr<MediaKeys>&& keys, 
     , m_sessionType(sessionType)
     , m_implementation(WTFMove(implementation))
     , m_instanceSession(WTFMove(instanceSession))
-    , m_displayChangedObserver([this] (auto displayID) { displayChanged(displayID); })
+    , m_displayChangedObserver(DisplayChangedObserver::create([weakThis = WeakPtr { *this }] (auto displayID) {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->displayChanged(displayID);
+    }))
 {
     // https://w3c.github.io/encrypted-media/#dom-mediakeys-createsession
     // W3C Editor's Draft 09 November 2016

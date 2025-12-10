@@ -34,7 +34,6 @@
 #include "CSSSelector.h"
 #include "CSSSelectorList.h"
 #include "CommonAtomStrings.h"
-#include "DocumentInlines.h"
 #include "HTMLNames.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
@@ -101,7 +100,7 @@ static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector* se
             return PropertyAllowlist::CueBackground;
 #endif
         if (component->match() == CSSSelector::Match::PseudoElement && component->pseudoElement() == CSSSelector::PseudoElement::Marker)
-            return propertyAllowlistForPseudoId(PseudoId::Marker);
+            return propertyAllowlistForPseudoElement(PseudoElementType::Marker);
 
         if (const auto* selectorList = selector->selectorList()) {
             for (auto& subSelector : *selectorList) {
@@ -114,15 +113,15 @@ static inline PropertyAllowlist determinePropertyAllowlist(const CSSSelector* se
     return PropertyAllowlist::None;
 }
 
-RuleData::RuleData(const StyleRule& styleRule, unsigned selectorIndex, unsigned selectorListIndex, unsigned position, IsStartingStyle isStartingStyle)
+RuleData::RuleData(const StyleRule& styleRule, unsigned selectorIndex, unsigned selectorListIndex, unsigned position, OptionSet<UsedRuleType> usedRuleTypes)
     : m_styleRuleWithSelectorIndex(&styleRule, static_cast<uint16_t>(selectorIndex))
     , m_selectorListIndex(selectorListIndex)
-    , m_position(position)
     , m_matchBasedOnRuleHash(enumToUnderlyingType(computeMatchBasedOnRuleHash(*selector())))
     , m_canMatchPseudoElement(complexSelectorCanMatchPseudoElement(*selector()))
     , m_propertyAllowlist(enumToUnderlyingType(determinePropertyAllowlist(selector())))
-    , m_isStartingStyle(enumToUnderlyingType(isStartingStyle))
+    , m_usedRuleTypes(usedRuleTypes.toRaw())
     , m_isEnabled(true)
+    , m_position(position)
     , m_descendantSelectorIdentifierHashes(SelectorFilter::collectHashes(*selector()))
 {
     ASSERT(m_position == position);

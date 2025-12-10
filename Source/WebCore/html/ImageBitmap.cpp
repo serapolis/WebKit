@@ -182,7 +182,7 @@ std::optional<DetachedImageBitmap> ImageBitmap::detach()
 {
     if (!m_bitmap)
         return std::nullopt;
-    RefPtr bitmap = std::exchange(m_bitmap, nullptr);
+    RefPtr bitmap = takeImageBuffer();
     if (!bitmap->hasOneRef())
         bitmap = bitmap->clone();
     std::unique_ptr serializedBitmap = ImageBuffer::sinkIntoSerializedImageBuffer(WTFMove(bitmap));
@@ -775,6 +775,7 @@ class PendingImageBitmap final : public RefCounted<PendingImageBitmap>, public A
 public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(FileReaderLoaderClient);
 
     static void fetch(ScriptExecutionContext& scriptExecutionContext, RefPtr<Blob>&& blob, ImageBitmapOptions&& options, std::optional<IntRect> rect, ImageBitmap::ImageBitmapCompletionHandler&& completionHandler)
     {
@@ -796,7 +797,7 @@ public:
 private:
     PendingImageBitmap(ScriptExecutionContext& scriptExecutionContext, RefPtr<Blob>&& blob, ImageBitmapOptions&& options, std::optional<IntRect> rect, ImageBitmap::ImageBitmapCompletionHandler&& completionHandler)
         : ActiveDOMObject(&scriptExecutionContext)
-        , m_blobLoader(FileReaderLoader::ReadAsArrayBuffer, this)
+        , m_blobLoader(FileReaderLoader::create(FileReaderLoader::ReadAsArrayBuffer, this))
         , m_blob(WTFMove(blob))
         , m_options(WTFMove(options))
         , m_rect(WTFMove(rect))
@@ -807,7 +808,7 @@ private:
     void start(ScriptExecutionContext& scriptExecutionContext)
     {
         m_pendingActivity = makePendingActivity(*this); // Prevent destruction until the load has finished.
-        m_blobLoader.start(&scriptExecutionContext, *m_blob);
+        m_blobLoader->start(&scriptExecutionContext, *m_blob);
     }
 
     // ActiveDOMObject
@@ -818,7 +819,7 @@ private:
     void didReceiveData() final { }
     void didFinishLoading() final
     {
-        createImageBitmapAndCallCompletionHandlerSoon(m_blobLoader.arrayBufferResult());
+        createImageBitmapAndCallCompletionHandlerSoon(m_blobLoader->arrayBufferResult());
     }
     void didFail(ExceptionCode) final
     {
@@ -843,10 +844,10 @@ private:
             return;
         }
 
-        ImageBitmap::createFromBuffer(*scriptExecutionContext(), m_arrayBufferToProcess.releaseNonNull(), m_blob->type(), m_blob->size(), m_blobLoader.url(), WTFMove(m_options), WTFMove(m_rect), WTFMove(m_completionHandler));
+        ImageBitmap::createFromBuffer(*scriptExecutionContext(), m_arrayBufferToProcess.releaseNonNull(), m_blob->type(), m_blob->size(), m_blobLoader->url(), WTFMove(m_options), WTFMove(m_rect), WTFMove(m_completionHandler));
     }
 
-    FileReaderLoader m_blobLoader;
+    const Ref<FileReaderLoader> m_blobLoader;
     RefPtr<Blob> m_blob;
     ImageBitmapOptions m_options;
     std::optional<IntRect> m_rect;
@@ -966,6 +967,7 @@ void ImageBitmap::createCompletionHandler(ScriptExecutionContext& scriptExecutio
 
 ImageBitmap::ImageBitmap(Ref<ImageBuffer> bitmap, bool originClean, bool premultiplyAlpha, bool forciblyPremultiplyAlpha)
     : m_bitmap(WTFMove(bitmap))
+    , m_memoryCost(m_bitmap->memoryCost())
     , m_originClean(originClean)
     , m_premultiplyAlpha(premultiplyAlpha)
     , m_forciblyPremultiplyAlpha(forciblyPremultiplyAlpha)
@@ -976,6 +978,7 @@ ImageBitmap::~ImageBitmap() = default;
 
 RefPtr<ImageBuffer> ImageBitmap::takeImageBuffer()
 {
+    m_memoryCost.store(0, std::memory_order_relaxed);
     return std::exchange(m_bitmap, nullptr);
 }
 
@@ -989,14 +992,9 @@ unsigned ImageBitmap::height() const
     return m_bitmap ? m_bitmap->truncatedLogicalSize().height() : 0;
 }
 
-void ImageBitmap::updateMemoryCost()
-{
-    m_memoryCost = m_bitmap ? m_bitmap->memoryCost() : 0;
-}
-
 size_t ImageBitmap::memoryCost() const
 {
-    return m_memoryCost;
+    return m_memoryCost.load(std::memory_order_relaxed);
 }
 
 } // namespace WebCore

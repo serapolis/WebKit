@@ -59,7 +59,9 @@
 #include "JSModuleRecord.h"
 #include "JSObject.h"
 #include "JSPromise.h"
-#include "JSPromiseAllContext.h"
+#include "JSPromiseCombinatorsContext.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
+#include "JSPromiseReaction.h"
 #include "JSRemoteFunction.h"
 #include "JSString.h"
 #include "JSWebAssemblyException.h"
@@ -463,37 +465,49 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     VM& vm = this->vm();
 
     auto getContextValueFromPromise = [&](JSPromise* promise) -> JSValue {
-        if (promise && promise->status(vm) == JSPromise::Status::Pending) {
+        if (promise && promise->status() == JSPromise::Status::Pending) {
             JSValue reactionsValue = promise->internalField(JSPromise::Field::ReactionsOrResult).get();
-            if (JSObject* reactions = jsDynamicCast<JSObject*>(reactionsValue)) {
-                Structure* reactionsStructure = reactions->structure();
-                unsigned contextFieldAttributes;
-                PropertyOffset contextOffset = reactionsStructure->getConcurrently(vm.propertyNames->builtinNames().contextPrivateName().impl(), contextFieldAttributes);
-                if (contextOffset != invalidOffset && !(contextFieldAttributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
-                    return reactions->getDirect(contextOffset);
-            }
+            if (auto* reaction = jsDynamicCast<JSPromiseReaction*>(reactionsValue))
+                return reaction->context();
         }
         return JSValue();
     };
 
     auto getParentGenerator = [&](JSGenerator* gen) -> JSGenerator* {
         JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSGenerator::Field::Context)).get();
+        ASSERT(generatorContext);
         JSPromise* awaitedPromise = jsDynamicCast<JSPromise*>(generatorContext);
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
+
+        if (!promiseContext)
+            return nullptr;
 
         // handle simple `await`
         if (auto* generator = jsDynamicCast<JSGenerator*>(promiseContext))
             return generator;
 
-        // handle `Promise.all`
-        if (auto* promiseAllContext = jsDynamicCast<JSPromiseAllContext*>(promiseContext)) {
-            JSValue promiseValue = promiseAllContext->promise();
-            if (auto* promise = jsDynamicCast<JSPromise*>(promiseValue)) {
-                JSValue promiseContext = getContextValueFromPromise(promise);
-                if (auto* generator = jsDynamicCast<JSGenerator*>(promiseContext))
+        // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
+        if (auto* promiseCombinatorsContext = jsDynamicCast<JSPromiseCombinatorsContext*>(promiseContext)) {
+            if (auto* globalContext = jsDynamicCast<JSPromiseCombinatorsGlobalContext*>(promiseCombinatorsContext->globalContext())) {
+                JSValue promiseValue = globalContext->promise();
+                ASSERT(promiseValue);
+                if (auto* promise = jsDynamicCast<JSPromise*>(promiseValue)) {
+                    if (JSValue promiseContext = getContextValueFromPromise(promise)) {
+                        if (auto* generator = jsDynamicCast<JSGenerator*>(promiseContext))
+                            return generator;
+                    }
+                }
+            }
+        }
+
+        // handle and `Promise.race`
+        if (auto* contextPromise = jsDynamicCast<JSPromise*>(promiseContext)) {
+            if (JSValue parentContext = getContextValueFromPromise(contextPromise)) {
+                if (auto* generator = jsDynamicCast<JSGenerator*>(parentContext))
                     return generator;
             }
         }
+
         return nullptr;
     };
 
@@ -583,6 +597,19 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     bool foundCaller = !caller;
     JSGenerator* asyncStackTraceOriginGenerator = nullptr;
     size_t asyncStackTraceInsertPos = 0;
+    EntryFrame* previousEntryFrame = nullptr;
+    size_t previousEntryFrameStackTraceInsertPos = 0;
+    auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
+        ASSERT(Options::useAsyncStackTrace());
+        auto* record = vmEntryRecord(previousEntryFrame);
+        if (record->m_context) {
+            if (auto* generator = jsDynamicCast<JSGenerator*>(record->m_context)) {
+                asyncStackTraceOriginGenerator = generator;
+                asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
+            }
+        }
+    };
+
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
@@ -599,48 +626,40 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             return IterationStatus::Continue;
         }
 
+        auto* currentEntryFrame = visitor->entryFrame();
         if (Options::useAsyncStackTrace()) {
-            if (visitor->callee().isCell()) {
-                if (JSFunction* callee = jsDynamicCast<JSFunction*>(visitor->callee().asCell())) {
-                    JSGlobalObject* globalObject = callFrame->lexicalGlobalObject(vm);
-
-                    JSGenerator* generator = nullptr;
-                    if (callee == globalObject->promiseReactionJobFunction())
-                        generator = jsDynamicCast<JSGenerator*>(visitor->callFrame()->argument(3));
-                    else if (callee == globalObject->promiseReactionJobWithoutPromiseFunction())
-                        generator = jsDynamicCast<JSGenerator*>(visitor->callFrame()->argument(2));
-
-                    if (generator) {
-                        asyncStackTraceOriginGenerator = generator;
-                        asyncStackTraceInsertPos = results.size();
-                        return IterationStatus::Continue;
-                    }
-                }
-            }
+            if (currentEntryFrame != previousEntryFrame && previousEntryFrame)
+                updateAsyncStackTraceOriginGenerator();
         }
 
-        if (visitor->isImplementationVisibilityPrivate())
-            return IterationStatus::Continue;
+        if (!visitor->isImplementationVisibilityPrivate()) {
+            if (visitor->isNativeCalleeFrame()) {
+                auto* nativeCallee = visitor->callee().asNativeCallee();
+                switch (nativeCallee->category()) {
+                case NativeCallee::Category::Wasm: {
+                    results.append(StackFrame(visitor->wasmFunctionIndexOrName(), visitor->wasmFunctionIndex()));
+                    break;
+                }
+                case NativeCallee::Category::InlineCache: {
+                    break;
+                }
+                }
+            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
+            else
+                results.append(StackFrame(vm, owner, visitor->callee().asCell()));
 
-        if (visitor->isNativeCalleeFrame()) {
-            auto* nativeCallee = visitor->callee().asNativeCallee();
-            switch (nativeCallee->category()) {
-            case NativeCallee::Category::Wasm: {
-                results.append(StackFrame(visitor->wasmFunctionIndexOrName(), visitor->wasmFunctionIndex()));
-                break;
-            }
-            case NativeCallee::Category::InlineCache: {
-                break;
-            }
-            }
-        } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
-            results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
-        else
-            results.append(StackFrame(vm, owner, visitor->callee().asCell()));
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+        }
         return IterationStatus::Continue;
     });
 
     if (Options::useAsyncStackTrace()) {
+        // Check if the last entry frame had a generator context
+        // that wasn't captured during stack traversal (e.g. TLA)
+        if (!asyncStackTraceOriginGenerator && previousEntryFrame)
+            updateAsyncStackTraceOriginGenerator();
         if (asyncStackTraceOriginGenerator) {
             Vector<StackFrame> asyncFrames;
             getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
@@ -754,18 +773,19 @@ CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* calle
 }
 #endif
 
-class UnwindFunctor {
+class UnwindFunctor : UnwindFunctorBase {
 public:
     UnwindFunctor(VM& vm, CallFrame*& callFrame, Exception* exception, JSValue thrownValue, CodeBlock*& codeBlock, CatchInfo& handler, JSRemoteFunction*& seenRemoteFunction)
-        : m_vm(vm)
+        : UnwindFunctorBase(vm)
         , m_callFrame(callFrame)
-        , m_exception(exception)
         , m_isTermination(vm.isTerminationException(exception))
         , m_codeBlock(codeBlock)
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
-    {
 #if ENABLE(WEBASSEMBLY)
+        , m_exception(exception)
+    {
+
         if (!m_isTermination) {
             if (JSWebAssemblyException* wasmException = jsDynamicCast<JSWebAssemblyException*>(thrownValue)) {
                 m_catchableFromWasm = true;
@@ -781,10 +801,12 @@ public:
             if (!m_wasmTag)
                 m_wasmTag = &Wasm::Tag::jsExceptionTag();
         }
-#else
-        UNUSED_PARAM(thrownValue);
-#endif
     }
+#else
+    {
+        UNUSED_PARAM(thrownValue);
+    }
+#endif
 
     IterationStatus operator()(StackVisitor& visitor) const
     {
@@ -808,7 +830,7 @@ public:
             case NativeCallee::Category::Wasm: {
 #if ENABLE(WEBASSEMBLY)
                 if (m_catchableFromWasm) {
-                    auto* wasmCallee = static_cast<Wasm::Callee*>(nativeCallee);
+                    auto* wasmCallee = uncheckedDowncast<Wasm::Callee>(nativeCallee);
                     if (wasmCallee->hasExceptionHandlers()) {
                         JSWebAssemblyInstance* instance = m_callFrame->wasmInstance();
                         unsigned exceptionHandlerIndex = visitor->wasmCallSiteIndex().bits();
@@ -838,7 +860,7 @@ public:
         }
 
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
-        notifyDebuggerOfUnwinding(globalObject, m_vm, m_callFrame);
+        notifyDebuggerOfUnwinding(globalObject, m_callFrame);
 
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
 
@@ -850,86 +872,17 @@ public:
     }
 
 private:
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
-    void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
-    {
-#if ENABLE(ASSEMBLER)
-        std::optional<RegisterAtOffsetList> currentCalleeSaves = visitor->calleeSaveRegistersForUnwinding();
-
-        if (!currentCalleeSaves)
-            return;
-
-        RegisterAtOffsetList* allCalleeSaves = RegisterSetBuilder::vmCalleeSaveRegisterOffsets();
-        auto dontCopyRegisters = RegisterSetBuilder::stackRegisters();
-        CPURegister* frame = reinterpret_cast<CPURegister*>(m_callFrame->registers());
-
-        unsigned registerCount = currentCalleeSaves->registerCount();
-        VMEntryRecord* record = vmEntryRecord(m_vm.topEntryFrame);
-        for (unsigned i = 0; i < registerCount; i++) {
-            RegisterAtOffset currentEntry = currentCalleeSaves->at(i);
-            if (dontCopyRegisters.contains(currentEntry.reg(), IgnoreVectors))
-                continue;
-            RegisterAtOffset* calleeSavesEntry = allCalleeSaves->find(currentEntry.reg());
-
-            if (!calleeSavesEntry) {
-                if constexpr (!isARM_THUMB2())
-                    RELEASE_ASSERT_NOT_REACHED();
-                // This can happen on ARMv7, because there are more callee save
-                // registers in the system convention than in the VM convention,
-                // so frames generated by Air callees might restore any system
-                // callee-save registers and we don't know the correct offset to
-                // restore them to in the destination record if the register is
-                // not callee-save in the VM convention.
-
-                // Luckily, it is correct for us to drop these--since the
-                // Air-generated callee is only expected to preserve the VM
-                // callee registers (when called from the VM), it doesn't need
-                // to appear to preserve the non-VM-callee-saves if we unwind
-                // its frame.
-                continue;
-            }
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            record->calleeSaveRegistersBuffer[calleeSavesEntry->offsetAsIndex()] = *(frame + currentEntry.offsetAsIndex());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-        }
-#else
-        UNUSED_PARAM(visitor);
-#endif
-    }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-
-    ALWAYS_INLINE static void notifyDebuggerOfUnwinding(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame)
-    {
-        Debugger* debugger = globalObject->debugger();
-        if (!debugger) [[likely]]
-            return;
-
-        DeferTermination deferScope(vm);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-
-        SuspendExceptionScope scope(vm);
-        if (callFrame->isNativeCalleeFrame()
-            || (callFrame->callee().isCell() && callFrame->callee().asCell()->inherits<JSFunction>()))
-            debugger->unwindEvent(callFrame);
-        else
-            debugger->didExecuteProgram(callFrame);
-        catchScope.assertNoException();
-    }
-
-    VM& m_vm;
     CallFrame*& m_callFrame;
-    Exception* m_exception;
     bool m_isTermination;
     CodeBlock*& m_codeBlock;
     CatchInfo& m_handler;
+    JSRemoteFunction*& m_seenRemoteFunction;
+
 #if ENABLE(WEBASSEMBLY)
+    Exception* m_exception;
     mutable RefPtr<const Wasm::Tag> m_wasmTag;
     bool m_catchableFromWasm { false };
 #endif
-
-    JSRemoteFunction*& m_seenRemoteFunction;
 };
 
 // Replace an exception which passes across a marshalling boundary with a TypeError for its handler's global object.
@@ -1035,6 +988,13 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
         HandlerInfo* handler = functor.handler();
         ASSERT(!handler || handler->isCatchHandler());
         bool hasCatchHandler = !!handler;
+        if (!hasCatchHandler) {
+            if (vm.topEntryFrame) {
+                auto* entryRecord = vmEntryRecord(vm.topEntryFrame);
+                if (entryRecord->m_context)
+                    hasCatchHandler = true;
+            }
+        }
 
         debugger->exception(globalObject, callFrame, exception->value(), hasCatchHandler);
     }
@@ -1192,7 +1152,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
             case JSONPPathEntryTypeCall: {
                 JSValue function = baseObject.get(globalObject, ident);
                 RETURN_IF_EXCEPTION(throwScope, JSValue());
-                auto callData = JSC::getCallData(function);
+                auto callData = JSC::getCallDataInline(function);
                 if (callData.type == CallData::Type::None)
                     return throwException(globalObject, throwScope, createNotAFunctionError(globalObject, function));
                 MarkedArgumentBuffer jsonArg;
@@ -1252,7 +1212,7 @@ failedJSONP:
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = program->generatedJITCode();
-            protoCallFrame.init(codeBlock, globalObject, globalCallee, thisObj, 1);
+            protoCallFrame.init(codeBlock, globalObject, globalCallee, thisObj, nullptr, 1);
         }
     }
 
@@ -1262,7 +1222,7 @@ failedJSONP:
     return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
 }
 
-JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, const ArgList& args)
+JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1282,13 +1242,13 @@ JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, const A
 
     JSObject* targetFunction = function->targetFunction();
     JSValue boundThis = function->boundThis();
-    auto callData = JSC::getCallData(targetFunction);
+    auto callData = JSC::getCallDataInline(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
 
-    RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, combinedArgs));
+    RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, combinedArgs));
 }
 
-ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
+ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     auto clobberizeValidator = makeScopeExit([&] {
         vm.didEnterVM = true;
@@ -1343,7 +1303,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
                 jitCode = functionExecutable->generatedJITCodeForCall();
-            protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, argsCount, args.data());
+            protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, context, argsCount, args.data());
         }
     }
 
@@ -1362,11 +1322,11 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
 }
 
-JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
+JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     VM& vm = this->vm();
     if (callData.type == CallData::Type::JS || !callData.native.isBoundFunction)
-        return executeCallImpl(vm, function, callData, thisValue, args);
+        return executeCallImpl(vm, function, callData, thisValue, context, args);
 
     // Only one-level unwrap is enough! We already made JSBoundFunction's nest smaller.
     auto* boundFunction = jsCast<JSBoundFunction*>(function);
@@ -1377,11 +1337,11 @@ JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, J
         // Let's just replace and get unwrapped functions again.
         JSObject* targetFunction = boundFunction->targetFunction();
         JSValue boundThis = boundFunction->boundThis();
-        auto targetFunctionCallData = JSC::getCallData(targetFunction);
+        auto targetFunctionCallData = JSC::getCallDataInline(targetFunction);
         ASSERT(targetFunctionCallData.type != CallData::Type::None);
-        return executeCallImpl(vm, targetFunction, targetFunctionCallData, boundThis, args);
+        return executeCallImpl(vm, targetFunction, targetFunctionCallData, boundThis, context, args);
     }
-    return executeBoundCall(vm, boundFunction, args);
+    return executeBoundCall(vm, boundFunction, context, args);
 }
 
 JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
@@ -1439,7 +1399,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSConstruct)
                 jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
-            protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, argsCount, args.data());
+            protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, nullptr, argsCount, args.data());
         }
     }
 
@@ -1666,7 +1626,7 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = eval->generatedJITCode();
-            protoCallFrame.init(codeBlock, globalObject, callee, thisValue, 1);
+            protoCallFrame.init(codeBlock, globalObject, callee, thisValue, nullptr, 1);
         }
     }
 
@@ -1741,7 +1701,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
             // The |this| of the module is always `undefined`.
             // http://www.ecma-international.org/ecma-262/6.0/#sec-module-environment-records-hasthisbinding
             // http://www.ecma-international.org/ecma-262/6.0/#sec-module-environment-records-getthisbinding
-            protoCallFrame.init(codeBlock, globalObject, callee, jsUndefined(), numberOfArguments + 1, args);
+            protoCallFrame.init(codeBlock, globalObject, callee, jsUndefined(), nullptr, numberOfArguments + 1, args);
         }
 
         record->internalField(JSModuleRecord::Field::State).set(vm, record, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));

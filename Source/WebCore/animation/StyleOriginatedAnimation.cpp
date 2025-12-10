@@ -34,6 +34,7 @@
 #include "EventTargetInlines.h"
 #include "KeyframeEffect.h"
 #include "Logging.h"
+#include "NodeDocument.h"
 #include "RenderStyle.h"
 #include "StyleOriginatedAnimationEvent.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -180,7 +181,7 @@ ExceptionOr<void> StyleOriginatedAnimation::bindingsPause()
 
 void StyleOriginatedAnimation::flushPendingStyleChanges() const
 {
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(effect())) {
+    if (RefPtr keyframeEffect = this->keyframeEffect()) {
         if (RefPtr target = keyframeEffect->target())
             target->document().updateStyleIfNeeded();
     }

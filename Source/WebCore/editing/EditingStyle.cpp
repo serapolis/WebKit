@@ -44,21 +44,23 @@
 #include "Editor.h"
 #include "ElementInlines.h"
 #include "FilterOperations.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FontCache.h"
 #include "FontCascade.h"
 #include "HTMLFontElement.h"
 #include "HTMLInterchange.h"
 #include "HTMLNames.h"
 #include "HTMLSpanElement.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "MutableStyleProperties.h"
 #include "Node.h"
 #include "NodeTraversal.h"
 #include "QualifiedName.h"
 #include "Range.h"
 #include "RenderElement.h"
-#include "RenderStyle.h"
+#include "RenderStyleInlines.h"
 #include "SimpleRange.h"
+#include "StyleAppleColorFilter.h"
 #include "StyleColor.h"
 #include "StyleExtractor.h"
 #include "StyleFontSizeFunctions.h"
@@ -590,9 +592,14 @@ void EditingStyle::init(Node* initialNode, PropertiesToInclude propertiesToInclu
     }
 
     if (node && node->computedStyle()) {
-        CheckedPtr renderStyle = node->computedStyle();
-        removeTextFillAndStrokeColorsIfNeeded(renderStyle.get());
-        if (renderStyle->fontDescription().keywordSize()) {
+        bool shouldSetFontSize = false;
+        {
+            CheckedPtr renderStyle = node->computedStyle();
+            removeTextFillAndStrokeColorsIfNeeded(renderStyle.get());
+            shouldSetFontSize = renderStyle->fontDescription().keywordSize();
+        }
+
+        if (shouldSetFontSize) {
             if (auto cssValue = computedStyleAtPosition.getFontSizeCSSValuePreferringKeyword())
                 mutableStyle->setProperty(CSSPropertyFontSize, cssValue->cssText(CSS::defaultSerializationContext()));
         }

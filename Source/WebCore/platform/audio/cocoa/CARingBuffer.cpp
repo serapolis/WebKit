@@ -30,10 +30,10 @@
 
 #include "CAAudioStreamDescription.h"
 #include "Logging.h"
-#include "SpanCoreAudio.h"
 #include "VectorMath.h"
 #include <Accelerate/Accelerate.h>
 #include <CoreAudio/CoreAudioTypes.h>
+#include <pal/cf/CoreAudioExtras.h>
 #include <wtf/MathExtras.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>

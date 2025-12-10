@@ -57,8 +57,9 @@
 #import <WebCore/ArchiveResource.h>
 #import <WebCore/CSSStyleProperties.h>
 #import <WebCore/DeprecatedGlobalSettings.h>
-#import <WebCore/Document.h>
 #import <WebCore/DocumentFragment.h>
+#import <WebCore/DocumentPage.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/Editor.h>
 #import <WebCore/Event.h>
 #import <WebCore/FloatQuad.h>
@@ -72,7 +73,7 @@
 #import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/MutableStyleProperties.h>
-#import <WebCore/Page.h>
+#import <WebCore/NodeDocument.h>
 #import <WebCore/PlatformKeyboardEvent.h>
 #import <WebCore/Settings.h>
 #import <WebCore/SpellChecker.h>
@@ -82,6 +83,7 @@
 #import <WebCore/VisibleUnits.h>
 #import <WebCore/WebContentReader.h>
 #import <WebCore/WebCoreJITOperations.h>
+#import <WebCore/WebCoreMainThread.h>
 #import <WebCore/WebCoreObjCExtras.h>
 #import <pal/spi/cocoa/NSAttributedStringSPI.h>
 #import <pal/spi/mac/NSSpellCheckerSPI.h>
@@ -137,11 +139,7 @@ static WebViewInsertAction kit(EditorInsertAction action)
 
 + (void)initialize
 {
-#if !PLATFORM(IOS_FAMILY)
-    JSC::initialize();
-    WTF::initializeMainThread();
-    WebCore::populateJITOperations();
-#endif
+    WebCore::initializeMainThreadIfNeeded();
 }
 
 - (id)initWithUndoStep:(Ref<UndoStep>&&)step
@@ -204,9 +202,7 @@ WebEditorClient::WebEditorClient(WebView *webView)
 {
 }
 
-WebEditorClient::~WebEditorClient()
-{
-}
+WebEditorClient::~WebEditorClient() = default;
 
 bool WebEditorClient::isContinuousSpellCheckingEnabled()
 {
@@ -1271,6 +1267,10 @@ void WebEditorClient::requestCheckingOfString(TextCheckingRequest& request, cons
         }];
     }];
 #endif
+}
+
+void WebEditorClient::requestExtendedCheckingOfString(TextCheckingRequest& request, const VisibleSelection& currentSelection)
+{
 }
 
 #if PLATFORM(IOS_FAMILY)

@@ -39,9 +39,10 @@
 #include "CommonAtomStrings.h"
 #include "CustomElementReactionQueue.h"
 #include "DOMTokenList.h"
-#include "Document.h"
 #include "DocumentFragment.h"
 #include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "Editor.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementChildIteratorInlines.h"
@@ -63,7 +64,6 @@
 #include "HTMLFormElement.h"
 #include "HTMLInputElement.h"
 #include "HTMLMaybeFormAssociatedCustomElement.h"
-#include "HTMLMediaElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptGroupElement.h"
 #include "HTMLOptionElement.h"
@@ -83,10 +83,10 @@
 #include "NodeTraversal.h"
 #include "PopoverData.h"
 #include "PseudoClassChangeInvalidation.h"
-#include "Quirks.h"
 #include "RenderElement.h"
 #include "ScriptController.h"
 #include "ScriptDisallowedScope.h"
+#include "Settings.h"
 #include "ShadowRoot.h"
 #include "SimulatedClick.h"
 #include "StyleProperties.h"
@@ -1243,7 +1243,9 @@ ExceptionOr<void> HTMLElement::hidePopoverInternal(FocusPreviousElement focusPre
     if (isInTopLayer())
         removeFromTopLayer();
 
-    Style::PseudoClassChangeInvalidation styleInvalidation(*this, CSSSelector::PseudoClass::PopoverOpen, false);
+    std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
+    if (parentNode())
+        styleInvalidation.emplace(*this, CSSSelector::PseudoClass::PopoverOpen, false);
     popoverData()->setVisibilityState(PopoverVisibilityState::Hidden);
 
     if (fireEvents == FireEvents::Yes)

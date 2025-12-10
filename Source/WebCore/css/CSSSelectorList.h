@@ -52,8 +52,13 @@ public:
     static CSSSelectorList makeJoining(const Vector<const CSSSelectorList*>&);
 
     bool isEmpty() const { return !m_selectorArray; }
-    const CSSSelector* first() const { return m_selectorArray.get(); }
-    const CSSSelector* selectorAt(size_t index) const { return &m_selectorArray[index]; }
+    const CSSSelector* first() const LIFETIME_BOUND { return m_selectorArray.get(); }
+    const CSSSelector* selectorAt(size_t index) const LIFETIME_BOUND
+    {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        return &m_selectorArray[index];
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    }
 
     size_t indexOfNextSelectorAfter(size_t index) const
     {
@@ -113,6 +118,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     unsigned listSize() const;
 
     CSSSelectorList& operator=(CSSSelectorList&&) = default;
+
+    bool operator==(const CSSSelectorList&) const;
 
 private:
     // End of a multipart selector is indicated by m_isLastInComplexSelector bit in the last item.

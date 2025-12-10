@@ -38,6 +38,7 @@
 #include "CSSValueKeywords.h"
 #include "ContextDestructionObserverInlines.h"
 #include "DOMRect.h"
+#include "DocumentPage.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "EventNames.h"
@@ -46,7 +47,6 @@
 #include "Logging.h"
 #include "NodeInlines.h"
 #include "NodeTraversal.h"
-#include "Page.h"
 #include "ScriptDisallowedScope.h"
 #include "Text.h"
 #include "TextTrack.h"
@@ -334,15 +334,6 @@ void TextTrackCue::setPauseOnExit(bool value)
         return;
 
     m_pauseOnExit = value;
-}
-
-void TextTrackCue::dispatchEvent(Event& event)
-{
-    // When a TextTrack's mode is disabled: no cues are active, no events fired.
-    if (!track() || track()->mode() == TextTrack::Mode::Disabled)
-        return;
-
-    EventTarget::dispatchEvent(event);
 }
 
 bool TextTrackCue::isActive() const

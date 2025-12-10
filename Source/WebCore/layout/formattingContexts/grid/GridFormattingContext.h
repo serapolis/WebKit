@@ -25,21 +25,25 @@
 
 #pragma once
 
-#include "LayoutState.h"
-#include "LayoutUnit.h"
+#include <WebCore/GridTypeAliases.h>
+#include <WebCore/LayoutIntegrationUtils.h>
+#include <WebCore/LayoutState.h>
+#include <WebCore/LayoutUnit.h>
 #include <wtf/CheckedRef.h>
 
 namespace WebCore {
 namespace Layout {
 
 class ElementBox;
+class PlacedGridItem;
 
 class UnplacedGridItem;
+
+struct GridAreaLines;
 struct UnplacedGridItems;
 
-class GridFormattingContext : public CanMakeCheckedPtr<GridFormattingContext> {
+class GridFormattingContext {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(GridFormattingContext);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(GridFormattingContext);
 public:
 
     struct GridLayoutConstraints {
@@ -51,13 +55,24 @@ public:
 
     void layout(GridLayoutConstraints);
 
+    PlacedGridItems constructPlacedGridItems(const GridAreas&) const;
+
     const ElementBox& root() const { return m_gridBox; }
+
+    const IntegrationUtils& integrationUtils() const { return m_integrationUtils; }
+
+    const BoxGeometry& geometryForGridItem(const ElementBox&) const;
 
 private:
     UnplacedGridItems constructUnplacedGridItems() const;
 
+    const LayoutState& layoutState() const { return m_globalLayoutState; }
+    BoxGeometry& geometryForGridItem(const ElementBox&);
+    void setGridItemGeometries(const GridItemRects&);
+
     const CheckedRef<const ElementBox> m_gridBox;
     const CheckedRef<LayoutState> m_globalLayoutState;
+    const IntegrationUtils m_integrationUtils;
 };
 
 } // namespace Layout

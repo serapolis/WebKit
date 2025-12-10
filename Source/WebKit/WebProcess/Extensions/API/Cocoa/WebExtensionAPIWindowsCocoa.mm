@@ -378,7 +378,7 @@ bool isValid(std::optional<WebExtensionWindowIdentifier> identifier, NSString **
 
 bool WebExtensionAPIWindows::isPropertyAllowed(const ASCIILiteral& name, WebPage*)
 {
-    if (extensionContext().isUnsupportedAPI(propertyPath(), name)) [[unlikely]]
+    if (protectedExtensionContext()->isUnsupportedAPI(propertyPath(), name)) [[unlikely]]
         return false;
 
 #if PLATFORM(MAC)
@@ -404,7 +404,7 @@ void WebExtensionAPIWindows::createWindow(NSDictionary *data, Ref<WebExtensionCa
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 
@@ -427,7 +427,7 @@ void WebExtensionAPIWindows::get(WebPageProxyIdentifier webPageProxyIdentifier, 
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 
@@ -446,7 +446,7 @@ void WebExtensionAPIWindows::getCurrent(WebPageProxyIdentifier webPageProxyIdent
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 
@@ -465,7 +465,7 @@ void WebExtensionAPIWindows::getLastFocused(NSDictionary *info, Ref<WebExtension
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 
@@ -484,7 +484,7 @@ void WebExtensionAPIWindows::getAll(NSDictionary *info, Ref<WebExtensionCallback
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 
@@ -506,7 +506,7 @@ void WebExtensionAPIWindows::update(double windowID, NSDictionary *info, Ref<Web
             return;
         }
 
-        callback->call(toWebAPI(result.value()));
+        callback->call(toJSValueRef(callback->globalContext(), toWebAPI(result.value())));
     }, extensionContext().identifier());
 }
 

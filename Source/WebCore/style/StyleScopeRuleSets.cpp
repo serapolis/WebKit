@@ -33,7 +33,6 @@
 #include "CSSStyleSheet.h"
 #include "CSSViewTransitionRule.h"
 #include "DeclarationOrigin.h"
-#include "DocumentInlines.h"
 #include "ExtensionStyleSheets.h"
 #include "FrameLoader.h"
 #include "HTMLNames.h"
@@ -45,6 +44,7 @@
 #include "StyleResolver.h"
 #include "StyleScope.h"
 #include "StyleSheetContents.h"
+#include <ranges>
 
 namespace WebCore {
 namespace Style {
@@ -335,8 +335,21 @@ static Vector<InvalidationRuleSet>* ensureInvalidationRuleSets(const KeyType& ke
 
             builder.ruleSet->addRule(*feature.styleRule, feature.selectorIndex, feature.selectorListIndex);
 
-            if constexpr (std::is_same<typename RuleFeatureVectorType::ValueType, RuleFeatureWithInvalidationSelector>::value)
-                builder.invalidationSelectors.append(&feature.invalidationSelector);
+            if constexpr (std::is_same<typename RuleFeatureVectorType::ValueType, RuleFeatureWithInvalidationSelector>::value) {
+                auto alreadyContains = [&](const CSSSelectorList& invalidationSelector) {
+                    constexpr auto maximumSearchCount = 8;
+                    auto count = 0;
+                    for (auto& existing : builder.invalidationSelectors | std::views::reverse) {
+                        if (++count > maximumSearchCount)
+                            break;
+                        if (invalidationSelector == *existing)
+                            return true;
+                    }
+                    return false;
+                };
+                if (!alreadyContains(feature.invalidationSelector))
+                    builder.invalidationSelectors.append(&feature.invalidationSelector);
+            }
         }
 
         return makeUnique<Vector<InvalidationRuleSet>>(WTF::map(builderMap.values(), [](auto&& builder) {

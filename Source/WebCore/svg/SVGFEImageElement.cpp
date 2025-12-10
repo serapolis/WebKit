@@ -24,10 +24,9 @@
 #include "SVGFEImageElement.h"
 
 #include "CachedImage.h"
-#include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "ContainerNodeInlines.h"
-#include "Document.h"
+#include "DocumentResourceLoader.h"
 #include "FEImage.h"
 #include "Image.h"
 #include "LegacyRenderSVGResource.h"
@@ -38,6 +37,7 @@
 #include "SVGNames.h"
 #include "SVGPreserveAspectRatioValue.h"
 #include "SVGRenderingContext.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -50,10 +50,11 @@ inline SVGFEImageElement::SVGFEImageElement(const QualifiedName& tagName, Docume
 {
     ASSERT(hasTagName(SVGNames::feImageTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::preserveAspectRatioAttr, &SVGFEImageElement::m_preserveAspectRatio>();
-    });
+    }
 }
 
 Ref<SVGFEImageElement> SVGFEImageElement::create(const QualifiedName& tagName, Document& document)
@@ -187,15 +188,14 @@ void SVGFEImageElement::notifyFinished(CachedResource&, const NetworkLoadMetrics
 
 std::tuple<RefPtr<ImageBuffer>, FloatRect> SVGFEImageElement::imageBufferForEffect(const GraphicsContext& destinationContext) const
 {
-    auto target = SVGURIReference::targetElementFromIRIString(href(), const_cast<SVGFEImageElement&>(*this).treeScopeForSVGReferences());
-    if (!is<SVGElement>(target.element))
+    auto targetElement = dynamicDowncast<SVGElement>(SVGURIReference::targetElementFromIRIString(href(), const_cast<SVGFEImageElement&>(*this).treeScopeForSVGReferences()).element);
+    if (!targetElement)
         return { };
 
-    if (isShadowIncludingDescendantOf(target.element.get()))
+    if (isShadowIncludingDescendantOf(targetElement.get()))
         return { };
 
-    RefPtr contextNode = static_pointer_cast<SVGElement>(target.element);
-    CheckedPtr renderer = contextNode->renderer();
+    CheckedPtr renderer = targetElement->renderer();
     if (!renderer)
         return { };
 

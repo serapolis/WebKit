@@ -41,9 +41,6 @@ namespace WebCore {
 class WEBCORE_EXPORT SpeechSynthesisUtterance final : public PlatformSpeechSynthesisUtteranceClient, public RefCounted<SpeechSynthesisUtterance>, public ActiveDOMObject, public EventTarget {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(SpeechSynthesisUtterance, WEBCORE_EXPORT);
 public:
-    void ref() const final;
-    void deref() const final;
-
     using UtteranceCompletionHandler = Function<void(const SpeechSynthesisUtterance&)>;
     static Ref<SpeechSynthesisUtterance> create(ScriptExecutionContext&, const String&, UtteranceCompletionHandler&&);
     static Ref<SpeechSynthesisUtterance> create(ScriptExecutionContext&, const String&);
@@ -52,6 +49,11 @@ public:
     SpeechSynthesisUtterance();
 
     virtual ~SpeechSynthesisUtterance();
+
+    // ContextDestructionObserver, PlatformSpeechSynthesisUtteranceClient.
+    void ref() const final;
+    void deref() const final;
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     const String& text() const { return m_platformUtterance->text(); }
     void setText(const String& text) { m_platformUtterance->setText(text); }
@@ -76,7 +78,7 @@ public:
 
     PlatformSpeechSynthesisUtterance& platformUtterance() const { return m_platformUtterance.get(); }
 
-    void eventOccurred(const AtomString& type, unsigned long charIndex, unsigned long charLength, const String& name);
+    void eventOccurred(const AtomString& type, unsigned long charIndex, unsigned long charLength, const String& name) final;
     void errorEventOccurred(const AtomString& type, SpeechSynthesisErrorCode);
     void setIsActiveForEventDispatch(bool);
 

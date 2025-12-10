@@ -28,6 +28,7 @@
 #include "CSSFunctionValue.h"
 #include "CSSMarkup.h"
 #include "CSSPrimitiveValue.h"
+#include "CSSQuadValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
 #include "CSSValuePool.h"
@@ -38,6 +39,11 @@ namespace CSS {
 void serializationForCSSCustomIdentifier(StringBuilder& builder, const SerializationContext&, const CustomIdentifier& value)
 {
     WebCore::serializeIdentifier(value.value, builder);
+}
+
+void serializationForCSSPropertyIdentifier(StringBuilder& builder, const SerializationContext&, const PropertyIdentifier& value)
+{
+    builder.append(nameLiteral(value.value));
 }
 
 void serializationForCSSString(StringBuilder& builder, const SerializationContext&, const WTF::AtomString& value)
@@ -60,6 +66,11 @@ Ref<CSSValue> makePrimitiveCSSValue(const CustomIdentifier& value)
     return CSSPrimitiveValue::createCustomIdent(value.value);
 }
 
+Ref<CSSValue> makePrimitiveCSSValue(const PropertyIdentifier& value)
+{
+    return CSSPrimitiveValue::create(value.value);
+}
+
 Ref<CSSValue> makePrimitiveCSSValue(const WTF::AtomString& value)
 {
     return CSSPrimitiveValue::create(value);
@@ -75,9 +86,14 @@ Ref<CSSValue> makeFunctionCSSValue(CSSValueID name, Ref<CSSValue>&& value)
     return CSSFunctionValue::create(name, WTFMove(value));
 }
 
-Ref<CSSValue> makeSpaceSeparatedCoalescingPairCSSValue(Ref<CSSValue>&& first, Ref<CSSValue>&& second)
+template<> Ref<CSSValue> makeCoalescingPairCSSValue<SerializationSeparatorType::Space>(Ref<CSSValue>&& first, Ref<CSSValue>&& second)
 {
     return CSSValuePair::create(WTFMove(first), WTFMove(second));
+}
+
+template<> Ref<CSSValue> makeCoalescingQuadCSSValue<SerializationSeparatorType::Space>(Ref<CSSValue>&& first, Ref<CSSValue>&& second, Ref<CSSValue>&& third, Ref<CSSValue>&& fourth)
+{
+    return CSSQuadValue::create(WTFMove(first), WTFMove(second), WTFMove(third), WTFMove(fourth));
 }
 
 template<> Ref<CSSValue> makeListCSSValue<SerializationSeparatorType::Space>(CSSValueListBuilder&& builder)

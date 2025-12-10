@@ -131,6 +131,10 @@ ExceptionOr<ApplePaySessionPaymentRequest> convertAndValidate(Document& document
     result.setMerchantCategoryCode(request.merchantCategoryCode);
 #endif
 
+#if ENABLE(APPLE_PAY_DELEGATED_REQUEST)
+    result.setIsDelegatedRequest(request.isDelegatedRequest);
+#endif
+
     return WTFMove(result);
 }
 

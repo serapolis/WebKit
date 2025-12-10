@@ -113,6 +113,7 @@ typedef NS_OPTIONS(NSUInteger, _WKXRSessionFeatureFlags) {
     _WKXRSessionFeatureFlagsReferenceSpaceTypeUnbounded = 1 << 4,
     _WKXRSessionFeatureFlagsHandTracking = 1 << 5,
     _WKXRSessionFeatureFlagsWebGPU = 1 << 6,
+    _WKXRSessionFeatureFlagsLayers = 1 << 7,
 } WK_API_AVAILABLE(macos(13.0), ios(16.0));
 
 typedef NS_ENUM(NSInteger, WKDisplayCapturePermissionDecision) {
@@ -226,6 +227,8 @@ struct UIEdgeInsets;
 #if defined(TARGET_OS_VISION) && TARGET_OS_VISION
 - (void)_webView:(WKWebView *)webView setRecentlyAccessedGamepads:(BOOL)recentlyAccessedGamepads WK_API_AVAILABLE(visionos(2.0));
 - (void)_webView:(WKWebView *)webView gamepadsConnectedStateDidChange:(BOOL)gamepadsConnected WK_API_AVAILABLE(visionos(2.0));
+
+- (void)_webViewWillPresentModalUI:(WKWebView *)webView WK_API_AVAILABLE(visionos(WK_XROS_TBA));
 #endif
 
 #if TARGET_OS_IPHONE
@@ -303,8 +306,8 @@ struct UIEdgeInsets;
 
 - (void)_webView:(WKWebView *)webView startXRSessionWithFeatures:(_WKXRSessionFeatureFlags)features colorFormat:(MTLPixelFormat)pixelFormat depthFormat:(MTLPixelFormat)depthFormat completionHandler:(void (^)(id, UIViewController *))completionHandler WK_API_AVAILABLE(ios(17.4), visionos(1.1));
 
-- (void)_webViewDidEnterStandbyForTesting:(WKWebView *)webView WK_API_AVAILABLE(ios(WK_IOS_TBA));
-- (void)_webViewDidExitStandbyForTesting:(WKWebView *)webView WK_API_AVAILABLE(ios(WK_IOS_TBA));
+- (void)_webViewDidEnterStandbyForTesting:(WKWebView *)webView WK_API_AVAILABLE(ios(26.0));
+- (void)_webViewDidExitStandbyForTesting:(WKWebView *)webView WK_API_AVAILABLE(ios(26.0));
 
 #else // !TARGET_OS_IPHONE
 

@@ -25,16 +25,15 @@
 
 #pragma once
 
-#include "AudioVideoRenderer.h"
-#include "PlatformDynamicRangeLimit.h"
-#include "ProcessIdentity.h"
-#include "TrackInfo.h"
-#include "WebAVSampleBufferListener.h"
+#include <WebCore/AudioVideoRenderer.h>
+#include <WebCore/PlatformDynamicRangeLimit.h>
+#include <WebCore/ProcessIdentity.h>
+#include <WebCore/TrackInfo.h>
+#include <WebCore/WebAVSampleBufferListener.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/LoggerHelper.h>
-#include <wtf/NativePromise.h>
 #include <wtf/StdUnorderedMap.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
@@ -47,8 +46,11 @@ typedef struct CF_BRIDGED_TYPE(id) __CVBuffer *CVPixelBufferRef;
 
 namespace WebCore {
 
+class CDMInstanceFairPlayStreamingAVFObjC;
+class CDMSessionAVContentKeySession;
 class EffectiveRateChangedListener;
 class MediaSample;
+class NativeImage;
 class PixelBufferConformerCV;
 class VideoLayerManagerObjC;
 class VideoMediaSampleRenderer;
@@ -58,14 +60,14 @@ class AudioVideoRendererAVFObjC
     , public WebAVSampleBufferListenerClient
     , public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<AudioVideoRendererAVFObjC>
     , private LoggerHelper {
-    WTF_MAKE_TZONE_ALLOCATED(AudioVideoRendererAVFObjC);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(AudioVideoRendererAVFObjC, WEBCORE_EXPORT);
 public:
     static Ref<AudioVideoRendererAVFObjC> create(const Logger& logger, uint64_t logIdentifier) { return adoptRef(*new AudioVideoRendererAVFObjC(logger, logIdentifier)); }
 
     ~AudioVideoRendererAVFObjC();
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
-    void setPreferences(VideoMediaSampleRendererPreferences) final;
+    void setPreferences(VideoRendererPreferences) final;
     void setHasProtectedVideoContent(bool) final;
 
     // TracksRendererInterface
@@ -74,8 +76,7 @@ public:
 
     void enqueueSample(TrackIdentifier, Ref<MediaSample>&&, std::optional<MediaTime>) final;
     bool isReadyForMoreSamples(TrackIdentifier) final;
-    void requestMediaDataWhenReady(TrackIdentifier, Function<void(TrackIdentifier)>&&) final;
-    void stopRequestingMediaData(TrackIdentifier) final;
+    Ref<RequestPromise> requestMediaDataWhenReady(TrackIdentifier) final;
     void notifyTrackNeedsReenqueuing(TrackIdentifier, Function<void(TrackIdentifier, const MediaTime&)>&&) final;
 
     bool timeIsProgressing() const final;
@@ -83,6 +84,8 @@ public:
     void notifyTimeReachedAndStall(const MediaTime&, Function<void(const MediaTime&)>&&) final;
     void cancelTimeReachedAction() final;
     void performTaskAtTime(const MediaTime&, Function<void(const MediaTime&)>&&) final;
+    void setTimeObserver(Seconds, Function<void(const MediaTime&)>&&) final;
+    void cancelTimeObserver();
 
     void flush() final;
     void flushTrack(TrackIdentifier) final;
@@ -117,7 +120,7 @@ public:
     void setIsVisible(bool);
     void setPresentationSize(const IntSize&) final;
     void setShouldMaintainAspectRatio(bool) final;
-    void acceleratedRenderingStateChanged(bool) final;
+    void renderingCanBeAcceleratedChanged(bool) final;
     void contentBoxRectChanged(const LayoutRect&) final;
     void notifyFirstFrameAvailable(Function<void()>&&) final;
     void notifyWhenHasAvailableVideoFrame(Function<void(const MediaTime&, double)>&&) final;
@@ -129,8 +132,11 @@ public:
     void setPlatformDynamicRangeLimit(const PlatformDynamicRangeLimit&) final;
     void setResourceOwner(const ProcessIdentity& resourceOwner) final { m_resourceOwner = resourceOwner; }
     RefPtr<VideoFrame> currentVideoFrame() const final;
+    void paintCurrentVideoFrameInContext(GraphicsContext&, const FloatRect&) final;
+    RefPtr<NativeImage> currentNativeImage() const final;
     std::optional<VideoPlaybackQualityMetrics> videoPlaybackQualityMetrics() final;
-    PlatformLayerContainer platformVideoLayer() const final;
+    PlatformLayer* platformVideoLayer() const final;
+    void setVideoLayerSizeFenced(const FloatSize&, WTF::MachSendRightAnnotated&&) final;
 
     // VideoFullscreenInterface
     void setVideoFullscreenLayer(PlatformLayer*, Function<void()>&&) final;
@@ -141,7 +147,7 @@ public:
     void isInFullscreenOrPictureInPictureChanged(bool) final;
 
 private:
-    AudioVideoRendererAVFObjC(const Logger&, uint64_t);
+    WEBCORE_EXPORT AudioVideoRendererAVFObjC(const Logger&, uint64_t);
 
     MediaTime clampTimeToLastSeekTime(const MediaTime&) const;
     void maybeCompleteSeek();
@@ -166,14 +172,15 @@ private:
     Ref<GenericPromise> ensureLayerOrVideoRenderer();
     void ensureLayer();
     void destroyLayer();
-    void destroyVideoLayerIfNeeded();
     void ensureVideoRenderer();
     void destroyVideoRenderer();
+    void destroyExpiringVideoRenderersIfNeeded();
     Ref<GenericPromise> setVideoRenderer(WebSampleBufferVideoRendering *);
     void configureHasAvailableVideoFrameCallbackIfNeeded();
     void configureLayerOrVideoRenderer(WebSampleBufferVideoRendering *);
     Ref<GenericPromise> stageVideoRenderer(WebSampleBufferVideoRendering *);
     void destroyVideoTrack();
+    void removeRendererFromSynchronizerIfNeeded(id);
 
     enum class AcceleratedVideoMode: uint8_t {
         Layer = 0,
@@ -189,6 +196,18 @@ private:
 #if HAVE(SPATIAL_TRACKING_LABEL)
     void setSpatialTrackingInfo(bool prefersSpatialAudioExperience, SoundStageSize, const String& sceneIdentifier, const String& defaultLabel, const String& label) final;
     void updateSpatialTrackingLabel();
+#endif
+
+#if HAVE(AVCONTENTKEYSESSION)
+#if ENABLE(ENCRYPTED_MEDIA)
+    void setCDMInstance(CDMInstance*) final;
+    Ref<MediaPromise> setInitData(Ref<SharedBuffer>) final;
+    void attemptToDecrypt() final;
+#endif
+#if ENABLE(LEGACY_ENCRYPTED_MEDIA)
+    RefPtr<SharedBuffer> initData() const final { return m_initData; }
+    void setCDMSession(LegacyCDMSession*) final;
+#endif
 #endif
 
     void setSynchronizerRate(float, std::optional<MonotonicTime>);
@@ -213,6 +232,12 @@ private:
     void sizeWillChangeAtTime(const MediaTime&, const FloatSize&);
     void flushPendingSizeChanges();
 
+#if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
+    void tryToEnqueueBlockedSamples();
+    bool canEnqueueSample(TrackIdentifier, const MediaSample&);
+    void attachContentKeyToSampleIfNeeded(const MediaSample&);
+#endif
+
     // Logger
     const Logger& logger() const final { return m_logger.get(); }
     Ref<const Logger> protectedLogger() const { return logger(); }
@@ -227,6 +252,12 @@ private:
         WaitingForAvailableFame,
         SeekCompleted,
     };
+    struct AudioTrackProperties {
+        bool hasAudibleSample { false };
+        std::unique_ptr<RequestPromise::AutoRejectProducer> requestPromise;
+        Function<void(TrackIdentifier, const MediaTime&)> callbackForReenqueuing;
+    };
+    AudioTrackProperties& audioTrackPropertiesFor(TrackIdentifier);
 
     String toString(TrackIdentifier) const;
     String toString(SeekState) const;
@@ -246,6 +277,9 @@ private:
 
     RetainPtr<id> m_currentTimeObserver;
     RetainPtr<id> m_performTaskObserver;
+    RetainPtr<id> m_timeChangedObserver;
+    Function<void(const MediaTime&)> m_currentTimeDidChangeCallback;
+
     bool m_isPlaying { false };
     double m_rate { 1 };
     RetainPtr<CVPixelBufferRef> m_lastPixelBuffer;
@@ -268,11 +302,8 @@ private:
     bool m_hasAvailableVideoFrame { false };
     bool m_allRenderersHaveAvailableSamples { false };
 
-    struct AudioTrackProperties {
-        bool hasAudibleSample { false };
-        Function<void(TrackIdentifier, const MediaTime&)> callbackForReenqueuing;
-    };
     HashMap<TrackIdentifier, AudioTrackProperties> m_audioTracksMap;
+    std::optional<RequestPromise::AutoRejectProducer> m_requestVideoPromise;
     bool m_readyToRequestVideoData { true };
     bool m_readyToRequestAudioData { true };
 
@@ -281,6 +312,13 @@ private:
     RetainPtr<AVSampleBufferDisplayLayer> m_sampleBufferDisplayLayer;
     RetainPtr<AVSampleBufferVideoRenderer> m_sampleBufferVideoRenderer;
     RefPtr<VideoMediaSampleRenderer> m_videoRenderer;
+    Vector<RetainPtr<AVSampleBufferVideoRenderer>> m_expiringSampleBufferVideoRenderers;
+    enum class SampleBufferLayerState : uint8_t {
+        AddedToSynchronizer,
+        PendingRemovalFromSynchronizer,
+        RemovedFromSynchronizer
+    };
+    SampleBufferLayerState m_sampleBufferDisplayLayerState { SampleBufferLayerState::RemovedFromSynchronizer };
     bool m_renderingCanBeAccelerated { false };
     bool m_visible { false };
     IntSize m_presentationSize;
@@ -291,11 +329,12 @@ private:
     bool m_shouldDisableHDR { false };
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValueForVideos() };
     ProcessIdentity m_resourceOwner;
-    VideoMediaSampleRendererPreferences m_preferences;
+    VideoRendererPreferences m_preferences;
     bool m_hasProtectedVideoContent { false };
     struct RendererConfiguration {
-        bool canUseDecompressionSession = { false };
-        bool isProtected = { false };
+        bool canUseDecompressionSession { false };
+        bool isProtected { false };
+        bool hasVideoTrack { false };
         bool operator==(const RendererConfiguration&) const = default;
     };
     RendererConfiguration m_previousRendererConfiguration;
@@ -306,7 +345,7 @@ private:
 
     RefPtr<EffectiveRateChangedListener> m_effectiveRateChangedListener;
 
-    std::unique_ptr<PixelBufferConformerCV> m_rgbConformer;
+    mutable std::unique_ptr<PixelBufferConformerCV> m_rgbConformer;
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     bool m_prefersSpatialAudioExperience { false };
@@ -316,10 +355,24 @@ private:
     String m_spatialTrackingLabel;
 #endif
 
-    bool m_needsDestroyVideoLayer { false };
 #if ENABLE(LINEAR_MEDIA_PLAYER)
     RetainPtr<FigVideoTargetRef> m_videoTarget;
 #endif
+#if HAVE(AVCONTENTKEYSESSION)
+#if ENABLE(ENCRYPTED_MEDIA)
+    RefPtr<CDMInstanceFairPlayStreamingAVFObjC> m_cdmInstance;
+    const Ref<Observer<void()>> m_keyStatusesChangedObserver;
+    using KeyIDs = Vector<Ref<SharedBuffer>>;
+    KeyIDs m_keyIDs;
+    using TrackKeyIdsMap = HashMap<TrackIdentifier, KeyIDs>;
+    TrackKeyIdsMap m_currentTrackIds;
+    Deque<std::pair<TrackIdentifier, Ref<MediaSample>>> m_blockedSamples;
+#endif
+#if ENABLE(LEGACY_ENCRYPTED_MEDIA)
+    RefPtr<SharedBuffer> m_initData;
+    ThreadSafeWeakPtr<CDMSessionAVContentKeySession> m_session;
+#endif
+#endif
 };
 
-}
+} // namespace WebCore

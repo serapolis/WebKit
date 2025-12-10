@@ -50,6 +50,7 @@
 #include "WebExtensionMenuItem.h"
 #include "WebExtensionMessagePort.h"
 #include "WebExtensionPortChannelIdentifier.h"
+#include "WebExtensionRegisteredScriptsSQLiteStore.h"
 #include "WebExtensionStorageSQLiteStore.h"
 #include "WebExtensionTab.h"
 #include "WebExtensionTabIdentifier.h"
@@ -113,7 +114,6 @@ OBJC_CLASS WKWebExtensionContext;
 OBJC_CLASS WKWebView;
 OBJC_CLASS WKWebViewConfiguration;
 OBJC_CLASS _WKWebExtensionContextDelegate;
-OBJC_CLASS _WKWebExtensionRegisteredScriptsSQLiteStore;
 OBJC_PROTOCOL(WKWebExtensionTab);
 OBJC_PROTOCOL(WKWebExtensionWindow);
 
@@ -564,15 +564,15 @@ public:
     void sendTestFinished(id argument);
 #endif
 
-#if PLATFORM(COCOA)
     URL backgroundContentURL();
+#if PLATFORM(COCOA)
     WKWebView *backgroundWebView() const { return m_backgroundWebView.get(); }
-    bool safeToLoadBackgroundContent() const { return m_safeToLoadBackgroundContent; }
 #endif
+    bool safeToLoadBackgroundContent() const { return m_safeToLoadBackgroundContent; }
 
     RefPtr<API::Error> backgroundContentLoadError() const { return m_backgroundContentLoadError; }
 
-    NSString *backgroundWebViewInspectionName();
+    const String& backgroundWebViewInspectionName();
     void setBackgroundWebViewInspectionName(const String&);
 
     bool decidePolicyForNavigationAction(WKWebView *, WKNavigationAction *);
@@ -590,6 +590,8 @@ public:
 
     void addInjectedContent(WebUserContentControllerProxy&);
     void removeInjectedContent(WebUserContentControllerProxy&);
+
+    void addDeclarativeNetRequestRules(WebUserContentControllerProxy&);
 
     bool handleContentRuleListNotificationForTab(WebExtensionTab&, const URL&, WebCore::ContentRuleListResults::Result);
     void incrementActionCountForTab(WebExtensionTab&, ssize_t incrementAmount);
@@ -617,8 +619,8 @@ public:
     void enumerateExtensionPages(NOESCAPE Function<void(WebPageProxy&, bool& stop)>&&);
 
     WKWebView *relatedWebView();
-    NSString *processDisplayName();
-    NSArray *corsDisablingPatterns();
+    String processDisplayName();
+    Vector<String> corsDisablingPatterns();
     void updateCORSDisablingPatternsOnAllExtensionPages();
     WKWebViewConfiguration *webViewConfiguration(WebViewPurpose = WebViewPurpose::Any);
 
@@ -777,7 +779,7 @@ private:
     // Registered content scripts methods.
     void loadRegisteredContentScripts();
     void clearRegisteredContentScripts();
-    _WKWebExtensionRegisteredScriptsSQLiteStore *registeredContentScriptsStore();
+    Ref<WebExtensionRegisteredScriptsSQLiteStore> registeredContentScriptsStore();
 
     // Storage
     void setSessionStorageAllowedInContentScripts(bool);
@@ -1090,9 +1092,7 @@ private:
     HashMap<Ref<WebExtensionMatchPattern>, UserStyleSheetVector> m_injectedStyleSheetsPerPatternMap;
 
     HashMap<String, Ref<WebExtensionDynamicScripts::WebExtensionRegisteredScript>> m_registeredScriptsMap;
-#if PLATFORM(COCOA)
-    RetainPtr<_WKWebExtensionRegisteredScriptsSQLiteStore> m_registeredContentScriptsStorage;
-#endif
+    RefPtr<WebExtensionRegisteredScriptsSQLiteStore> m_registeredContentScriptsStorage;
 
     UserStyleSheetVector m_dynamicallyInjectedUserStyleSheets;
 

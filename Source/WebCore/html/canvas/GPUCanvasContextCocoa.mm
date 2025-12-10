@@ -33,6 +33,7 @@
 #include "GPUPresentationContextDescriptor.h"
 #include "GPUTextureDescriptor.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
+#include "GraphicsLayerEnums.h"
 #include "ImageBitmap.h"
 #include "PlatformCALayerDelegatedContents.h"
 #include "PlatformScreen.h"
@@ -66,9 +67,9 @@ public:
         } else
             layer.clearContents();
     }
-    GraphicsLayer::CompositingCoordinatesOrientation orientation() const final
+    GraphicsLayerCompositingCoordinatesOrientation orientation() const final
     {
-        return GraphicsLayer::CompositingCoordinatesOrientation::TopDown;
+        return GraphicsLayerCompositingCoordinatesOrientation::TopDown;
     }
     void setDisplayBuffer(WTF::MachSendRight& displayBuffer)
     {
@@ -171,17 +172,20 @@ GPUCanvasContextCocoa::GPUCanvasContextCocoa(CanvasBase& canvas, Ref<GPUComposit
     , m_width(getCanvasWidth(htmlOrOffscreenCanvas()))
     , m_height(getCanvasHeight(htmlOrOffscreenCanvas()))
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    , m_screenPropertiesChangedObserver([this](PlatformDisplayID displayID) {
+    , m_screenPropertiesChangedObserver(ScreenPropertiesChangedObserver::create([weakThis = WeakPtr { *this }](PlatformDisplayID displayID) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
         if (auto* screenData = WebCore::screenData(displayID))
-            updateScreenHeadroom(screenData->currentEDRHeadroom, screenData->suppressEDR);
-    })
+            protectedThis->updateScreenHeadroom(screenData->currentEDRHeadroom, screenData->suppressEDR);
+    }))
 #endif // HAVE(SUPPORT_HDR_DISPLAY)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY)
     if (document)
         document->addScreenPropertiesChangedObserver(*m_screenPropertiesChangedObserver);
     else
-        m_screenPropertiesChangedObserver = std::nullopt;
+        m_screenPropertiesChangedObserver = nullptr;
 #else
     UNUSED_PARAM(document);
 #endif
@@ -435,7 +439,7 @@ ExceptionOr<void> GPUCanvasContextCocoa::configure(GPUCanvasConfiguration&& conf
     m_currentEDRHeadroom = 0.f;
     m_suppressEDR = false;
 #endif // HAVE(SUPPORT_HDR_DISPLAY)
-    auto renderBuffers = m_compositorIntegration->recreateRenderBuffers(m_width, m_height, toWebCoreColorSpace(configuration.colorSpace, configuration.toneMapping), configuration.alphaMode == GPUCanvasAlphaMode::Premultiplied ? WebCore::AlphaPremultiplication::Premultiplied : WebCore::AlphaPremultiplication::Unpremultiplied, textureFormat, configuration.device->backing());
+    auto renderBuffers = m_compositorIntegration->recreateRenderBuffers(m_width, m_height, toWebCoreColorSpace(configuration.colorSpace, configuration.toneMapping), configuration.alphaMode == GPUCanvasAlphaMode::Premultiplied ? WebCore::AlphaPremultiplication::Premultiplied : WebCore::AlphaPremultiplication::Unpremultiplied, textureFormat, is<OffscreenCanvas>(canvasBase()) ? 1 : 3, configuration.device->backing());
     // FIXME: This ASSERT() is wrong. It's totally possible for the IPC to the GPU process to timeout if the GPUP is busy, and return nothing here.
     ASSERT(!renderBuffers.isEmpty());
 

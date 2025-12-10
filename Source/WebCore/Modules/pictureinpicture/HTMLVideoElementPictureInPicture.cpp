@@ -35,6 +35,7 @@
 #include "JSDOMPromiseDeferred.h"
 #include "JSPictureInPictureWindow.h"
 #include "Logging.h"
+#include "NodeDocument.h"
 #include "PictureInPictureEvent.h"
 #include "PictureInPictureSupport.h"
 #include "PictureInPictureWindow.h"
@@ -65,20 +66,34 @@ HTMLVideoElementPictureInPicture::~HTMLVideoElementPictureInPicture()
         videoElement->setPictureInPictureObserver(nullptr);
 }
 
-HTMLVideoElementPictureInPicture* HTMLVideoElementPictureInPicture::from(HTMLVideoElement& videoElement)
+void HTMLVideoElementPictureInPicture::ref() const
 {
-    HTMLVideoElementPictureInPicture* supplement = static_cast<HTMLVideoElementPictureInPicture*>(Supplement<HTMLVideoElement>::from(&videoElement, supplementName()));
-    if (!supplement) {
-        auto newSupplement = makeUnique<HTMLVideoElementPictureInPicture>(videoElement);
-        supplement = newSupplement.get();
+    m_videoElement->ref();
+}
+
+void HTMLVideoElementPictureInPicture::deref() const
+{
+    m_videoElement->deref();
+}
+
+HTMLVideoElementPictureInPicture& HTMLVideoElementPictureInPicture::from(HTMLVideoElement& videoElement)
+{
+    if (!Supplement<HTMLVideoElement>::from(&videoElement, supplementName())) {
+        auto newSupplement = makeUniqueWithoutRefCountedCheck<HTMLVideoElementPictureInPicture>(videoElement);
         provideTo(&videoElement, supplementName(), WTFMove(newSupplement));
     }
-    return supplement;
+    return *downcast<HTMLVideoElementPictureInPicture>(Supplement<HTMLVideoElement>::from(&videoElement, supplementName()));
+}
+
+Ref<HTMLVideoElementPictureInPicture> HTMLVideoElementPictureInPicture::protectedFrom(HTMLVideoElement& videoElement)
+{
+    return from(videoElement);
 }
 
 void HTMLVideoElementPictureInPicture::providePictureInPictureTo(HTMLVideoElement& videoElement)
 {
-    provideTo(&videoElement, supplementName(), makeUnique<HTMLVideoElementPictureInPicture>(videoElement));
+    auto newSupplement = makeUniqueWithoutRefCountedCheck<HTMLVideoElementPictureInPicture>(videoElement);
+    provideTo(&videoElement, supplementName(), WTFMove(newSupplement));
 }
 
 void HTMLVideoElementPictureInPicture::requestPictureInPicture(HTMLVideoElement& videoElement, Ref<DeferredPromise>&& promise)
@@ -104,7 +119,7 @@ void HTMLVideoElementPictureInPicture::requestPictureInPicture(HTMLVideoElement&
         return;
     }
 
-    auto videoElementPictureInPicture = HTMLVideoElementPictureInPicture::from(videoElement);
+    Ref videoElementPictureInPicture = HTMLVideoElementPictureInPicture::from(videoElement);
     if (videoElement.document().pictureInPictureElement() == &videoElement) {
         promise->resolve<IDLInterface<PictureInPictureWindow>>(*(videoElementPictureInPicture->m_pictureInPictureWindow));
         return;
@@ -124,22 +139,22 @@ void HTMLVideoElementPictureInPicture::requestPictureInPicture(HTMLVideoElement&
 
 bool HTMLVideoElementPictureInPicture::autoPictureInPicture(HTMLVideoElement& videoElement)
 {
-    return HTMLVideoElementPictureInPicture::from(videoElement)->m_autoPictureInPicture;
+    return HTMLVideoElementPictureInPicture::from(videoElement).m_autoPictureInPicture;
 }
 
 void HTMLVideoElementPictureInPicture::setAutoPictureInPicture(HTMLVideoElement& videoElement, bool autoPictureInPicture)
 {
-    HTMLVideoElementPictureInPicture::from(videoElement)->m_autoPictureInPicture = autoPictureInPicture;
+    HTMLVideoElementPictureInPicture::from(videoElement).m_autoPictureInPicture = autoPictureInPicture;
 }
 
 bool HTMLVideoElementPictureInPicture::disablePictureInPicture(HTMLVideoElement& videoElement)
 {
-    return HTMLVideoElementPictureInPicture::from(videoElement)->m_disablePictureInPicture;
+    return HTMLVideoElementPictureInPicture::from(videoElement).m_disablePictureInPicture;
 }
 
 void HTMLVideoElementPictureInPicture::setDisablePictureInPicture(HTMLVideoElement& videoElement, bool disablePictureInPicture)
 {
-    HTMLVideoElementPictureInPicture::from(videoElement)->m_disablePictureInPicture = disablePictureInPicture;
+    HTMLVideoElementPictureInPicture::from(videoElement).m_disablePictureInPicture = disablePictureInPicture;
 }
 
 void HTMLVideoElementPictureInPicture::exitPictureInPicture(Ref<DeferredPromise>&& promise)

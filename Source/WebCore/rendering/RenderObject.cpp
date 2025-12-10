@@ -31,7 +31,7 @@
 #include "AXUtilities.h"
 #include "BoundaryPointInlines.h"
 #include "ContainerNodeInlines.h"
-#include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "EditingInlines.h"
 #include "Editor.h"
 #include "ElementAncestorIteratorInlines.h"
@@ -49,14 +49,15 @@
 #include "LegacyRenderSVGRoot.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
-#include "LogicalSelectionOffsetCaches.h"
 #include "NodeInlines.h"
+#include "OutlinePainter.h"
 #include "Page.h"
 #include "PseudoElement.h"
 #include "ReferencedSVGResources.h"
 #include "RenderChildIterator.h"
 #include "RenderCounter.h"
 #include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderGrid.h"
 #include "RenderInline.h"
@@ -104,6 +105,7 @@ using namespace HTMLNames;
 
 WTF_MAKE_PREFERABLY_COMPACT_TZONE_OR_ISO_ALLOCATED_IMPL(RenderObject);
 WTF_MAKE_PREFERABLY_COMPACT_TZONE_ALLOCATED_IMPL(RenderObject::RenderObjectRareData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderObject::CachedImageListener);
 
 #if ASSERT_ENABLED
 
@@ -121,7 +123,7 @@ RenderObject::SetLayoutNeededForbiddenScope::~SetLayoutNeededForbiddenScope()
 
 #endif
 
-struct SameSizeAsRenderObject final : public CachedImageClient {
+struct SameSizeAsRenderObject : public CanMakeSingleThreadWeakPtr<SameSizeAsRenderObject>, public CanMakeCheckedPtr<SameSizeAsRenderObject> {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SameSizeAsRenderObject);
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(SameSizeAsRenderObject);
 
@@ -138,6 +140,7 @@ struct SameSizeAsRenderObject final : public CachedImageClient {
     uint8_t m_type;
     uint8_t m_typeSpecificFlags;
     CheckedPtr<Layout::Box> layoutBox;
+    void* cachedResourceClient;
 };
 
 #if CPU(ADDRESS64)
@@ -150,7 +153,7 @@ void RenderObjectDeleter::operator() (RenderObject* renderer) const
 }
 
 RenderObject::RenderObject(Type type, Node& node, OptionSet<TypeFlag> typeFlags, TypeSpecificFlags typeSpecificFlags)
-    : CachedImageClient()
+    : CanMakeSingleThreadWeakPtr<RenderObject>()
 #if ASSERT_ENABLED
     , m_setNeedsLayoutForbidden(false)
 #endif
@@ -437,7 +440,7 @@ RenderObject* RenderObject::traverseNext(const RenderObject* stayWithin, HeightT
             if (overflowType == OverflowHeight)
                 newFixedDepth = currentDepth;
             ASSERT(!stayWithin || child->isDescendantOf(stayWithin));
-            return child.get();
+            return child.unsafeGet();
         }
     }
 
@@ -460,7 +463,7 @@ RenderObject* RenderObject::traverseNext(const RenderObject* stayWithin, HeightT
                 if (overflowType == OverflowHeight)
                     newFixedDepth = currentDepth;
                 ASSERT(!stayWithin || !n->nextSibling() || n->nextSibling()->isDescendantOf(stayWithin));
-                return sibling.get();
+                return sibling.unsafeGet();
             }
         }
         if (!stayWithin || n->parent() != stayWithin) {
@@ -481,6 +484,11 @@ RenderLayer* RenderObject::enclosingLayer() const
             return renderer.layer();
     }
     return nullptr;
+}
+
+CheckedPtr<RenderLayer> RenderObject::checkedEnclosingLayer() const
+{
+    return enclosingLayer();
 }
 
 RenderBox& RenderObject::enclosingBox() const
@@ -642,7 +650,7 @@ RenderElement* RenderObject::markContainingBlocksForLayout(RenderElement* layout
             if (ancestor == layoutRoot)
                 return layoutRoot;
         } else if (isLayoutBoundary(*ancestor))
-            return ancestor.get();
+            return ancestor.unsafeGet();
 
         if (auto* renderGrid = dynamicDowncast<RenderGrid>(container.get()); renderGrid && renderGrid->isExtrinsicallySized())
             simplifiedNormalFlowLayout = true;
@@ -791,35 +799,6 @@ CheckedPtr<RenderBlock> RenderObject::checkedContainingBlock() const
     return containingBlock();
 }
 
-void RenderObject::addPDFURLRect(const PaintInfo& paintInfo, const LayoutPoint& paintOffset) const
-{
-    Vector<LayoutRect> focusRingRects;
-    addFocusRingRects(focusRingRects, paintOffset, paintInfo.paintContainer);
-    LayoutRect urlRect = unionRect(focusRingRects);
-
-    if (urlRect.isEmpty())
-        return;
-
-    RefPtr element = dynamicDowncast<Element>(node());
-    if (!element || !element->isLink())
-        return;
-
-    const AtomString& href = element->getAttribute(hrefAttr);
-    if (href.isNull())
-        return;
-
-    if (paintInfo.context().supportsInternalLinks()) {
-        String outAnchorName;
-        RefPtr linkTarget = element->findAnchorElementForLink(outAnchorName);
-        if (linkTarget) {
-            paintInfo.context().setDestinationForRect(outAnchorName, urlRect);
-            return;
-        }
-    }
-
-    paintInfo.context().setURLForRect(element->protectedDocument()->completeURL(href), urlRect);
-}
-
 #if PLATFORM(IOS_FAMILY)
 // This function is similar in spirit to RenderText::absoluteRectsForRange, but returns rectangles
 // which are annotated with additional state which helps iOS draw selections in its unique way.
@@ -872,13 +851,16 @@ IntRect RenderObject::absoluteBoundingBoxRect(bool useTransforms, bool* wasFixed
 
 void RenderObject::absoluteFocusRingQuads(Vector<FloatQuad>& quads)
 {
-    Vector<LayoutRect> rects;
-    // FIXME: addFocusRingRects() needs to be passed this transform-unaware
-    // localToAbsolute() offset here because RenderInline::addFocusRingRects()
+    CheckedPtr elementRenderer = dynamicDowncast<RenderElement>(*this);
+    if (!elementRenderer)
+        return;
+
+    // FIXME: collectFocusRingRects() needs to be passed this transform-unaware
+    // localToAbsolute() offset here because OutlinePainter::collectFocusRingRects()
     // implicitly assumes that. This doesn't work correctly with transformed
     // descendants.
     FloatPoint absolutePoint = localToAbsolute();
-    addFocusRingRects(rects, flooredLayoutPoint(absolutePoint));
+    auto rects = OutlinePainter::collectFocusRingRects(*elementRenderer, flooredLayoutPoint(absolutePoint), nullptr);
     float deviceScaleFactor = document().deviceScaleFactor();
     for (auto rect : rects) {
         rect.moveBy(LayoutPoint(-absolutePoint));
@@ -925,8 +907,8 @@ RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
     auto fullRepaintAlreadyScheduled = false;
 
     if (view().usesCompositing()) {
-        if (CheckedPtr parentLayer = enclosingLayer()) {
-            auto compLayerStatus = parentLayer->enclosingCompositingLayerForRepaint();
+        if (CheckedPtr enclosingLayer = this->enclosingLayer()) {
+            auto compLayerStatus = enclosingLayer->enclosingCompositingLayerForRepaint();
             if (compLayerStatus.layer) {
                 repaintContainer = &compLayerStatus.layer->renderer();
                 fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled && canRelyOnAncestorLayerFullRepaint(*this, *compLayerStatus.layer);
@@ -1033,7 +1015,7 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
     if (view().usesCompositing()) {
         ASSERT(repaintContainer->isComposited());
         if (CheckedPtr layer = repaintContainer->layer())
-            layer->setBackingNeedsRepaintInRect(r, shouldClipToLayer ? GraphicsLayer::ClipToLayer : GraphicsLayer::DoNotClipToLayer);
+            layer->setBackingNeedsRepaintInRect(r, shouldClipToLayer ? GraphicsLayer::ShouldClipToLayer::Clip : GraphicsLayer::ShouldClipToLayer::DoNotClip);
     }
 }
 
@@ -1377,8 +1359,8 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     else
         stream << nameView;
 
-    if (style().pseudoElementType() != PseudoId::None)
-        stream << " (::" << style().pseudoElementType() << ")";
+    if (style().pseudoElementType())
+        stream << " (::" << *style().pseudoElementType() << ")";
 
     if (auto* renderBox = dynamicDowncast<RenderBox>(*this)) {
         FloatRect boxRect = renderBox->frameRect();
@@ -1674,7 +1656,7 @@ static inline RenderElement* containerForElement(const RenderObject& renderer, c
     // (1) For normal flow elements, it just returns the parent.
     // (2) For absolute positioned elements, it will return a relative positioned inline, while
     // containingBlock() skips to the non-anonymous containing block.
-    // This does mean that computePositionedLogicalWidth and computePositionedLogicalHeight have to use container().
+    // This does mean that computeOutOfFlowPositionedLogicalWidth and computeOutOfFlowPositionedLogicalHeight have to use container().
     // FIXME: See https://bugs.webkit.org/show_bug.cgi?id=270977 for RenderLineBreak special treatment.
     if (!is<RenderElement>(renderer) || is<RenderText>(renderer) || is<RenderLineBreak>(renderer))
         return renderer.parent();
@@ -1710,7 +1692,7 @@ static inline RenderElement* containerForElement(const RenderObject& renderer, c
             if (repaintContainerSkipped && repaintContainer == parent)
                 *repaintContainerSkipped = true;
         }
-        return parent.get();
+        return parent.unsafeGet();
     }
     for (; parent && !parent->canContainFixedPositionObjects(); parent = parent->parent()) {
         if (isInTopLayerOrBackdrop(parent->style(), parent->element())) {
@@ -1720,7 +1702,7 @@ static inline RenderElement* containerForElement(const RenderObject& renderer, c
         if (repaintContainerSkipped && repaintContainer == parent)
             *repaintContainerSkipped = true;
     }
-    return parent.get();
+    return parent.unsafeGet();
 }
 
 RenderElement* RenderObject::container() const
@@ -1760,6 +1742,7 @@ bool RenderObject::setCapturedInViewTransition(bool captured)
 
     if (layerToInvalidate) {
         layerToInvalidate->setNeedsPostLayoutCompositingUpdate();
+        layerToInvalidate->setNeedsCompositingConfigurationUpdate();
 
         // Invalidate transform applied by `RenderLayerBacking::updateTransform`.
         layerToInvalidate->setNeedsCompositingGeometryUpdate();
@@ -1941,11 +1924,6 @@ int RenderObject::previousOffsetForBackwardDeletion(int current) const
 int RenderObject::nextOffset(int current) const
 {
     return current + 1;
-}
-
-void RenderObject::imageChanged(CachedImage* image, const IntRect* rect)
-{
-    imageChanged(static_cast<WrappedImagePtr>(image), rect);
 }
 
 PositionWithAffinity RenderObject::createPositionWithAffinity(int offset, Affinity affinity) const
@@ -3019,6 +2997,87 @@ TextStream& operator<<(TextStream& ts, const RenderObject::RepaintRects& repaint
     if (repaintRects.outlineBoundsRect && repaintRects.outlineBoundsRect != repaintRects.clippedOverflowRect)
         ts << " (outline bounds "_s << repaintRects.outlineBoundsRect << ')';
     return ts;
+}
+
+auto RenderObject::CachedImageListener::create(RenderObject& renderer) -> Ref<CachedImageListener>
+{
+    return adoptRef(*new CachedImageListener(renderer));
+}
+
+RenderObject::CachedImageListener::CachedImageListener(RenderObject& renderer)
+    : m_renderer(renderer)
+{
+}
+
+void RenderObject::CachedImageListener::notifyFinished(CachedResource& resource, const NetworkLoadMetrics& metrics, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        renderer->notifyFinished(resource, metrics, loadWillContinueInAnotherProcess);
+}
+
+void RenderObject::CachedImageListener::imageChanged(CachedImage* image, const IntRect* rect)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        renderer->imageChanged(static_cast<WrappedImagePtr>(image), rect);
+}
+
+bool RenderObject::CachedImageListener::allowsAnimation() const
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        return renderer->allowsAnimation();
+    return true;
+}
+
+bool RenderObject::CachedImageListener::useSystemDarkAppearance() const
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        return renderer->useSystemDarkAppearance();
+    return false;
+}
+
+bool RenderObject::CachedImageListener::canDestroyDecodedData() const
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        return renderer->canDestroyDecodedData();
+    return true;
+}
+
+VisibleInViewportState RenderObject::CachedImageListener::imageFrameAvailable(CachedImage& image, ImageAnimatingState state, const IntRect* rect)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        return renderer->imageFrameAvailable(image, state, rect);
+    return VisibleInViewportState::No;
+}
+
+VisibleInViewportState RenderObject::CachedImageListener::imageVisibleInViewport(const Document& document) const
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        return renderer->imageVisibleInViewport(document);
+    return VisibleInViewportState::No;
+}
+
+void RenderObject::CachedImageListener::didRemoveCachedImageClient(CachedImage& image)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        renderer->didRemoveCachedImageClient(image);
+}
+
+void RenderObject::CachedImageListener::imageContentChanged(CachedImage& image)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        renderer->imageContentChanged(image);
+}
+
+void RenderObject::CachedImageListener::scheduleRenderingUpdateForImage(CachedImage& image)
+{
+    if (CheckedPtr renderer = m_renderer.get())
+        renderer->scheduleRenderingUpdateForImage(image);
+}
+
+VisibleInViewportState RenderObject::imageFrameAvailable(CachedImage& image, ImageAnimatingState, const IntRect* changeRect)
+{
+    imageChanged(static_cast<WrappedImagePtr>(&image), changeRect);
+    return VisibleInViewportState::No;
 }
 
 #if ENABLE(TREE_DEBUGGING)

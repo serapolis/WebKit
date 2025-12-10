@@ -40,7 +40,7 @@ class RenderSVGResourcePaintServer;
 class SVGGraphicsElement;
 
 namespace Style {
-struct URL;
+struct SVGMarkerResource;
 }
 
 class RenderLayerModelObject : public RenderElement {
@@ -126,7 +126,7 @@ public:
     virtual void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const = 0;
     void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox) const;
 
-    bool shouldUsePositionedClipping() const { return isAbsolutelyPositioned() || isRenderSVGForeignObject(); }
+    inline bool shouldUsePositionedClipping() const;
 
 protected:
     RenderLayerModelObject(Type, Element&, RenderStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags);
@@ -138,7 +138,7 @@ protected:
     virtual void updateFromStyle() { }
 
 private:
-    RenderSVGResourceMarker* svgMarkerResourceFromStyle(const Style::URL& markerResource) const;
+    RenderSVGResourceMarker* svgMarkerResourceFromStyle(const Style::SVGMarkerResource&) const;
 
     std::unique_ptr<RenderLayer> m_layer;
 

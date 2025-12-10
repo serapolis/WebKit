@@ -30,22 +30,29 @@
 #if ENABLE(WEBXR)
 
 #include "ContextDestructionObserverInlines.h"
-#include "DocumentInlines.h"
+#include "DOMPointReadOnly.h"
+#include "DocumentPage.h"
 #include "EventNames.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JSWebXRHitTestSource.h"
 #include "JSWebXRReferenceSpace.h"
+#include "JSWebXRTransientInputHitTestSource.h"
 #include "Page.h"
 #include "PlatformXR.h"
 #include "SecurityOrigin.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebXRBoundedReferenceSpace.h"
 #include "WebXRFrame.h"
+#include "WebXRHitTestSource.h"
 #include "WebXRSystem.h"
+#include "WebXRTransientInputHitTestSource.h"
 #include "WebXRView.h"
 #include "XRFrameRequestCallback.h"
 #include "XRGPUProjectionLayerInit.h"
+#include "XRHitTestOptionsInit.h"
 #include "XRRenderStateInit.h"
 #include "XRSessionEvent.h"
+#include "XRTransientInputHitTestOptionsInit.h"
 #include <wtf/RefPtr.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -87,6 +94,8 @@ WebXRSession::WebXRSession(Document& document, WebXRSystem& system, XRSessionMod
     auto minimumNearClipPlaneFromPlatform = device.minimumNearClipPlane();
     if (minimumNearClipPlaneFromPlatform >= 0)
         m_minimumNearClipPlane = minimumNearClipPlaneFromPlatform;
+
+    document.registerForVisibilityStateChangedCallbacks(*this);
 }
 
 WebXRSession::~WebXRSession()
@@ -98,7 +107,7 @@ WebXRSession::~WebXRSession()
 
 XREnvironmentBlendMode WebXRSession::environmentBlendMode() const
 {
-    return m_environmentBlendMode;
+    return m_frameData.environmentBlendMode;
 }
 
 XRInteractionMode WebXRSession::interactionMode() const
@@ -139,13 +148,16 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
 
     // 3. If newState's baseLayer was created with an XRSession other than session,
     //    throw an InvalidStateError and abort these steps.
-    if (newState.baseLayer && newState.baseLayer->session() != this)
+    if (newState.baseLayer && newState.baseLayer.value() && newState.baseLayer.value()->session() != this)
         return Exception { ExceptionCode::InvalidStateError };
 
     // 4. If newState's inlineVerticalFieldOfView is set and session is an immersive session,
     //    throw an InvalidStateError and abort these steps.
     if (newState.inlineVerticalFieldOfView && isImmersive(m_mode))
         return Exception { ExceptionCode::InvalidStateError };
+
+    if (newState.baseLayer.has_value() && newState.layers)
+        return Exception { ExceptionCode::NotSupportedError, "Cannot set both baseLayer and layers in the same call to updateRenderState."_s };
 
     // 5. If none of newState's depthNear, depthFar, inlineVerticalFieldOfView, baseLayer,
     //    layers are set, abort these steps.
@@ -157,23 +169,8 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
     if (!m_pendingRenderState)
         m_pendingRenderState = m_activeRenderState->clone();
 
-    // 6. Run update the pending layers state with session and newState.
-    // https://www.w3.org/TR/webxrlayers-1/#updaterenderstatechanges
-#if ENABLE(WEBXR_LAYERS)
-    if (newState.layers) {
-        /* If session was not created with "layers" enabled and newState’s layers contains more than 1 instance, throw a NotSupportedError and abort these steps.
-         If session’s pending render state is null, set it to a copy of activeState.
-         If newState’s layers contains duplicate instances, throw a TypeError and abort these steps.
-         For each layer in newState’s layers:
-
-         If layer is an XRCompositionLayer and layer’s session is different from session, throw a TypeError and abort these steps.
-         If layer is an XRWebGLLayer and layer’s session is different from session, throw a TypeError and abort these steps.
-         Set session’s pending render state's baseLayer to null.
-         Set session’s pending render state's layers to newState’s layers.
-         */
-        m_pendingRenderState->setLayers(*newState.layers);
-    }
-#endif
+    if (newState.passthroughFullyObscured)
+        m_pendingRenderState->setPassthroughFullyObscured(newState.passthroughFullyObscured.value());
 
     // 9. If newState's depthNear value is set, set session's pending render state's depthNear to newState's depthNear.
     if (newState.depthNear)
@@ -190,7 +187,30 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
 
     // 12. If newState's baseLayer is set, set session's pending render state's baseLayer to newState's baseLayer.
     if (newState.baseLayer)
-        m_pendingRenderState->setBaseLayer(newState.baseLayer.get());
+        m_pendingRenderState->setBaseLayer(newState.baseLayer->get());
+    // https://www.w3.org/TR/webxrlayers-1/#updaterenderstatechanges
+#if ENABLE(WEBXR_LAYERS)
+    else if (newState.layers) {
+        if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::Layers) && newState.layers->size() > 1)
+            return Exception { ExceptionCode::NotSupportedError, "Cannot set layers when the Layers feature is not enabled for this session."_s };
+
+        if (!m_pendingRenderState)
+            m_pendingRenderState = m_activeRenderState->clone();
+
+        for (size_t i = 0; i < newState.layers->size(); ++i) {
+            auto& layer = newState.layers->at(i);
+
+            if (i != newState.layers->reverseFind(layer))
+                return Exception { ExceptionCode::TypeError, "Cannot set the same XRLayer instance multiple times in the layers array."_s };
+
+            if (layer->isWebXRWebGLLayer() && downcast<WebXRWebGLLayer>(layer.get()).session() != this)
+                return Exception { ExceptionCode::TypeError, "XRWebGLLayer's session does not match the XRSession."_s };
+        }
+
+        m_pendingRenderState->setBaseLayer(nullptr);
+        m_pendingRenderState->setLayers(*newState.layers);
+    }
+#endif
 
     return { };
 }
@@ -552,7 +572,9 @@ void WebXRSession::applyPendingRenderState()
         m_activeRenderState->setOutputCanvas(nullptr);
     }
 
-    m_requestData = {{ .depthRange = PlatformXR::DepthRange { static_cast<float>(m_activeRenderState->depthNear()), static_cast<float>(m_activeRenderState->depthFar()) } }}; // NOLINT
+    m_requestData = { {
+        .isPassthroughFullyObscured = m_activeRenderState->passthroughFullyObscured().value_or(false),
+        .depthRange = PlatformXR::DepthRange { static_cast<float>(m_activeRenderState->depthNear()), static_cast<float>(m_activeRenderState->depthFar()) } }}; // NOLINT
 }
 
 void WebXRSession::minimalUpdateRendering()
@@ -737,12 +759,103 @@ bool WebXRSession::isHandTrackingEnabled() const
 }
 #endif
 
+#if ENABLE(WEBXR_HIT_TEST)
+template <typename OptionsInit>
+Vector<XRHitTestTrackableType> entityTypesFromOptions(const OptionsInit& options)
+{
+    if (options.entityTypes.isEmpty())
+        return { XRHitTestTrackableType::Plane };
+    return options.entityTypes;
+}
+
+// https://immersive-web.github.io/hit-test/#dom-xrsession-requesthittestsource
+void WebXRSession::requestHitTestSource(const XRHitTestOptionsInit& init, RequestHitTestSourcePromise&& promise)
+{
+    if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::HitTest)) {
+        promise.reject(Exception { ExceptionCode::NotSupportedError });
+        return;
+    }
+    if (m_ended) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The session was already ended"_s });
+        return;
+    }
+    RefPtr device = this->device();
+    if (!device) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError });
+        return;
+    }
+    auto maybeNativeOrigin = init.space->nativeOrigin();
+    if (!maybeNativeOrigin) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "Unable to retrieve the native origin from XRSpace"_s });
+        return;
+    }
+    auto toFloatPoint3D = [](auto& point) {
+        return FloatPoint3D(point.x(), point.y(), point.z());
+    };
+    PlatformXR::Ray ray { { 0, 0, 0 }, { 0, 0, -1 } };
+    if (init.offsetRay)
+        ray = PlatformXR::Ray { toFloatPoint3D(init.offsetRay->origin()), toFloatPoint3D(init.offsetRay->direction()) };
+    PlatformXR::HitTestOptions options = { *WTFMove(maybeNativeOrigin), entityTypesFromOptions(init), WTFMove(ray) };
+    device->requestHitTestSource(options, [protectedThis = Ref { *this }, promise = WTFMove(promise)](ExceptionOr<PlatformXR::HitTestSource> exceptionOrSource) mutable {
+        if (exceptionOrSource.hasException())
+            promise.reject(exceptionOrSource.releaseException());
+        else
+            promise.resolve(WebXRHitTestSource::create(protectedThis, exceptionOrSource.releaseReturnValue()));
+    });
+}
+
+// https://immersive-web.github.io/hit-test/#dom-xrsession-requesthittestsourcefortransientinput
+void WebXRSession::requestHitTestSourceForTransientInput(const XRTransientInputHitTestOptionsInit& init, RequestHitTestSourceForTransientInputPromise&& promise)
+{
+    if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::HitTest)) {
+        promise.reject(Exception { ExceptionCode::NotSupportedError });
+        return;
+    }
+    if (m_ended) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError, "The session was already ended"_s });
+        return;
+    }
+    RefPtr device = this->device();
+    if (!device) {
+        promise.reject(Exception { ExceptionCode::InvalidStateError });
+        return;
+    }
+    auto toFloatPoint3D = [](auto& point) {
+        return FloatPoint3D(point.x(), point.y(), point.z());
+    };
+    PlatformXR::Ray ray { { 0, 0, 0 }, { 0, 0, -1 } };
+    if (init.offsetRay)
+        ray = PlatformXR::Ray { toFloatPoint3D(init.offsetRay->origin()), toFloatPoint3D(init.offsetRay->direction()) };
+    PlatformXR::TransientInputHitTestOptions options = { init.profile, entityTypesFromOptions(init), WTFMove(ray) };
+    device->requestTransientInputHitTestSource(options, [protectedThis = Ref { *this }, promise = WTFMove(promise)](ExceptionOr<PlatformXR::TransientInputHitTestSource> exceptionOrSource) mutable {
+        if (exceptionOrSource.hasException())
+            promise.reject(exceptionOrSource.releaseException());
+        else
+            promise.resolve(WebXRTransientInputHitTestSource::create(protectedThis, exceptionOrSource.releaseReturnValue()));
+    });
+}
+#endif
+
 void WebXRSession::initializeTrackingAndRendering(std::optional<XRCanvasConfiguration>&& init)
 {
     RefPtr document = downcast<Document>(scriptExecutionContext());
     auto device = this->device();
     if (document && device)
         device->initializeTrackingAndRendering(document->securityOrigin().data(), m_mode, m_requestedFeatures, WTFMove(init));
+}
+
+void WebXRSession::visibilityStateChanged()
+{
+    RefPtr sessionDocument = downcast<Document>(scriptExecutionContext());
+    if (!sessionDocument)
+        return;
+
+    // For inline sessions the visibility state MUST mirror the Document’s visibilityState
+    // https://immersive-web.github.io/webxr/#xrsession-visibility-state
+    if (m_mode != XRSessionMode::Inline)
+        return;
+
+    updateSessionVisibilityState(sessionDocument->hidden() ? PlatformXR::VisibilityState::Hidden : PlatformXR::VisibilityState::Visible);
 }
 
 WebCoreOpaqueRoot root(WebXRSession* session)

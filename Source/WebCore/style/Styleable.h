@@ -26,7 +26,6 @@
 #pragma once
 
 #include <WebCore/Element.h>
-#include <WebCore/NodeInlines.h>
 #include <WebCore/PseudoElement.h>
 #include <WebCore/PseudoElementIdentifier.h>
 #include <WebCore/RenderStyleConstants.h>
@@ -34,6 +33,7 @@
 
 namespace WebCore {
 
+class Element;
 class KeyframeEffectStack;
 class RenderElement;
 class RenderStyle;
@@ -56,13 +56,7 @@ struct Styleable {
     {
     }
 
-    static const Styleable fromElement(Element& element)
-    {
-        if (auto* pseudoElement = dynamicDowncast<PseudoElement>(element))
-            return Styleable(*pseudoElement->hostElement(), Style::PseudoElementIdentifier { element.pseudoId() });
-        ASSERT(element.pseudoId() == PseudoId::None);
-        return Styleable(element, std::nullopt);
-    }
+    inline static const Styleable fromElement(Element&);
 
     static const std::optional<const Styleable> fromRenderer(const RenderElement&);
 
@@ -72,6 +66,7 @@ struct Styleable {
     }
 
     RenderElement* renderer() const;
+    Ref<Element> protectedElement() const { return element; }
 
     std::unique_ptr<RenderStyle> computeAnimatedStyle() const;
 
@@ -83,7 +78,7 @@ struct Styleable {
     bool mayHaveNonZeroOpacity() const;
 
     bool isRunningAcceleratedAnimationOfProperty(CSSPropertyID) const;
-
+    bool isRunningAcceleratedTransformRelatedAnimation() const;
     bool hasRunningAcceleratedAnimations() const;
 
     bool capturedInViewTransition() const;

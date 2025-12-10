@@ -61,7 +61,7 @@ WI.LogContentView = class LogContentView extends WI.ContentView
         this._lastMessageView = null;
 
         this._findBanner = new WI.FindBanner(this, {alwaysShowing: true, className: "console"});
-        this._findBanner.visibilityPriority = WI.NavigationItem.VisibilityPriority.Low;
+        this._findBanner.visibilityPriority = WI.NavigationItem.VisibilityPriority.High;
         this._findBanner.targetElement = this.element;
 
         this._currentSearchQuery = "";
@@ -520,7 +520,8 @@ WI.LogContentView = class LogContentView extends WI.ContentView
 
     _previousMessageRepeatCountUpdated(event)
     {
-        if (!this._logViewController.updatePreviousMessageRepeatCount(event.data.count, event.data.timestamp))
+        let {target, count, timestamp} = event.data;
+        if (!this._logViewController.updatePreviousMessageRepeatCount(target, count, timestamp))
             return;
 
         if (this._lastMessageView) {
@@ -898,8 +899,13 @@ WI.LogContentView = class LogContentView extends WI.ContentView
 
     _garbageCollect()
     {
-        for (let target of WI.targets)
+        for (let target of WI.targets) {
+            // FIXME: <https://webkit.org/b/298984> Add Heap support for FrameTarget.
+            if (target instanceof WI.FrameTarget)
+                continue;
+
             target.HeapAgent.gc();
+        }
     }
 
     _messageShouldBeVisible(message)

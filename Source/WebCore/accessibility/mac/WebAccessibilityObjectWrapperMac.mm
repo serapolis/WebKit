@@ -52,7 +52,7 @@
 #import "ChromeClient.h"
 #import "ContextMenuController.h"
 #import "DateComponents.h"
-#import "DocumentInlines.h"
+#import "DocumentView.h"
 #import "ElementInlines.h"
 #import "Font.h"
 #import "FontCascade.h"
@@ -88,6 +88,10 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/MakeString.h>
 #import <wtf/text/WTFString.h>
+
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+#import "ModelPlayerAccessibilityChildren.h"
+#endif
 
 using namespace WebCore;
 
@@ -239,10 +243,10 @@ static std::pair<AccessibilitySearchTextCriteria, AccessibilityTextOperation> ac
     AccessibilitySearchTextCriteria criteria;
     AccessibilityTextOperation operation;
 
-    NSString *activityParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextActivity];
-    NSString *ambiguityResolutionParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextAmbiguityResolution];
-    NSString *replacementStringParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextReplacementString];
-    NSArray *searchStringsParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextSearchStrings];
+    RetainPtr<NSString> activityParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextActivity];
+    RetainPtr<NSString> ambiguityResolutionParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextAmbiguityResolution];
+    RetainPtr<NSString> replacementStringParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextReplacementString];
+    RetainPtr<NSArray> searchStringsParameter = [parameterizedAttribute objectForKey:NSAccessibilitySelectTextSearchStrings];
 
     if ([activityParameter isKindOfClass:[NSString class]]) {
         if ([activityParameter isEqualToString:NSAccessibilitySelectTextActivityFindAndReplace])
@@ -264,10 +268,10 @@ static std::pair<AccessibilitySearchTextCriteria, AccessibilityTextOperation> ac
     }
 
     if ([replacementStringParameter isKindOfClass:[NSString class]])
-        operation.replacementStrings = { String(replacementStringParameter) };
+        operation.replacementStrings = { String(replacementStringParameter.get()) };
 
     if ([searchStringsParameter isKindOfClass:[NSArray class]])
-        criteria.searchStrings = makeVector<String>(searchStringsParameter);
+        criteria.searchStrings = makeVector<String>(searchStringsParameter.get());
 
     return std::make_pair(criteria, operation);
 }
@@ -276,12 +280,12 @@ static AccessibilitySearchTextCriteria accessibilitySearchTextCriteriaForParamet
 {
     AccessibilitySearchTextCriteria criteria;
 
-    NSArray *searchStrings = [params objectForKey:NSAccessibilitySearchTextSearchStrings];
-    NSString *start = [params objectForKey:NSAccessibilitySearchTextStartFrom];
-    NSString *direction = [params objectForKey:NSAccessibilitySearchTextDirection];
+    RetainPtr<NSArray> searchStrings = [params objectForKey:NSAccessibilitySearchTextSearchStrings];
+    RetainPtr<NSString> start = [params objectForKey:NSAccessibilitySearchTextStartFrom];
+    RetainPtr<NSString> direction = [params objectForKey:NSAccessibilitySearchTextDirection];
 
     if ([searchStrings isKindOfClass:[NSArray class]])
-        criteria.searchStrings = makeVector<String>(searchStrings);
+        criteria.searchStrings = makeVector<String>(searchStrings.get());
 
     if ([start isKindOfClass:[NSString class]]) {
         if ([start isEqualToString:NSAccessibilitySearchTextStartFromBegin])
@@ -306,14 +310,14 @@ static AccessibilityTextOperation accessibilityTextOperationForParameterizedAttr
 {
     AccessibilityTextOperation operation;
 
-    NSArray *markerRanges = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationMarkerRanges];
-    NSString *operationType = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationType];
-    NSArray *individualReplacementStrings = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationIndividualReplacementStrings];
-    NSString *replacementString = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationReplacementString];
-    NSNumber *smartReplace = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationSmartReplace];
+    RetainPtr<NSArray> markerRanges = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationMarkerRanges];
+    RetainPtr<NSString> operationType = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationType];
+    RetainPtr<NSArray> individualReplacementStrings = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationIndividualReplacementStrings];
+    RetainPtr<NSString> replacementString = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationReplacementString];
+    RetainPtr<NSNumber> smartReplace = [parameterizedAttribute objectForKey:NSAccessibilityTextOperationSmartReplace];
 
     if ([markerRanges isKindOfClass:[NSArray class]]) {
-        operation.textRanges = makeVector(markerRanges, [&axObjectCache] (id markerRange) {
+        operation.textRanges = makeVector(markerRanges.get(), [&axObjectCache] (id markerRange) {
             ASSERT(AXObjectIsTextMarkerRange(markerRange));
             return rangeForTextMarkerRange(axObjectCache, (AXTextMarkerRangeRef)markerRange);
         });
@@ -333,9 +337,9 @@ static AccessibilityTextOperation accessibilityTextOperationForParameterizedAttr
     }
 
     if ([individualReplacementStrings isKindOfClass:[NSArray class]]) {
-        operation.replacementStrings = makeVector<String>(individualReplacementStrings);
+        operation.replacementStrings = makeVector<String>(individualReplacementStrings.get());
     } else if ([replacementString isKindOfClass:[NSString class]])
-        operation.replacementStrings = { String(replacementString) };
+        operation.replacementStrings = { String(replacementString.get()) };
 
     if ([smartReplace isKindOfClass:[NSNumber class]])
         operation.smartReplace = [smartReplace boolValue] ? AccessibilityTextOperationSmartReplace::Yes : AccessibilityTextOperationSmartReplace::No;
@@ -345,14 +349,14 @@ static AccessibilityTextOperation accessibilityTextOperationForParameterizedAttr
 
 static std::pair<AXTextMarkerRange, AccessibilitySearchDirection> misspellingSearchCriteriaForParameterizedAttribute(const NSDictionary *params)
 {
-    id markerRangeRef = [params objectForKey:NSAccessibilityStartTextMarkerRangeParam];
-    if (!AXObjectIsTextMarkerRange(markerRangeRef))
+    RetainPtr<id> markerRangeRef = [params objectForKey:NSAccessibilityStartTextMarkerRangeParam];
+    if (!AXObjectIsTextMarkerRange(markerRangeRef.get()))
         return { };
 
     std::pair<AXTextMarkerRange, AccessibilitySearchDirection> criteria;
-    criteria.first = AXTextMarkerRange { (AXTextMarkerRangeRef)markerRangeRef };
+    criteria.first = AXTextMarkerRange { (AXTextMarkerRangeRef)markerRangeRef.get() };
 
-    NSNumber *forward = [params objectForKey:NSAccessibilitySearchTextDirection];
+    RetainPtr<NSNumber> forward = [params objectForKey:NSAccessibilitySearchTextDirection];
     if ([forward isKindOfClass:[NSNumber class]])
         criteria.second = [forward boolValue] ? AccessibilitySearchDirection::Next : AccessibilitySearchDirection::Previous;
     else
@@ -579,8 +583,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
     if (!backingObject)
         return nil;
 
+    // TODO: we definitely don't want to return accessibilityAttributeNames for AccessibilityScrollViews,
+    // only for external attachments like PDFs. Figure out some more specific logic to do this only when needed.
+#if !ENABLE_ACCESSIBILITY_LOCAL_FRAME
     if (backingObject->isAttachment())
         return [[self attachmentView] accessibilityAttributeNames];
+#endif // !ENABLE_ACCESSIBILITY_LOCAL_FRAME
 
     static NeverDestroyed<RetainPtr<NSArray>> attributes = @[
         NSAccessibilityRoleAttribute,
@@ -956,18 +964,18 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 
     // Adding these additional attributes is separated so that we only call arrayByAddingObjectsFromArray
     // (which does a copy) if we have any uncommon attributes to add.
-    NSArray *additionalAttributes = [self _additionalAccessibilityAttributeNames:backingObject];
+    RetainPtr<NSArray> additionalAttributes = [self _additionalAccessibilityAttributeNames:backingObject];
     if ([additionalAttributes count])
-        objectAttributes = [objectAttributes arrayByAddingObjectsFromArray:additionalAttributes];
+        objectAttributes = [objectAttributes arrayByAddingObjectsFromArray:additionalAttributes.get()];
 
-    return objectAttributes.get();
+    return objectAttributes.unsafeGet();
 }
 ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (id)remoteAccessibilityParentObject
 {
     RefPtr<AXCoreObject> backingObject = self.axBackingObject;
-    return backingObject ? backingObject->remoteParent().get() : nil;
+    return backingObject ? backingObject->remoteParent().unsafeGet() : nil;
 }
 
 static void convertToVector(NSArray* array, AccessibilityObject::AccessibilityChildrenVector& vector)
@@ -1066,11 +1074,11 @@ static void WebTransformCGPathToNSBezierPath(void* info, const CGPathElement *el
 // `unignoredChildren` must be the children of `backingObject`.
 static NSArray *transformSpecialChildrenCases(AXCoreObject& backingObject, const Vector<Ref<AXCoreObject>>& unignoredChildren)
 {
-#if ENABLE(MODEL_ELEMENT)
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
     if (backingObject.isModel()) {
         auto modelChildren = backingObject.modelElementChildren();
-        if (modelChildren.size()) {
-            return createNSArray(WTFMove(modelChildren), [] (auto&& child) -> id {
+        if (modelChildren.children.size()) {
+            return createNSArray(WTFMove(modelChildren.children), [](auto&& child) -> id {
                 return child.get();
             }).autorelease();
         }
@@ -1079,17 +1087,17 @@ static NSArray *transformSpecialChildrenCases(AXCoreObject& backingObject, const
 
     if (!unignoredChildren.size()) {
         if (RetainPtr widgetChildren = renderWidgetChildren(backingObject))
-            return widgetChildren.get();
+            return widgetChildren.unsafeGet();
     }
     return nil;
 }
 
 static NSArray *children(AXCoreObject& backingObject)
 {
-    const auto& unignoredChildren = backingObject.unignoredChildren();
+    const auto& unignoredChildren = backingObject.stitchedUnignoredChildren();
     RetainPtr<NSArray> specialChildren = transformSpecialChildrenCases(backingObject, unignoredChildren);
     if ([specialChildren count])
-        return specialChildren.get();
+        return specialChildren.unsafeGet();
 
     // The tree's (AXOutline) children are supposed to be its rows and columns.
     // The ARIA spec doesn't have columns, so we just need rows.
@@ -1143,6 +1151,11 @@ static id scrollViewParent(AXCoreObject& axObject)
     if (!axObject.isScrollView())
         return nil;
 
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    if (RefPtr crossFrameParent = axObject.crossFrameParentObject())
+        return crossFrameParent->wrapper();
+#endif
+
     // If this scroll view provides it's parent object (because it's a sub-frame), then
     // we should not find the remoteAccessibilityParent.
     if (axObject.parentObject())
@@ -1151,12 +1164,12 @@ static id scrollViewParent(AXCoreObject& axObject)
     if (RetainPtr platformWidget = axObject.platformWidget())
         return NSAccessibilityUnignoredAncestor(platformWidget.get());
 
-    return axObject.remoteParent().get();
+    return axObject.remoteParent().unsafeGet();
 }
 
 - (id)windowElement:(NSString *)attributeName
 {
-    if (id remoteParent = self.remoteAccessibilityParentObject) {
+    if (RetainPtr<id> remoteParent = self.remoteAccessibilityParentObject) {
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         return [remoteParent accessibilityAttributeValue:attributeName];
         ALLOW_DEPRECATED_DECLARATIONS_END
@@ -1193,7 +1206,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
     if ([attributeName isEqualToString: NSAccessibilityParentAttribute]) {
         // This will return the parent of the AXScrollArea, if this is a AccessibilityScrollView.
         if (RetainPtr scrollView = scrollViewParent(*backingObject))
-            return scrollView.get();
+            return scrollView.unsafeGet();
 
         // Tree item (changed to AXRows) can only report the tree (AXOutline) as its parent.
         if (backingObject->isTreeItem()) {
@@ -1209,10 +1222,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
         if (!parent)
             return nil;
 
+#if !ENABLE_ACCESSIBILITY_LOCAL_FRAME
         // In WebKit1, the scroll view is provided by the system (the attachment view), so the parent
         // should be reported directly as such.
         if (backingObject->isWebArea() && parent->isAttachment())
             return [parent->protectedWrapper() attachmentView];
+#endif // !ENABLE_ACCESSIBILITY_LOCAL_FRAME
 
         return parent->wrapper();
     }
@@ -1310,7 +1325,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 
     if ([attributeName isEqualToString: NSAccessibilityTitleAttribute]) {
         if (backingObject->isAttachment()) {
-            id attachmentView = [self attachmentView];
+            RetainPtr<id> attachmentView = [self attachmentView];
             if ([[attachmentView accessibilityAttributeNames] containsObject:NSAccessibilityTitleAttribute])
                 return [attachmentView accessibilityAttributeValue:NSAccessibilityTitleAttribute];
         }
@@ -1763,8 +1778,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
     if ([attributeName isEqualToString:NSAccessibilityDatetimeValueAttribute])
         return backingObject->datetimeAttributeValue().createNSString().autorelease();
 
-    if ([attributeName isEqualToString:NSAccessibilityInlineTextAttribute])
+    if ([attributeName isEqualToString:NSAccessibilityInlineTextAttribute]) {
+        // FIXME: After the AccessibilityStitchedText feature ships, we can probably remove this
+        // and all related code (making sure not to break backported versions of WebKit which won't
+        // have the corresponding VoiceOver changes).
         return @(backingObject->isInlineText());
+    }
 
     // ARIA Live region attributes.
     if ([attributeName isEqualToString:NSAccessibilityARIALiveAttribute])
@@ -2067,7 +2086,7 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
     if (!backingObject)
         return nil;
 
-    RefPtr focusedObject = backingObject->focusedUIElement();
+    RefPtr focusedObject = backingObject->focusedUIElementInAnyLocalFrame();
     return focusedObject ? focusedObject->wrapper() : nil;
 }
 
@@ -2090,11 +2109,11 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
     if (axObject) {
         if (axObject->isAttachment()) {
             RetainPtr wrapper = axObject->wrapper();
-            if (id attachmentView = [wrapper.get() attachmentView])
-                return attachmentView;
+            if (RetainPtr<id> attachmentView = [wrapper.get() attachmentView])
+                return attachmentView.autorelease();
         } else if (axObject->isRemoteFrame()) {
             if (returnPlatformElements)
-                return axObject->remoteFramePlatformElement().get();
+                return axObject->remoteFramePlatformElement().autorelease();
         } else if (axObject->isWidget()) {
             // Only call out to the main-thread if this object has a backing widget to query.
             hit = Accessibility::retrieveAutoreleasedValueFromMainThread<id>([axObject, &point] () -> RetainPtr<id> {
@@ -2120,7 +2139,7 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
         return;
     }
 
-    id hitTestResult = [self accessibilityHitTest:point];
+    RetainPtr<id> hitTestResult = [self accessibilityHitTest:point];
     if (!hitTestResult) {
         callback(@"");
         return;
@@ -2137,7 +2156,7 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
             RefPtr axRemoteFrame = dynamicDowncast<AXRemoteFrame>(axObject);
             if (page && axRemoteFrame) {
                 auto clientCallback = [callback = makeBlockPtr(callback)] (String result) {
-                    callback(nsStringNilIfEmpty(result));
+                    callback(nsStringNilIfEmpty(result).get());
                 };
 
                 page->chrome().client().resolveAccessibilityHitTestForTesting(*axRemoteFrame->frameID(), IntPoint(point), WTFMove(clientCallback));
@@ -2215,8 +2234,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
     if (!backingObject)
         return nil;
 
+#if !ENABLE_ACCESSIBILITY_LOCAL_FRAME
     if (backingObject->isAttachment())
         return nil;
+#endif // !ENABLE_ACCESSIBILITY_LOCAL_FRAME
 
     static NeverDestroyed<RetainPtr<NSArray>> paramAttrs = @[
         NSAccessibilityUIElementForTextMarkerAttribute,
@@ -2284,9 +2305,14 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
         [tempArray addObject:NSAccessibilityIndexForTextMarkerAttribute];
         return tempArray;
     }();
+    static NeverDestroyed secureFieldParamAttrs = [] {
+        auto tempArray = adoptNS([[NSMutableArray alloc] init]);
+        [tempArray addObject:NSAccessibilityUIElementsForSearchPredicateParameterizedAttribute];
+        return tempArray;
+    }();
 
     if (backingObject->isSecureField())
-        return @[ NSAccessibilityUIElementsForSearchPredicateParameterizedAttribute ];
+        return secureFieldParamAttrs.get().get();
 
     if (backingObject->isTextControl())
         return textParamAttrs.get().get();
@@ -3058,7 +3084,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 
     if ([attribute isEqualToString:NSAccessibilityUIElementsForSearchPredicateParameterizedAttribute]) {
         auto criteria = accessibilitySearchCriteriaForSearchPredicate(*backingObject, dictionary);
-        NSArray *widgetChildren = nil;
+        RetainPtr<NSArray> widgetChildren;
         if (isMatchingPlugin(*backingObject, criteria)) {
             // FIXME: We should also be searching the tree(s) resulting from `renderWidgetChildren` for matches.
             // This is tracked by https://bugs.webkit.org/show_bug.cgi?id=230167.
@@ -3066,7 +3092,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
                 NSUInteger includedChildrenCount = std::min([children count], NSUInteger(criteria.resultsLimit));
                 widgetChildren = [children subarrayWithRange:NSMakeRange(0, includedChildrenCount)];
                 if ([widgetChildren count] >= criteria.resultsLimit)
-                    return widgetChildren;
+                    return widgetChildren.autorelease();
                 criteria.resultsLimit -= [widgetChildren count];
             }
         } else if (backingObject->isRemoteFrame()
@@ -3078,7 +3104,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
                 NSUInteger includedChildrenCount = std::min([remoteFrameChildren count], NSUInteger(criteria.resultsLimit));
                 widgetChildren = [remoteFrameChildren subarrayWithRange:NSMakeRange(0, includedChildrenCount)];
                 if ([widgetChildren count] >= criteria.resultsLimit)
-                    return remoteFrameChildren.get();
+                    return remoteFrameChildren.autorelease();
                 criteria.resultsLimit -= [widgetChildren count];
             }
         }
@@ -3189,10 +3215,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
             return nil;
 
         if (object->isAttachment()) {
-            if (id attachmentView = [wrapper attachmentView])
-                return attachmentView;
+            if (RetainPtr<id> attachmentView = [wrapper attachmentView])
+                return attachmentView.autorelease();
         }
-        return wrapper.get();
+        return wrapper.autorelease();
     }
 
     if ([attribute isEqualToString:NSAccessibilityTextMarkerRangeForUIElementAttribute]) {
@@ -3335,9 +3361,9 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 
         if (dictionary) {
             RetainPtr<AXTextMarkerRangeRef> textMarkerRange = nil;
-            id parameter = [dictionary objectForKey:NSAccessibilityTextMarkerRangeParam];
-            if (AXObjectIsTextMarkerRange(parameter))
-                textMarkerRange = (AXTextMarkerRangeRef)parameter;
+            RetainPtr<id> parameter = [dictionary objectForKey:NSAccessibilityTextMarkerRangeParam];
+            if (AXObjectIsTextMarkerRange(parameter.get()))
+                textMarkerRange = (AXTextMarkerRangeRef)parameter.get();
 
             auto spellCheck = AXCoreObject::SpellCheck::No;
             parameter = [dictionary objectForKey:NSAccessibilitySpellCheckParam];
@@ -3562,8 +3588,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 #endif // ENABLE(TREE_DEBUGGING)
 
     if (AXObjectCache::clientIsInTestMode()) {
-        if (id value = [self parameterizedAttributeValueForTesting:attribute parameter:parameter backingObject:backingObject])
-            return value;
+        if (RetainPtr<id> value = [self parameterizedAttributeValueForTesting:attribute parameter:parameter backingObject:backingObject])
+            return value.autorelease();
     }
 
     // There are some parameters that super handles that are not explicitly returned by the list of the element's attributes.
@@ -3604,13 +3630,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if (backingObject->isTree())
         return [super accessibilityIndexOfChild:targetChild];
 
-    const auto& children = backingObject->unignoredChildren();
+    const auto& children = backingObject->stitchedUnignoredChildren();
     if (!children.size()) {
         if (RetainPtr widgetChildren = renderWidgetChildren(*backingObject))
             return [widgetChildren.get() indexOfObject:targetChild];
-#if ENABLE(MODEL_ELEMENT)
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
         if (backingObject->isModel())
-            return backingObject->modelElementChildren().find(targetChild);
+            return backingObject->modelElementChildren().children.find(targetChild);
 #endif
     }
 
@@ -3642,11 +3668,11 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
             return children(*backingObject).count;
 
         // FIXME: this is duplicating the logic in children(AXCoreObject&) so it should be reworked.
-        size_t childrenSize = backingObject->unignoredChildren().size();
+        size_t childrenSize = backingObject->stitchedUnignoredChildren().size();
         if (!childrenSize) {
-#if ENABLE(MODEL_ELEMENT)
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
             if (backingObject->isModel())
-                return backingObject->modelElementChildren().size();
+                return backingObject->modelElementChildren().children.size();
 #endif
             if (RetainPtr widgetChildren = renderWidgetChildren(*backingObject))
                 return [widgetChildren.get() count];
@@ -3682,7 +3708,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!backingObject)
         return nil;
 
-    const auto& unignoredChildren = backingObject->unignoredChildren();
+    const auto& unignoredChildren = backingObject->stitchedUnignoredChildren();
     if (unignoredChildren.isEmpty()) {
         RetainPtr<NSArray> children = transformSpecialChildrenCases(*backingObject, unignoredChildren);
         if (!children)
@@ -3711,18 +3737,18 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     NSMutableArray *subarray = [NSMutableArray arrayWithCapacity:available];
     for (unsigned added = 0; added < available; ++index, ++added) {
-        WebAccessibilityObjectWrapper *wrapper = [children objectAtIndex:index];
+        RetainPtr<WebAccessibilityObjectWrapper> wrapper = [children objectAtIndex:index];
 
         // The attachment view should be returned, otherwise AX palindrome errors occur.
-        id attachmentView = nil;
-        if (RefPtr childObject = [wrapper isKindOfClass:[WebAccessibilityObjectWrapper class]] ? wrapper.axBackingObject : nullptr) {
+        RetainPtr<id> attachmentView;
+        if (RefPtr childObject = [wrapper isKindOfClass:[WebAccessibilityObjectWrapper class]] ? wrapper.get().axBackingObject : nullptr) {
             if (childObject->isAttachment())
                 attachmentView = [wrapper attachmentView];
             else if (childObject->isRemoteFrame() && returnPlatformElements)
-                attachmentView = childObject->remoteFramePlatformElement().get();
+                attachmentView = childObject->remoteFramePlatformElement();
         }
 
-        [subarray addObject:attachmentView ? attachmentView : wrapper];
+        [subarray addObject:attachmentView ? attachmentView.get() : wrapper.get()];
     }
 
     return subarray;

@@ -28,6 +28,7 @@
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
+#include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <pal/SessionID.h>
 #include <wtf/CompletionHandler.h>
@@ -51,6 +52,10 @@
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
 #include <WebCore/ShouldRequireExplicitConsentForGamepadAccess.h>
+#endif
+
+#if ENABLE(IMAGE_ANALYSIS)
+#include <WebCore/ImageAnalysisQueue.h>
 #endif
 
 namespace WebCore {
@@ -81,7 +86,7 @@ class ModelPlayerProvider;
 class PaymentCoordinatorClient;
 class PerformanceLoggingClient;
 class PluginInfoProvider;
-class ProcessSyncClient;
+class DocumentSyncClient;
 class ProgressTrackerClient;
 class RemoteFrame;
 class RemoteFrameClient;
@@ -109,6 +114,7 @@ public:
     struct LocalMainFrameCreationParameters {
         CompletionHandler<UniqueRef<LocalFrameLoaderClient>(LocalFrame&, FrameLoader&)> clientCreator;
         SandboxFlags effectiveSandboxFlags;
+        ReferrerPolicy effectiveReferrerPolicy { ReferrerPolicy::EmptyString };
     };
     using MainFrameCreationParameters = Variant<LocalMainFrameCreationParameters, CompletionHandler<UniqueRef<RemoteFrameClient>(RemoteFrame&)>>;
 
@@ -140,7 +146,7 @@ public:
 #endif
         UniqueRef<ChromeClient>&&,
         UniqueRef<CryptoClient>&&,
-        UniqueRef<ProcessSyncClient>&&
+        UniqueRef<DocumentSyncClient>&&
 #if HAVE(DIGITAL_CREDENTIALS_UI)
         , Ref<CredentialRequestCoordinatorClient>&&
 #endif
@@ -228,7 +234,7 @@ public:
     ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension { WebCore::ContentSecurityPolicyModeForExtension::None };
     UniqueRef<CryptoClient> cryptoClient;
 
-    UniqueRef<ProcessSyncClient> processSyncClient;
+    UniqueRef<DocumentSyncClient> documentSyncClient;
 
 #if PLATFORM(VISION) && ENABLE(GAMEPAD)
     ShouldRequireExplicitConsentForGamepadAccess gamepadAccessRequiresExplicitConsent { ShouldRequireExplicitConsentForGamepadAccess::No };
@@ -247,6 +253,10 @@ public:
 #endif
 
     std::optional<MediaSessionManagerFactory> mediaSessionManagerFactory;
+
+#if ENABLE(IMAGE_ANALYSIS)
+    std::optional<ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
+#endif
 };
 
 }

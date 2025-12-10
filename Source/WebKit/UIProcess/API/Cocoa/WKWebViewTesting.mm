@@ -59,6 +59,10 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/TZoneMallocInlines.h>
+#if USE(APPLE_INTERNAL_SDK)
+#import <wtf/cocoa/Entitlements.h>
+#import <wtf/spi/darwin/XPCSPI.h>
+#endif
 #import <wtf/text/MakeString.h>
 
 #if PLATFORM(MAC)
@@ -75,6 +79,11 @@
 
 #if ENABLE(MODEL_PROCESS)
 #import "ModelProcessProxy.h"
+#endif
+
+#if ENABLE(THREADED_ANIMATIONS)
+#import "RemoteAnimationStack.h"
+#import "RemoteProgressBasedTimeline.h"
 #endif
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
@@ -120,21 +129,37 @@
     return sampledFixedPositionContentColor(_fixedContainerEdges, WebCore::BoxSide::Right);
 }
 
-- (NSString *)_caLayerTreeAsText
+- (NSString *)_caLayerTreeAsTextForLayerWithID:(unsigned long long)layerID
+{
+    if (!layerID)
+        return nil;
+    RetainPtr layer = downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->protectedDrawingArea())->layerWithIDForTesting({ ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID), _page->legacyMainFrameProcess().coreProcessIdentifier() });
+    if (!layer)
+        return nil;
+
+    return [self _caLayerTreeAsTextForLayer:layer.get()];
+}
+
+- (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer
 {
     TextStream ts(TextStream::LineMode::MultipleLine);
 
     {
         TextStream::GroupScope scope(ts);
         ts << "CALayer tree root "_s;
-#if PLATFORM(IOS_FAMILY)
-        dumpCALayer(ts, [_contentView layer], true);
-#else
-        dumpCALayer(ts, self.layer, true);
-#endif
+        dumpCALayer(ts, layer, true);
     }
 
     return ts.release().createNSString().autorelease();
+}
+
+- (NSString *)_caLayerTreeAsText
+{
+#if PLATFORM(IOS_FAMILY)
+        return [self _caLayerTreeAsTextForLayer:[_contentView layer]];
+#else
+        return [self _caLayerTreeAsTextForLayer:retainPtr(self.layer).get()];
+#endif
 }
 
 static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
@@ -287,7 +312,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         return;
     }
 
-    auto nowPlayingMetadataObserver = makeUnique<WebCore::NowPlayingMetadataObserver>([observer = makeBlockPtr(observer)](auto& metadata) {
+    auto nowPlayingMetadataObserver = WebCore::NowPlayingMetadataObserver::create([observer = makeBlockPtr(observer)](auto& metadata) {
         RetainPtr nowPlayingMetadata = adoptNS([[_WKNowPlayingMetadata alloc] init]);
         [nowPlayingMetadata setTitle:metadata.title.createNSString().get()];
         [nowPlayingMetadata setArtist:metadata.artist.createNSString().get()];
@@ -365,6 +390,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #endif
 }
 
+- (BOOL)_didCallEndSwipeGestureForTesting
+{
+#if PLATFORM(MAC)
+    return _impl->didCallEndSwipeGestureForTesting();
+#else
+    return _gestureController && _gestureController->didCallEndSwipeGesture();
+#endif
+}
+
 - (void)_resetNavigationGestureStateForTesting
 {
 #if PLATFORM(MAC)
@@ -414,12 +448,12 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (BOOL)_hasServiceWorkerBackgroundActivityForTesting
 {
-    return _page ? _page->configuration().processPool().hasServiceWorkerBackgroundActivityForTesting() : false;
+    return _page ? _page->configuration().protectedProcessPool()->hasServiceWorkerBackgroundActivityForTesting() : false;
 }
 
 - (BOOL)_hasServiceWorkerForegroundActivityForTesting
 {
-    return _page ? _page->configuration().processPool().hasServiceWorkerForegroundActivityForTesting() : false;
+    return _page ? _page->configuration().protectedProcessPool()->hasServiceWorkerForegroundActivityForTesting() : false;
 }
 
 - (void)_denyNextUserMediaRequest
@@ -741,6 +775,9 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         USING_CAN_MAKE_WEAKPTR(WebCore::MediaSessionCoordinatorClient);
 
+        void ref() const final { WebKit::MediaSessionCoordinatorProxyPrivate::ref(); }
+        void deref() const final { WebKit::MediaSessionCoordinatorProxyPrivate::deref(); }
+
     private:
         explicit WKMediaSessionCoordinatorForTesting(id <_WKMediaSessionCoordinator> clientCoordinator)
             : WebKit::MediaSessionCoordinatorProxyPrivate()
@@ -752,7 +789,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         void seekSessionToTime(double time, CompletionHandler<void(bool)>&& callback) final
         {
-            if (auto coordinatorClient = client())
+            if (RefPtr coordinatorClient = client())
                 coordinatorClient->seekSessionToTime(time, WTFMove(callback));
             else
                 callback(false);
@@ -760,7 +797,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         void playSession(std::optional<double> atTime, std::optional<MonotonicTime> hostTime, CompletionHandler<void(bool)>&& callback) final
         {
-            if (auto coordinatorClient = client())
+            if (RefPtr coordinatorClient = client())
                 coordinatorClient->playSession(WTFMove(atTime), WTFMove(hostTime), WTFMove(callback));
             else
                 callback(false);
@@ -768,7 +805,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         void pauseSession(CompletionHandler<void(bool)>&& callback) final
         {
-            if (auto coordinatorClient = client())
+            if (RefPtr coordinatorClient = client())
                 coordinatorClient->pauseSession(WTFMove(callback));
             else
                 callback(false);
@@ -776,7 +813,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         void setSessionTrack(const String& trackIdentifier, CompletionHandler<void(bool)>&& callback) final
         {
-            if (auto coordinatorClient = client())
+            if (RefPtr coordinatorClient = client())
                 coordinatorClient->setSessionTrack(trackIdentifier, WTFMove(callback));
             else
                 callback(false);
@@ -784,7 +821,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
         void coordinatorStateChanged(WebCore::MediaSessionCoordinatorState state) final
         {
-            if (auto coordinatorClient = client())
+            if (RefPtr coordinatorClient = client())
                 coordinatorClient->coordinatorStateChanged(state);
         }
 
@@ -971,7 +1008,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 {
     if (!layerID)
         return nil;
-    RetainPtr layer = downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(*_page->drawingArea()).layerWithIDForTesting({ ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID), _page->legacyMainFrameProcess().coreProcessIdentifier() });
+    RetainPtr layer = downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->protectedDrawingArea())->layerWithIDForTesting({ ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID), _page->legacyMainFrameProcess().coreProcessIdentifier() });
     if (!layer)
         return nil;
 
@@ -1076,6 +1113,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #endif
 }
 
+- (bool)_receivedLogsDuringLaunchForTesting
+{
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+    if (RefPtr mainFrame = _page->mainFrame())
+        return mainFrame->process().receivedLogsDuringLaunchForTesting();
+#endif
+    return 0;
+}
+
 - (void)_modelProcessModelPlayerCountForTesting:(void(^)(NSUInteger))completionHandler
 {
 #if ENABLE(MODEL_PROCESS)
@@ -1092,6 +1138,103 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     completionHandler(0);
 #endif
 }
+
+- (NSString *)_webContentProcessVariantForFrame:(_WKFrameHandle *)frameHandle
+{
+#if USE(APPLE_INTERNAL_SDK)
+    if (!_page)
+        return @"standard";
+
+    RefPtr<WebKit::WebProcessProxy> process;
+
+    if (frameHandle) {
+        auto frameID = frameHandle->_frameHandle.get() ? frameHandle->_frameHandle->frameID() : std::nullopt;
+        if (!frameID)
+            return @"standard";
+
+        process = _page->processContainingFrame(frameID);
+        if (!process)
+            process = _page->legacyMainFrameProcess();
+    } else {
+        // No frameHandle provided, check main frame process
+        process = _page->legacyMainFrameProcess();
+    }
+
+    if (!process || !process->hasConnection())
+        return @"standard";
+
+    Ref connection = process->connection();
+
+#if !PLATFORM(IOS_FAMILY)
+    bool hasAllowJIT = hasEntitlement(connection->xpcConnection(), "com.apple.security.cs.allow-jit"_s);
+    bool hasVerifiedJIT = hasEntitlement(connection->xpcConnection(), "com.apple.private.verified-jit"_s);
+    bool hasSingleJIT = hasEntitlement(connection->xpcConnection(), "com.apple.security.cs.single-jit"_s);
+    bool hasJIT = hasAllowJIT || hasVerifiedJIT || hasSingleJIT;
+
+    bool hasEnhancedSecurityEntitlement = hasEntitlement(connection->xpcConnection(), "com.apple.private.webkit.enhanced-security"_s);
+
+    bool hasEnhancedSecurity = hasEnhancedSecurityEntitlement || !hasJIT;
+    bool hasLockdownMode = !hasAllowJIT && !hasEnhancedSecurity;
+
+#else
+    bool hasEnhancedSecurity = hasEntitlement(connection->xpcConnection(), "com.apple.private.webkit.enhanced-security"_s);
+    bool hasLockdownMode = hasEntitlement(connection->xpcConnection(), "com.apple.private.webkit.lockdown-mode"_s);
+
+#endif
+
+    if (hasLockdownMode)
+        return @"lockdown";
+    if (hasEnhancedSecurity)
+        return @"security";
+
+#endif
+    return @"standard";
+}
+
+#if ENABLE(THREADED_ANIMATIONS)
+- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID
+{
+    auto animationStack = [&] -> RefPtr<const WebKit::RemoteAnimationStack> {
+        if (!layerID)
+            return nullptr;
+        WebCore::PlatformLayerIdentifier platformLayerID { ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID), _page->legacyMainFrameProcess().coreProcessIdentifier() };
+        if (RefPtr nodeStack = downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->protectedDrawingArea())->animationStackForNodeWithIDForTesting(platformLayerID))
+            return nodeStack;
+        if (CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy())
+            return scrollingCoordinator->animationStackForNodeWithIDForTesting(platformLayerID);
+        return nullptr;
+    }();
+    if (animationStack)
+        return animationStack->toJSONForTesting()->toJSONString().createNSString().autorelease();
+    return @"";
+}
+
+- (NSString *)_progressBasedTimelinesForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID
+{
+    auto timelines = [&] -> HashSet<Ref<WebKit::RemoteProgressBasedTimeline>> {
+        if (!ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID)
+            || !ObjectIdentifier<WebCore::ScrollingNodeIDType>::isValidIdentifier(scrollingNodeID))
+            return { };
+
+        CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+        if (!scrollingCoordinator)
+            return { };
+
+        return scrollingCoordinator->timelinesForScrollingNodeIDForTesting({
+            ObjectIdentifier<WebCore::ScrollingNodeIDType>(scrollingNodeID),
+            ObjectIdentifier<WebCore::ProcessIdentifierType>(processID)
+        });
+    }();
+
+    Ref convertedTimelines = JSON::Array::create();
+    for (auto& timeline : timelines)
+        convertedTimelines->pushObject(timeline->toJSONForTesting());
+
+    Ref object = JSON::Object::create();
+    object->setArray("timelines"_s, WTFMove(convertedTimelines));
+    return object->toJSONString().createNSString().autorelease();
+}
+#endif
 
 @end
 
@@ -1111,22 +1254,22 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (void)seekSessionToTime:(double)time withCompletion:(void(^)(BOOL))completionHandler
 {
-    m_coordinatorClient->seekSessionToTime(time, makeBlockPtr(completionHandler));
+    Ref { *m_coordinatorClient }->seekSessionToTime(time, makeBlockPtr(completionHandler));
 }
 
 - (void)playSessionWithCompletion:(void(^)(BOOL))completionHandler
 {
-    m_coordinatorClient->playSession({ }, std::optional<MonotonicTime>(), makeBlockPtr(completionHandler));
+    Ref { *m_coordinatorClient }->playSession({ }, std::optional<MonotonicTime>(), makeBlockPtr(completionHandler));
 }
 
 - (void)pauseSessionWithCompletion:(void(^)(BOOL))completionHandler
 {
-    m_coordinatorClient->pauseSession(makeBlockPtr(completionHandler));
+    Ref { *m_coordinatorClient }->pauseSession(makeBlockPtr(completionHandler));
 }
 
 - (void)setSessionTrack:(NSString*)trackIdentifier withCompletion:(void(^)(BOOL))completionHandler
 {
-    m_coordinatorClient->setSessionTrack(trackIdentifier, makeBlockPtr(completionHandler));
+    Ref { *m_coordinatorClient }->setSessionTrack(trackIdentifier, makeBlockPtr(completionHandler));
 }
 
 - (void)coordinatorStateChanged:(_WKMediaSessionCoordinatorState)state
@@ -1135,11 +1278,22 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     static_assert(static_cast<size_t>(WebCore::MediaSessionCoordinatorState::Joined) == static_cast<size_t>(WKMediaSessionCoordinatorStateJoined), "WKMediaSessionCoordinatorStateJoined does not match WebKit value");
     static_assert(static_cast<size_t>(WebCore::MediaSessionCoordinatorState::Closed) == static_cast<size_t>(WKMediaSessionCoordinatorStateClosed), "WKMediaSessionCoordinatorStateClosed does not match WebKit value");
 
-    m_coordinatorClient->coordinatorStateChanged(static_cast<WebCore::MediaSessionCoordinatorState>(state));
+    Ref { *m_coordinatorClient }->coordinatorStateChanged(static_cast<WebCore::MediaSessionCoordinatorState>(state));
 }
 
 @end
 #endif
 
 @implementation _WKNowPlayingMetadata : NSObject
+- (void)dealloc
+{
+IGNORE_NULL_CHECK_WARNINGS_BEGIN
+    self.title = nil;
+    self.artist = nil;
+    self.album = nil;
+    self.sourceApplicationIdentifier = nil;
+IGNORE_NULL_CHECK_WARNINGS_END
+
+    [super dealloc];
+}
 @end

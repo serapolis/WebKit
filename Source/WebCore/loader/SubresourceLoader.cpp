@@ -34,9 +34,9 @@
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
 #include "DiagnosticLoggingResultType.h"
-#include "Document.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentResourceLoader.h"
 #include "FrameLoader.h"
 #include "HTTPParsers.h"
 #include "HTTPStatusCodes.h"
@@ -46,7 +46,6 @@
 #include "Logging.h"
 #include "MemoryCache.h"
 #include "OriginAccessPatterns.h"
-#include "Page.h"
 #include "ResourceLoadObserver.h"
 #include "ResourceTiming.h"
 #include "Settings.h"
@@ -303,7 +302,7 @@ void SubresourceLoader::willSendRequestInternal(ResourceRequest&& newRequest, co
             return completionHandler(WTFMove(newRequest));
         }
 
-        if (!portAllowed(newRequest.url())) {
+        if (!isPortAllowed(newRequest.url())) {
             SUBRESOURCELOADER_RELEASE_LOG(SUBRESOURCELOADER_WILLSENDREQUESTINTERNAL_RESOURCE_LOAD_CANCELLED_AFTER_USING_BLOCKED_PORT);
             if (RefPtr frame = m_frame.get())
                 FrameLoader::reportBlockedLoadFailed(*frame, newRequest.url());
@@ -388,7 +387,7 @@ void SubresourceLoader::didReceiveResponse(ResourceResponse&& response, Completi
 
 #if USE(QUICK_LOOK)
     if (shouldCreatePreviewLoaderForResponse(response)) {
-        m_previewLoader = makeUnique<LegacyPreviewLoader>(*this, response);
+        lazyInitialize(m_previewLoader, LegacyPreviewLoader::create(*this, response));
         if (m_previewLoader->didReceiveResponse(response))
             return;
     }
@@ -546,10 +545,8 @@ void SubresourceLoader::didReceiveResponsePolicy()
 void SubresourceLoader::didReceiveBuffer(const FragmentedSharedBuffer& buffer, long long encodedDataLength, DataPayloadType dataPayloadType)
 {
 #if USE(QUICK_LOOK)
-    if (auto previewLoader = m_previewLoader.get()) {
-        if (previewLoader->didReceiveData(buffer.makeContiguous()))
-            return;
-    }
+    if (m_previewLoader && m_previewLoader->didReceiveData(buffer.makeContiguous()))
+        return;
 #endif
 
     CachedResourceHandle resource = m_resource.get();
@@ -732,10 +729,8 @@ void SubresourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMe
     SUBRESOURCELOADER_RELEASE_LOG(SUBRESOURCELOADER_DIDFINISHLOADING);
 
 #if USE(QUICK_LOOK)
-    if (auto previewLoader = m_previewLoader.get()) {
-        if (previewLoader->didFinishLoading())
-            return;
-    }
+    if (m_previewLoader && m_previewLoader->didFinishLoading())
+        return;
 #endif
 
     if (m_state != Initialized)
@@ -796,8 +791,8 @@ void SubresourceLoader::didFail(const ResourceError& error)
     SUBRESOURCELOADER_RELEASE_LOG(SUBRESOURCELOADER_DIDFAIL, static_cast<int>(error.type()), error.errorCode());
 
 #if USE(QUICK_LOOK)
-    if (auto previewLoader = m_previewLoader.get())
-        previewLoader->didFail();
+    if (m_previewLoader)
+        m_previewLoader->didFail();
 #endif
 
     if (m_state != Initialized)

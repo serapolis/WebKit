@@ -40,12 +40,15 @@
 #include "DiagnosticLoggingKeys.h"
 #include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "HTMLFrameElement.h"
 #include "HTMLIFrameElement.h"
 #include "HTMLNames.h"
 #include "HTMLObjectElement.h"
 #include "HTMLPlugInElement.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "LocalFrameLoaderClient.h"
 #include "MIMETypeRegistry.h"
 #include "MixedContentChecker.h"
@@ -57,6 +60,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderEmbeddedObject.h"
 #include "RenderView.h"
+#include "ResourceLoader.h"
 #include "ScriptController.h"
 #include "SecurityOrigin.h"
 #include "SecurityPolicy.h"
@@ -306,7 +310,7 @@ RefPtr<LocalFrame> FrameLoader::SubframeLoader::loadSubframe(HTMLFrameOwnerEleme
         return nullptr;
     }
 
-    if (!portAllowed(url) || isIPAddressDisallowed(url)) {
+    if (!ResourceLoader::isPortAllowed(url) || isIPAddressDisallowed(url)) {
         FrameLoader::reportBlockedLoadFailed(frame, url);
         return nullptr;
     }

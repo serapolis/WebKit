@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <wtf/Expected.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
@@ -35,6 +36,8 @@ void g_strfreev(char**);
 }
 
 namespace WTF {
+
+class CStringView;
 
 struct GMalloc {
     static void* malloc(size_t size) { return g_malloc(size); }
@@ -73,11 +76,13 @@ GMallocSpan<char, Malloc> adoptGMallocString(char* str, size_t length)
 template<typename Malloc = GMalloc>
 GMallocSpan<char, Malloc> adoptGMallocString(char* str)
 {
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     return adoptGMallocSpan<char, Malloc>(unsafeMakeSpan(str, str ? strlen(str) : 0));
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
-WTF_EXPORT_PRIVATE GMallocSpan<char> gFileGetContents(const char* path, GUniqueOutPtr<GError>&);
-WTF_EXPORT_PRIVATE GMallocSpan<char*, GMallocStrv> gKeyFileGetKeys(GKeyFile*, const char* groupName, GUniqueOutPtr<GError>&);
+WTF_EXPORT_PRIVATE Expected<GMallocSpan<char>, GUniquePtr<GError>> gFileGetContents(CStringView);
+WTF_EXPORT_PRIVATE Expected<GMallocSpan<char*, GMallocStrv>, GUniquePtr<GError>> gKeyFileGetKeys(GKeyFile*, CStringView groupName);
 WTF_EXPORT_PRIVATE GMallocSpan<GParamSpec*> gObjectClassGetProperties(GObjectClass*);
 WTF_EXPORT_PRIVATE GMallocSpan<const char*> gVariantGetStrv(const GRefPtr<GVariant>&);
 

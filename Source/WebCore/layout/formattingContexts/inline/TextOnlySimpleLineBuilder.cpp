@@ -110,8 +110,10 @@ LineLayoutResult TextOnlySimpleLineBuilder::layoutInlineContent(const LineInput&
     auto result = m_line.close();
 
     auto isLastInlineContent = isLastLineWithInlineContent(placedContentEnd, lineInput.needsLayoutRange.endIndex());
+    auto lineEndsWithForcedLineBreak = Line::hasTrailingForcedLineBreak(result.runs);
+    auto isLastLineOrLineEndsWithForcedLineBreak = isLastInlineContent || lineEndsWithForcedLineBreak;
     auto inlineContentEnding = result.isContentful ? InlineFormattingUtils::inlineContentEnding(result) : std::nullopt;
-    auto contentLogicalLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle, result.contentLogicalRight, m_lineLogicalRect.width(), result.hangingTrailingContentWidth, result.runs, isLastInlineContent);
+    auto contentLogicalLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle, result.contentLogicalRight, m_lineLogicalRect.width(), result.hangingTrailingContentWidth, isLastLineOrLineEndsWithForcedLineBreak);
 
     return { { lineInput.needsLayoutRange.start, placedContentEnd }
         , WTFMove(result.runs)
@@ -172,7 +174,7 @@ std::optional<LineLayoutResult> TextOnlySimpleLineBuilder::placeSingleCharacterC
     Line::RunList singleRun;
     singleRun.append({ Line::Run(*inlineTextItem, inlineTextItem->style(), { }, contentWidth) });
 
-    auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), contentWidth, lineRect.width(), { }, singleRun, true);
+    auto contentLeft = InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), contentWidth, lineRect.width(), { }, true);
     auto contentRight = contentLeft + contentWidth;
 
     return LineLayoutResult { lineInput.needsLayoutRange
@@ -360,7 +362,7 @@ TextOnlyLineBreakResult TextOnlySimpleLineBuilder::handleOverflowingTextContent(
     ASSERT(lineBreakingResult.isEndOfLine == InlineContentBreaker::IsEndOfLine::Yes);
 
     if (lineBreakingResult.action == InlineContentBreaker::Result::Action::Wrap)
-        return { InlineContentBreaker::IsEndOfLine::Yes, { }, { }, eligibleOverflowWidthAsLeading(candidateContent.runs(), lineBreakingResult, isFirstFormattedLineCandidate()) };
+        return { InlineContentBreaker::IsEndOfLine::Yes, { }, { }, overflowWidthAsLeadingForNextLine(candidateContent.runs(), lineBreakingResult) };
 
     if (lineBreakingResult.action == InlineContentBreaker::Result::Action::WrapWithHyphen) {
         ASSERT(m_line.trailingSoftHyphenWidth());
@@ -396,7 +398,7 @@ TextOnlyLineBreakResult TextOnlySimpleLineBuilder::handleOverflowingTextContent(
             if (auto hyphenWidth = partialRun.hyphenWidth)
                 m_line.addTrailingHyphen(*hyphenWidth);
             auto overflowingContentLength = trailingInlineTextItem.length() - partialRun.length;
-            return { InlineContentBreaker::IsEndOfLine::Yes, committedInlineItemCount, overflowingContentLength, eligibleOverflowWidthAsLeading(candidateContent.runs(), lineBreakingResult, isFirstFormattedLineCandidate()) };
+            return { InlineContentBreaker::IsEndOfLine::Yes, committedInlineItemCount, overflowingContentLength, overflowWidthAsLeadingForNextLine(candidateContent.runs(), lineBreakingResult) };
         };
         return processPartialContent();
     }
@@ -494,30 +496,35 @@ bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedTextOnlyInlineLayoutByCon
     return true;
 }
 
-bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(const RenderStyle& style)
+bool TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(const Box& box)
 {
-    if (style.fontCascade().wordSpacing())
-        return false;
-    if (style.writingMode().isBidiRTL())
-        return false;
-    if (style.wordBreak() == WordBreak::AutoPhrase)
-        return false;
-    if (style.textIndent() != RenderStyle::initialTextIndent())
-        return false;
-    if (style.textAlignLast() == TextAlignLast::Justify || style.textAlign() == TextAlignMode::Justify || style.display() == DisplayType::RubyAnnotation)
-        return false;
-    if (style.boxDecorationBreak() == BoxDecorationBreak::Clone)
-        return false;
-    if (!style.hangingPunctuation().isEmpty())
-        return false;
-    if (!style.hyphenateLimitLines().isNoLimit())
-        return false;
-    if (style.textWrapMode() == TextWrapMode::Wrap && (style.textWrapStyle() == TextWrapStyle::Balance || style.textWrapStyle() == TextWrapStyle::Pretty))
-        return false;
-    if (style.lineAlign() != LineAlign::None || style.lineSnap() != LineSnap::None)
-        return false;
+    auto isEligibleByStyle = [](auto& style) {
+        if (style.fontCascade().wordSpacing())
+            return false;
+        if (style.writingMode().isBidiRTL())
+            return false;
+        if (style.wordBreak() == WordBreak::AutoPhrase)
+            return false;
+        if (style.textIndent() != RenderStyle::initialTextIndent())
+            return false;
+        if (style.textAlignLast() == Style::TextAlignLast::Justify || style.textAlign() == Style::TextAlign::Justify || style.display() == DisplayType::RubyAnnotation)
+            return false;
+        if (style.boxDecorationBreak() == BoxDecorationBreak::Clone)
+            return false;
+        if (!style.hangingPunctuation().isNone())
+            return false;
+        if (!style.hyphenateLimitLines().isNoLimit())
+            return false;
+        if (style.textWrapMode() == TextWrapMode::Wrap && (style.textWrapStyle() == TextWrapStyle::Balance || style.textWrapStyle() == TextWrapStyle::Pretty))
+            return false;
+        if (style.lineAlign() != LineAlign::None || style.lineSnap() != LineSnap::None)
+            return false;
+        return true;
+    };
 
-    return true;
+    auto& style = box.style();
+    auto& firstLineStyle = box.firstLineStyle();
+    return isEligibleByStyle(style) && (&style == &firstLineStyle || isEligibleByStyle(firstLineStyle));
 }
 
 }

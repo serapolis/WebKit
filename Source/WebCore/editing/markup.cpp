@@ -45,11 +45,12 @@
 #include "ContainerNodeInlines.h"
 #include "CustomElementRegistry.h"
 #include "DeprecatedGlobalSettings.h"
-#include "Document.h"
 #include "DocumentFragment.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "DocumentType.h"
+#include "DocumentView.h"
 #include "Editing.h"
 #include "Editor.h"
 #include "EditorClient.h"
@@ -73,7 +74,7 @@
 #include "HTMLTableElement.h"
 #include "HTMLTextAreaElement.h"
 #include "HTMLTextFormControlElement.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "MarkupAccumulator.h"
 #include "MutableStyleProperties.h"
 #include "NodeInlines.h"
@@ -82,7 +83,6 @@
 #include "PageConfiguration.h"
 #include "PasteboardItemInfo.h"
 #include "PositionInlines.h"
-#include "Quirks.h"
 #include "Range.h"
 #include "RenderBlock.h"
 #include "RenderElementInlines.h"
@@ -97,6 +97,7 @@
 #include "VisibleSelection.h"
 #include "VisibleUnits.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <ranges>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
@@ -199,11 +200,29 @@ void removeSubresourceURLAttributes(Ref<DocumentFragment>&& fragment, Function<b
         element->removeAttribute(attribute);
 }
 
-Ref<Page> createPageForSanitizingWebContent()
+Ref<Page> createPageForSanitizingWebContent(Document* destinationDocument)
 {
+    bool useDarkAppearance = false;
+    bool useElevatedUserInterfaceLevel = false;
+
+    if (destinationDocument) {
+        if (RefPtr destinationPage = destinationDocument->page()) {
+            bool documentNeedsDarkAppearance = [&] {
+                if (RefPtr destinationFrameView = destinationDocument->view())
+                    return destinationFrameView->useDarkAppearance();
+
+                return false;
+            }();
+
+            useDarkAppearance = documentNeedsDarkAppearance && destinationPage->useDarkAppearance();
+            useElevatedUserInterfaceLevel = destinationPage->useElevatedUserInterfaceLevel();
+        }
+    }
+
     auto pageConfiguration = pageConfigurationWithEmptyClients(std::nullopt, PAL::SessionID::defaultSessionID());
     
     Ref page = Page::create(WTFMove(pageConfiguration));
+    page->setUseColorAppearance(useDarkAppearance, useElevatedUserInterfaceLevel);
 #if ENABLE(VIDEO)
     page->settings().setMediaEnabled(false);
 #endif
@@ -220,7 +239,7 @@ Ref<Page> createPageForSanitizingWebContent()
     frame->init();
 
     FrameLoader& loader = frame->loader();
-    static constexpr ASCIILiteral markup = "<!DOCTYPE html><html><body></body></html>"_s;
+    static constexpr ASCIILiteral markup = "<!DOCTYPE html><html><head><meta name='color-scheme' content='light dark'/></head><body></body></html>"_s;
     RefPtr activeDocumentLoader = loader.activeDocumentLoader();
     ASSERT(activeDocumentLoader);
     auto& writer = activeDocumentLoader->writer();
@@ -233,9 +252,9 @@ Ref<Page> createPageForSanitizingWebContent()
     return page;
 }
 
-String sanitizeMarkup(const String& rawHTML, MSOListQuirks msoListQuirks, std::optional<Function<void(DocumentFragment&)>> fragmentSanitizer)
+String sanitizeMarkup(const String& rawHTML, Document* destinationDocument, MSOListQuirks msoListQuirks, std::optional<Function<void(DocumentFragment&)>> fragmentSanitizer)
 {
-    Ref page = createPageForSanitizingWebContent();
+    Ref page = createPageForSanitizingWebContent(destinationDocument);
     RefPtr stagingDocument = page->localTopDocument();
     if (!stagingDocument)
         return String();
@@ -563,7 +582,7 @@ String StyledMarkupAccumulator::takeResults()
         length += string.length();
     StringBuilder result;
     result.reserveCapacity(length);
-    for (auto& string : makeReversedRange(m_reversedPrecedingMarkup))
+    for (auto& string : m_reversedPrecedingMarkup | std::views::reverse)
         result.append(string);
     result.append(takeMarkup());
     // Remove '\0' characters because they are not visibly rendered to the user.

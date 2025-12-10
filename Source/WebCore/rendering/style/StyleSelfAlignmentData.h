@@ -43,7 +43,7 @@ class StyleSelfAlignmentData {
 public:
     constexpr StyleSelfAlignmentData() = default;
 
-    // Style data for Self-Aligment and Default-Alignment properties: align-{self, items}, justify-{self, items}.
+    // Style data for Self-Alignment and Default-Alignment properties: align-{self, items}, justify-{self, items}.
     // [ <self-position> && <overflow-position>? ] | [ legacy && [ left | right | center ] ]
     constexpr StyleSelfAlignmentData(ItemPosition position, OverflowAlignment overflow = OverflowAlignment::Default, ItemPositionType positionType = ItemPositionType::NonLegacy)
         : m_position(enumToUnderlyingType(position))
@@ -59,6 +59,13 @@ public:
     ItemPosition position() const { return static_cast<ItemPosition>(m_position); }
     ItemPositionType positionType() const { return static_cast<ItemPositionType>(m_positionType); }
     OverflowAlignment overflow() const { return static_cast<OverflowAlignment>(m_overflow); }
+
+    bool isNormal(ItemPosition autoAlignment = ItemPosition::Normal) const
+    {
+        if (position() == ItemPosition::Auto)
+            return autoAlignment == ItemPosition::Normal;
+        return position() == ItemPosition::Normal;
+    }
 
     // Must resolve Auto before calling. Normal treated as Start.
     // Returns position adjustment from container's start edge.

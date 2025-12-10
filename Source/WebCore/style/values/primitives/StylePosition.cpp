@@ -26,26 +26,16 @@
 #include "StylePosition.h"
 
 #include "CSSPositionValue.h"
-#include "CalculationCategory.h"
-#include "CalculationTree.h"
-#include "LengthPoint.h"
 #include "RenderStyle.h"
 #include "StyleBuilderChecking.h"
-#include "StyleLengthWrapper+Platform.h"
+#include "StyleCalculationTree.h"
 #include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
-#include "StylePrimitiveNumericTypes+Platform.h"
 
 namespace WebCore {
 namespace Style {
 
 using namespace CSS::Literals;
-
-Position::Position(const WebCore::LengthPoint& point)
-    : x { point.x }
-    , y { point.y }
-{
-}
 
 // MARK: Core Keyword Resolution
 
@@ -310,19 +300,12 @@ auto CSSValueConversion<PositionY>::operator()(BuilderState& state, const CSSVal
 
 // MARK: - Evaluation
 
-auto Evaluation<Position>::operator()(const Position& position, FloatSize referenceBox, float zoom) -> FloatPoint
+auto Evaluation<Position, FloatPoint>::operator()(const Position& position, FloatSize referenceBox, ZoomNeeded token) -> FloatPoint
 {
     return {
-        evaluate(position.x, referenceBox.width(), zoom),
-        evaluate(position.y, referenceBox.height(), zoom)
+        evaluate<float>(position.x, referenceBox.width(), token),
+        evaluate<float>(position.y, referenceBox.height(), token)
     };
-}
-
-// MARK: - Platform
-
-auto ToPlatform<Position>::operator()(const Position& position) -> WebCore::LengthPoint
-{
-    return { toPlatform(position.x), toPlatform(position.y) };
 }
 
 } // namespace Style

@@ -89,11 +89,11 @@ const RenderElement* LegacyRenderSVGModelObject::pushMappingToContainer(const Re
     return SVGRenderSupport::pushMappingToContainer(*this, ancestorToStopAt, geometryMap);
 }
 
-static void adjustRectForOutlineAndShadow(const LegacyRenderSVGModelObject& renderer, LayoutRect& rect)
+static void adjustRectForOutlineAndShadow(const LegacyRenderSVGModelObject& renderer, LayoutRect& rect, const Style::ZoomFactor& zoomFactor)
 {
     auto shadowRect = rect;
     if (auto& boxShadow = renderer.style().boxShadow(); !boxShadow.isNone())
-        Style::adjustRectForShadow(shadowRect, boxShadow);
+        Style::adjustRectForShadow(shadowRect, boxShadow, zoomFactor);
 
     auto outlineRect = rect;
     auto outlineSize = LayoutUnit { renderer.outlineStyleForRepaint().outlineSize() };
@@ -109,7 +109,7 @@ static void adjustRectForOutlineAndShadow(const LegacyRenderSVGModelObject& rend
 LayoutRect LegacyRenderSVGModelObject::outlineBoundsForRepaint(const RenderLayerModelObject* repaintContainer, const RenderGeometryMap*) const
 {
     LayoutRect box = enclosingLayoutRect(repaintRectInLocalCoordinates());
-    adjustRectForOutlineAndShadow(*this, box);
+    adjustRectForOutlineAndShadow(*this, box, style().usedZoomForLength());
 
     FloatQuad containerRelativeQuad = localToContainerQuad(FloatRect(box), repaintContainer);
     return LayoutRect(snapRectToDevicePixels(LayoutRect(containerRelativeQuad.boundingBox()), document().deviceScaleFactor()));
@@ -226,6 +226,10 @@ bool LegacyRenderSVGModelObject::checkEnclosure(RenderElement* renderer, const F
     // FIXME: [SVG] checkEnclosure implementation is inconsistent
     // https://bugs.webkit.org/show_bug.cgi?id=262709
     return rect.contains(ctm.mapRect(svgElement->checkedRenderer()->repaintRectInLocalCoordinates(RepaintRectCalculation::Accurate)));
+}
+
+void LegacyRenderSVGModelObject::addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint&, const RenderLayerModelObject*) const
+{
 }
 
 Ref<SVGElement> LegacyRenderSVGModelObject::protectedElement() const

@@ -38,7 +38,6 @@
 #include "RenderLayer.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImageElement.h"
-#include "SVGRenderStyle.h"
 #include "SVGRenderingContext.h"
 #include "SVGResources.h"
 #include "SVGResourcesCache.h"
@@ -93,22 +92,24 @@ FloatRect LegacyRenderSVGImage::calculateObjectBoundingBox() const
     Ref imageElement = this->imageElement();
     SVGLengthContext lengthContext(imageElement.ptr());
 
-    auto& width = style().width();
-    auto& height = style().height();
+    CheckedRef style = this->style();
+    auto& width = style->width();
+    auto& height = style->height();
+    auto usedZoom = style->usedZoomForLength();
 
     float concreteWidth;
     if (!width.isAuto())
-        concreteWidth = lengthContext.valueForLength(width, SVGLengthMode::Width);
+        concreteWidth = lengthContext.valueForLength(width, usedZoom, SVGLengthMode::Width);
     else if (!height.isAuto() && !intrinsicSize.isEmpty())
-        concreteWidth = lengthContext.valueForLength(height, SVGLengthMode::Height) * intrinsicSize.width() / intrinsicSize.height();
+        concreteWidth = lengthContext.valueForLength(height, usedZoom, SVGLengthMode::Height) * intrinsicSize.width() / intrinsicSize.height();
     else
         concreteWidth = intrinsicSize.width();
 
     float concreteHeight;
     if (!height.isAuto())
-        concreteHeight = lengthContext.valueForLength(height, SVGLengthMode::Height);
+        concreteHeight = lengthContext.valueForLength(height, usedZoom, SVGLengthMode::Height);
     else if (!width.isAuto() && !intrinsicSize.isEmpty())
-        concreteHeight = lengthContext.valueForLength(width, SVGLengthMode::Width) * intrinsicSize.height() / intrinsicSize.width();
+        concreteHeight = lengthContext.valueForLength(width, usedZoom, SVGLengthMode::Width) * intrinsicSize.height() / intrinsicSize.width();
     else
         concreteHeight = intrinsicSize.height();
 
@@ -199,7 +200,7 @@ void LegacyRenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint&)
         SVGRenderingContext renderingContext(*this, childPaintInfo);
 
         if (renderingContext.isRenderingPrepared()) {
-            if (style().svgStyle().bufferedRendering() == BufferedRendering::Static && renderingContext.bufferForeground(m_bufferedForeground))
+            if (style().bufferedRendering() == BufferedRendering::Static && renderingContext.bufferForeground(m_bufferedForeground))
                 return;
 
             paintForeground(childPaintInfo);
@@ -228,7 +229,12 @@ void LegacyRenderSVGImage::paintForeground(PaintInfo& paintInfo)
         style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
     };
 
-    paintInfo.context().drawImage(*image, destRect, srcRect, options);
+    auto& context = paintInfo.context();
+    context.drawImage(*image, destRect, srcRect, options);
+
+    auto* cachedImage = imageResource().cachedImage();
+    if (cachedImage && !context.paintingDisabled())
+        protectedDocument()->didPaintImage(imageElement(), cachedImage, destRect);
 }
 
 void LegacyRenderSVGImage::invalidateBufferedForeground()
@@ -289,6 +295,11 @@ void LegacyRenderSVGImage::imageChanged(WrappedImagePtr, const IntRect*)
     invalidateBufferedForeground();
 
     repaint();
+
+    if (auto* image = imageResource().cachedImage(); image && image->currentFrameIsComplete(this)) {
+        if (auto styleable = Styleable::fromRenderer(*this))
+            protectedDocument()->didLoadImage(styleable->protectedElement().get(), image);
+    }
 }
 
 void LegacyRenderSVGImage::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint&, const RenderLayerModelObject*) const

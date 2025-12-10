@@ -64,6 +64,7 @@
 #include "RenderObjectStyle.h"
 #include "RenderVideo.h"
 #include "SVGSVGElement.h"
+#include "Settings.h"
 #include "SimpleRange.h"
 #include "SliderThumbElement.h"
 #include "StyleResolver.h"
@@ -505,7 +506,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
             }();
         } else if (regionRenderer.style().hasBackgroundImage()) {
             isPhoto = [&]() -> bool {
-                RefPtr backgroundImage = regionRenderer.style().backgroundLayers().first().image().tryStyleImage();
+                RefPtr backgroundImage = regionRenderer.style().backgroundLayers().usedFirst().image().tryStyleImage();
                 if (!backgroundImage || !backgroundImage->cachedImage())
                     return false;
 
@@ -678,7 +679,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
             }
 
             // Expand the interaction region by the width of the CSS border, if necessary.
-            const auto rectOffset = RenderThemeCocoa::inflateRectForInteractionRegion(regionRenderer, rect);
+            const auto rectOffset = RenderThemeCocoa::inflateRectForInteractionRegion(*regionRendererBox, rect);
             if (clipPath && !rectOffset.isZero())
                 clipPath->translate(rectOffset);
         } else

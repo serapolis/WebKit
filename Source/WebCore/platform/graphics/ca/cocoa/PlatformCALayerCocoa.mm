@@ -31,7 +31,6 @@
 #import "GraphicsContext.h"
 #import "GraphicsLayerCA.h"
 #import "IOSurface.h"
-#import "LengthFunctions.h"
 #import "LocalCurrentGraphicsContext.h"
 #import "MediaPlayerEnumsCocoa.h"
 #import "Model.h"
@@ -472,7 +471,7 @@ void PlatformCALayerCocoa::copyContentsFromLayer(PlatformCALayer* layer)
 
 PlatformCALayer* PlatformCALayerCocoa::superlayer() const
 {
-    return platformCALayerForLayer((__bridge void*)[m_layer superlayer]).get();
+    return platformCALayerForLayer((__bridge void*)[m_layer superlayer]).unsafeGet();
 }
 
 void PlatformCALayerCocoa::removeFromSuperlayer()
@@ -1026,7 +1025,7 @@ void PlatformCALayerCocoa::setVideoGravity(MediaPlayerVideoGravity gravity)
 {
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     if ([m_layer respondsToSelector:@selector(setVideoGravity:)])
-        [(AVPlayerLayer *)m_layer setVideoGravity:convertMediaPlayerToAVLayerVideoGravity(gravity)];
+        [(AVPlayerLayer *)m_layer setVideoGravity:convertMediaPlayerToAVLayerVideoGravity(gravity).get()];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
@@ -1287,7 +1286,7 @@ void PlatformCALayer::drawLayerContents(GraphicsContext& graphicsContext, WebCor
         std::optional<FontAntialiasingStateSaver> fontAntialiasingState;
 #endif
         // We never use CompositingCoordinatesOrientation::BottomUp on Mac.
-        ASSERT(layerContents->platformCALayerContentsOrientation() == GraphicsLayer::CompositingCoordinatesOrientation::TopDown);
+        ASSERT(layerContents->platformCALayerContentsOrientation() == GraphicsLayerCompositingCoordinatesOrientation::TopDown);
 
         if (graphicsContext.hasPlatformContext()) {
             platformContextSaver.emplace(graphicsContext);

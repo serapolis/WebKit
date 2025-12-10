@@ -26,7 +26,7 @@
 #include "LegacyRenderSVGPath.h"
 #include "LegacyRenderSVGResource.h"
 #include "RenderAncestorIterator.h"
-#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
 #include "RenderSVGHiddenContainer.h"
@@ -54,10 +54,11 @@ SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tagName, Document& d
     , m_shouldIsolateBlending(false)
     , m_transform(SVGAnimatedTransformList::create(this))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::transformAttr, &SVGGraphicsElement::m_transform>();
-    });
+    }
 }
 
 SVGGraphicsElement::~SVGGraphicsElement() = default;

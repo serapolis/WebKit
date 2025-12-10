@@ -31,6 +31,7 @@
 #include "CSSFunctionRule.h"
 #include "CSSGroupingRule.h"
 #include "CSSImportRule.h"
+#include "CSSInternalBaseAppearanceRule.h"
 #include "CSSKeyframeRule.h"
 #include "CSSKeyframesRule.h"
 #include "CSSLayerBlockRule.h"
@@ -142,6 +143,8 @@ template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleFunction>(*this));
     case StyleRuleType::FunctionDeclarations:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleFunctionDeclarations>(*this));
+    case StyleRuleType::InternalBaseAppearance:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleInternalBaseAppearance>(*this));
     case StyleRuleType::Margin:
         break;
     }
@@ -248,6 +251,9 @@ Ref<CSSRule> StyleRuleBase::createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSRu
         [&](StyleRuleFunctionDeclarations& rule) -> Ref<CSSRule> {
             return CSSFunctionDeclarations::create(rule, parentSheet);
         },
+        [&](StyleRuleInternalBaseAppearance& rule) -> Ref<CSSRule> {
+            return CSSInternalBaseAppearanceRule::create(rule, parentSheet);
+        },
         [](StyleRuleCharset&) -> Ref<CSSRule> {
             RELEASE_ASSERT_NOT_REACHED();
         },
@@ -305,12 +311,9 @@ void StyleRule::setProperties(Ref<StyleProperties>&& properties)
 
 MutableStyleProperties& StyleRule::mutableProperties()
 {
-    if (auto* mutableProperties = dynamicDowncast<MutableStyleProperties>(m_properties.get()))
-        return *mutableProperties;
-    Ref mutableProperties = m_properties->mutableCopy();
-    auto& mutablePropertiesRef = mutableProperties.get();
-    m_properties = WTFMove(mutableProperties);
-    return mutablePropertiesRef;
+    if (!is<MutableStyleProperties>(m_properties))
+        m_properties = m_properties->mutableCopy();
+    return uncheckedDowncast<MutableStyleProperties>(m_properties.get());
 }
 
 void StyleRule::wrapperAdoptSelectorList(CSSSelectorList&& selectors)
@@ -328,9 +331,11 @@ Ref<StyleRule> StyleRule::createForSplitting(const Vector<const CSSSelector*>& s
 {
     ASSERT_WITH_SECURITY_IMPLICATION(!selectors.isEmpty());
     auto selectorListArray = makeUniqueArray<CSSSelector>(selectors.size());
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     for (unsigned i = 0; i < selectors.size(); ++i)
         new (NotNull, &selectorListArray[i]) CSSSelector(*selectors.at(i));
     selectorListArray[selectors.size() - 1].setLastInSelectorList();
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     auto styleRule = StyleRule::create(WTFMove(properties), hasDocumentSecurityOrigin, CSSSelectorList(WTFMove(selectorListArray)));
     styleRule->markAsSplitRule();
     return styleRule;
@@ -456,12 +461,9 @@ Ref<StyleRulePage> StyleRulePage::create(Ref<StyleProperties>&& properties, CSSS
 
 MutableStyleProperties& StyleRulePage::mutableProperties()
 {
-    if (auto* mutableProperties = dynamicDowncast<MutableStyleProperties>(m_properties.get()))
-        return *mutableProperties;
-    Ref mutableProperties = m_properties->mutableCopy();
-    auto& mutablePropertiesRef = mutableProperties.get();
-    m_properties = WTFMove(mutableProperties);
-    return mutablePropertiesRef;
+    if (!is<MutableStyleProperties>(m_properties))
+        m_properties = m_properties->mutableCopy();
+    return uncheckedDowncast<MutableStyleProperties>(m_properties.get());
 }
 
 StyleRuleFontFace::StyleRuleFontFace(Ref<StyleProperties>&& properties)
@@ -480,12 +482,9 @@ StyleRuleFontFace::~StyleRuleFontFace() = default;
 
 MutableStyleProperties& StyleRuleFontFace::mutableProperties()
 {
-    if (auto* mutableProperties = dynamicDowncast<MutableStyleProperties>(m_properties.get()))
-        return *mutableProperties;
-    Ref mutableProperties = m_properties->mutableCopy();
-    auto& mutablePropertiesRef = mutableProperties.get();
-    m_properties = WTFMove(mutableProperties);
-    return mutablePropertiesRef;
+    if (!is<MutableStyleProperties>(m_properties))
+        m_properties = m_properties->mutableCopy();
+    return uncheckedDowncast<MutableStyleProperties>(m_properties.get());
 }
 
 StyleRuleFontFeatureValues::StyleRuleFontFeatureValues(const Vector<AtomString>& fontFamilies, Ref<FontFeatureValues>&& value)
@@ -517,6 +516,16 @@ StyleRuleFontPaletteValues::StyleRuleFontPaletteValues(const AtomString& name, V
     , m_name(name)
     , m_fontFamilies(WTFMove(fontFamilies))
     , m_fontPaletteValues(basePalette, WTFMove(overrideColors))
+{
+}
+
+Ref<StyleRuleInternalBaseAppearance> StyleRuleInternalBaseAppearance::create(Vector<Ref<StyleRuleBase>>&& rules)
+{
+    return adoptRef(*new StyleRuleInternalBaseAppearance(WTFMove(rules)));
+}
+
+StyleRuleInternalBaseAppearance::StyleRuleInternalBaseAppearance(Vector<Ref<StyleRuleBase>>&& rules)
+    : StyleRuleGroup(StyleRuleType::InternalBaseAppearance, WTFMove(rules))
 {
 }
 

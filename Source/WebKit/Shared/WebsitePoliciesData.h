@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "UserContentControllerParameters.h"
 #include "WebContentMode.h"
 #include "WebsiteAutoplayPolicy.h"
 #include "WebsiteAutoplayQuirk.h"
@@ -92,6 +93,8 @@ public:
     WebsitePushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy { WebsitePushAndNotificationsEnabledPolicy::UseGlobalPolicy };
     WebsiteInlineMediaPlaybackPolicy inlineMediaPlaybackPolicy { WebsiteInlineMediaPlaybackPolicy::Default };
     WebCore::ResourceRequest alternateRequest;
+    std::optional<UserContentControllerParameters> userContentControllerParameters;
+    String overrideReferrerForAllRequests;
 };
 
 } // namespace WebKit

@@ -48,7 +48,8 @@
 #include "CSSSupportsRule.h"
 #include "CSSTokenizer.h"
 #include "ContentSecurityPolicy.h"
-#include "Document.h"
+#include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "ExtensionStyleSheets.h"
 #include "EventTargetInlines.h"
@@ -59,6 +60,7 @@
 #include "InspectorCSSAgent.h"
 #include "InspectorDOMAgent.h"
 #include "InspectorPageAgent.h"
+#include "InspectorResourceUtilities.h"
 #include "MediaList.h"
 #include "Node.h"
 #include "SVGElementTypeHelpers.h"
@@ -99,6 +101,7 @@ static RuleFlatteningStrategy flatteningStrategyForStyleRuleType(StyleRuleType s
     case StyleRuleType::Container:
     case StyleRuleType::Scope:
     case StyleRuleType::StartingStyle:
+    case StyleRuleType::InternalBaseAppearance:
         // These rules MUST be handled by the following methods in order to provide functionality in
         // and avoid mismatched lists of source data and CSSOM wrappers:
         // - `isValidRuleHeaderText`
@@ -324,7 +327,7 @@ private:
     void fixUnparsedPropertyRanges(CSSRuleSourceData*);
     
     const String& m_parsedText;
-    Document* m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
     
     RuleSourceDataList m_currentRuleDataStack;
     RefPtr<CSSRuleSourceData> m_currentRuleData;
@@ -544,8 +547,8 @@ void StyleSheetHandler::observeComment(unsigned startOffset, unsigned endOffset)
     // FIXME: Use the actual rule type rather than STYLE_RULE?
     RuleSourceDataList sourceData;
     
-    StyleSheetHandler handler(commentText, m_document, &sourceData);
-    CSSParser::parseDeclarationListForInspector(commentText, parserContextForDocument(m_document), handler);
+    StyleSheetHandler handler(commentText, m_document.get(), &sourceData);
+    CSSParser::parseDeclarationListForInspector(commentText, parserContextForDocument(m_document.get()), handler);
     Vector<CSSPropertySourceData>& commentPropertyData = sourceData.first()->styleSourceData->propertyData;
     if (commentPropertyData.size() != 1)
         return;
@@ -1540,6 +1543,9 @@ ExceptionOr<void> InspectorStyleSheet::setRuleStyleText(const InspectorCSSId& id
     if (!cssRule)
         return Exception { ExceptionCode::NotFoundError };
 
+    if (!ensureParsedDataReady())
+        return Exception { ExceptionCode::NotFoundError };
+
     RefPtr<CSSRuleSourceData> sourceData = ruleSourceDataFor(cssRule);
     if (!sourceData)
         return Exception { ExceptionCode::NotFoundError };
@@ -1739,7 +1745,7 @@ bool InspectorStyleSheet::resourceStyleSheetText(String* result) const
 
     String error;
     bool base64Encoded;
-    InspectorPageAgent::resourceContent(error, ownerDocument()->frame(), URL({ }, m_pageStyleSheet->href()), result, &base64Encoded);
+    ResourceUtilities::resourceContent(error, ownerDocument()->frame(), URL({ }, m_pageStyleSheet->href()), result, &base64Encoded);
     return error.isEmpty() && !base64Encoded;
 }
 

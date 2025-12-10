@@ -37,10 +37,14 @@
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
 #include "DOMFormData.h"
+#include "DocumentEventLoop.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "ElementRareData.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameSelection.h"
 #include "HTMLDataListElement.h"
 #include "HTMLInputElement.h"
@@ -52,7 +56,6 @@
 #include "LocalFrameInlines.h"
 #include "LocalizedStrings.h"
 #include "NodeRenderStyle.h"
-#include "Page.h"
 #include "PlatformKeyboardEvent.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
@@ -793,7 +796,7 @@ void TextFieldInputType::autoFillButtonElementWasClicked()
     if (!page)
         return;
 
-    auto event = Event::create(eventNames().webkitautofillrequestEvent, Event::CanBubble::No, Event::IsCancelable::No);
+    auto event = Event::create(eventNames().webkitautofillrequestEvent, Event::CanBubble::No, Event::IsCancelable::No, Event::IsComposed::Yes);
     event->setIsAutofillEvent();
     element->dispatchEvent(WTFMove(event));
 

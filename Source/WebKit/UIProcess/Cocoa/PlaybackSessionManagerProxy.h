@@ -72,6 +72,7 @@ public:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     // PlaybackSessionModel
     void addClient(WebCore::PlaybackSessionModelClient&) final;
@@ -241,7 +242,7 @@ private:
     std::optional<WebCore::SpatialVideoMetadata> m_spatialVideoMetadata;
     std::optional<WebCore::VideoProjectionMetadata> m_videoProjectionMetadata;
 
-    bool m_prefersAutoDimming { false };
+    bool m_prefersAutoDimming { true };
 #if !RELEASE_LOG_DISABLED
     uint64_t m_logIdentifier { 0 };
 #endif
@@ -263,7 +264,8 @@ public:
     void invalidate();
 
     bool canEnterVideoFullscreen() const { return !!m_controlsManagerContextId && m_controlsManagerContextIsVideo; }
-    RefPtr<WebCore::PlatformPlaybackSessionInterface> controlsManagerInterface();
+    WebCore::PlatformPlaybackSessionInterface* controlsManagerInterface();
+    RefPtr<WebCore::PlatformPlaybackSessionInterface> protectedControlsManagerInterface();
     void requestControlledElementID();
 
     bool isPaused(PlaybackSessionContextIdentifier) const;
@@ -286,7 +288,8 @@ private:
     ModelInterfaceTuple createModelAndInterface(PlaybackSessionContextIdentifier);
     const ModelInterfaceTuple& ensureModelAndInterface(PlaybackSessionContextIdentifier);
     Ref<PlaybackSessionModelContext> ensureModel(PlaybackSessionContextIdentifier);
-    Ref<WebCore::PlatformPlaybackSessionInterface> ensureInterface(PlaybackSessionContextIdentifier);
+    WebCore::PlatformPlaybackSessionInterface& ensureInterface(PlaybackSessionContextIdentifier);
+    Ref<WebCore::PlatformPlaybackSessionInterface> ensureProtectedInterface(PlaybackSessionContextIdentifier);
     void addClientForContext(PlaybackSessionContextIdentifier);
     void removeClientForContext(PlaybackSessionContextIdentifier);
 

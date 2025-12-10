@@ -90,6 +90,11 @@ void VideoLayerManagerObjC::setVideoLayer(PlatformLayer *videoLayer, FloatSize c
     }
 }
 
+void VideoLayerManagerObjC::setPresentationSize(FloatSize contentSize)
+{
+    [m_videoInlineLayer setFrame:CGRectMake(0, 0, contentSize.width(), contentSize.height())];
+}
+
 void VideoLayerManagerObjC::didDestroyVideoLayer()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
@@ -125,7 +130,7 @@ void VideoLayerManagerObjC::setVideoFullscreenLayer(PlatformLayer *videoFullscre
     [CATransaction setDisableActions:YES];
 
     if (m_videoLayer) {
-        CAContext *oldContext = [m_videoLayer context];
+        RetainPtr<CAContext> oldContext = [m_videoLayer context];
 
         if (m_videoInlineLayer && currentImage)
             [m_videoInlineLayer setContents:(__bridge id)currentImage.get()];
@@ -139,11 +144,11 @@ void VideoLayerManagerObjC::setVideoFullscreenLayer(PlatformLayer *videoFullscre
         } else
             [m_videoLayer removeFromSuperlayer];
 
-        CAContext *newContext = [m_videoLayer context];
+        RetainPtr<CAContext> newContext = [m_videoLayer context];
         if (oldContext && newContext && oldContext != newContext) {
 #if PLATFORM(MAC)
-            oldContext.commitPriority = 0;
-            newContext.commitPriority = 1;
+            oldContext.get().commitPriority = 0;
+            newContext.get().commitPriority = 1;
 #endif
             auto fencePort = MachSendRight::adopt([oldContext createFencePort]);
             [newContext setFencePort:fencePort.sendRight()];

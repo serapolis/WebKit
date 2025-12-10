@@ -29,6 +29,7 @@
 #include "AutomationProtocolObjects.h"
 #include "CoordinateSystem.h"
 #include "WebAutomationDOMWindowObserver.h"
+#include "WebAutomationSessionMacros.h"
 #include "WebAutomationSessionMessages.h"
 #include "WebAutomationSessionProxyMessages.h"
 #include "WebAutomationSessionProxyScriptSource.h"
@@ -49,6 +50,8 @@
 #include <WebCore/CookieJar.h>
 #include <WebCore/DOMRect.h>
 #include <WebCore/DOMRectList.h>
+#include <WebCore/DocumentPage.h>
+#include <WebCore/DocumentView.h>
 #include <WebCore/ElementAncestorIteratorInlines.h>
 #include <WebCore/File.h>
 #include <WebCore/FileList.h>
@@ -64,7 +67,7 @@
 #include <WebCore/HitTestSource.h>
 #include <WebCore/JSElement.h>
 #include <WebCore/LocalDOMWindow.h>
-#include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/RenderElement.h>
 #include <wtf/StdLibExtras.h>
@@ -367,8 +370,10 @@ WebCore::AccessibilityObject* WebAutomationSessionProxy::getAccessibilityObjectF
         // the accessibility object for this element will not be created (because it doesn't yet have its renderer).
         axObjectCache->performDeferredCacheUpdate(ForceLayout::Yes);
 
-        if (RefPtr<WebCore::AccessibilityObject> axObject = axObjectCache->exportedGetOrCreate(*coreElement))
-            return axObject.get();
+        // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+        // as we merely return it right away (rdar://165602290).
+        SUPPRESS_UNCOUNTED_LOCAL if (auto* axObject = axObjectCache->exportedGetOrCreate(*coreElement))
+            return axObject;
     }
 
     errorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError);
@@ -636,26 +641,26 @@ void WebAutomationSessionProxy::resolveParentFrame(WebCore::PageIdentifier pageI
     completionHandler(std::nullopt, parentFrame->frameID());
 }
 
-void WebAutomationSessionProxy::focusFrame(WebCore::PageIdentifier pageID, WebCore::FrameIdentifier frameID, CompletionHandler<void(std::optional<String>)>&& completionHandler)
+void WebAutomationSessionProxy::focusFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, CompletionHandler<void(Inspector::CommandResult<void>)>&& callback)
 {
-    RefPtr page = WebProcess::singleton().webPage(pageID);
-    if (!page || !page->corePage()) {
-        String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
-        completionHandler(windowNotFoundErrorType);
-        return;
+    RefPtr<WebCore::Frame> coreFrame;
+    if (frameID) {
+        RefPtr frame = WebProcess::singleton().webFrame(*frameID);
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!frame, FrameNotFound);
+        coreFrame = frame->coreFrame();
+    } else {
+        RefPtr page = WebProcess::singleton().webPage(pageID);
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page || !page->corePage(), WindowNotFound);
+        coreFrame = page->mainFrame();
     }
 
     // If frame is no longer connected to the page, then it is
     // closing and it's not possible to focus the frame.
-    RefPtr frame = WebProcess::singleton().webFrame(frameID);
-    if (!frame || !frame->coreFrame() || !frame->coreFrame()->page()) {
-        String frameNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::FrameNotFound);
-        completionHandler(frameNotFoundErrorType);
-        return;
-    }
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!coreFrame || !coreFrame->page(), FrameNotFound);
 
-    page->corePage()->focusController().setFocusedFrame(frame->protectedCoreFrame().get());
-    completionHandler(std::nullopt);
+    coreFrame->page()->focusController().setFocusedFrame(coreFrame.get());
+
+    callback({ });
 }
 
 static WebCore::Element* containerElementForElement(WebCore::Element& element)
@@ -663,17 +668,21 @@ static WebCore::Element* containerElementForElement(WebCore::Element& element)
     // §13. Element State.
     // https://w3c.github.io/webdriver/webdriver-spec.html#dfn-container.
     if (is<WebCore::HTMLOptionElement>(element)) {
-        if (RefPtr parentElement = WebCore::ancestorsOfType<WebCore::HTMLDataListElement>(element).first())
-            return parentElement.get();
-        if (RefPtr parentElement = downcast<WebCore::HTMLOptionElement>(element).ownerSelectElement())
-            return parentElement.get();
+        if (auto* parentElement = WebCore::ancestorsOfType<WebCore::HTMLDataListElement>(element).first())
+            return parentElement;
+        // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+        // as we merely return it right away (rdar://165602290).
+        SUPPRESS_UNCOUNTED_LOCAL if (auto* parentElement = downcast<WebCore::HTMLOptionElement>(element).ownerSelectElement())
+            return parentElement;
 
         return nullptr;
     }
 
     if (RefPtr optgroup = dynamicDowncast<WebCore::HTMLOptGroupElement>(element)) {
-        if (RefPtr parentElement = optgroup->ownerSelectElement())
-            return parentElement.get();
+        // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+        // as we merely return it right away (rdar://165602290).
+        SUPPRESS_UNCOUNTED_LOCAL if (auto* parentElement = optgroup->ownerSelectElement())
+            return parentElement;
 
         return nullptr;
     }

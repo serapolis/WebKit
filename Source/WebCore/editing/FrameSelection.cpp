@@ -36,6 +36,9 @@
 #include "DeleteSelectionCommand.h"
 #include "DictationCaretAnimator.h"
 #include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "Editing.h"
 #include "Editor.h"
 #include "EditorClient.h"
@@ -45,6 +48,7 @@
 #include "EventNames.h"
 #include "FloatQuad.h"
 #include "FocusController.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameTree.h"
 #include "GCReachableRef.h"
 #include "GraphicsContext.h"
@@ -66,13 +70,12 @@
 #include "MutableStyleProperties.h"
 #include "NodeInlines.h"
 #include "OpacityCaretAnimator.h"
-#include "Page.h"
 #include "PositionInlines.h"
 #include "PseudoClassChangeInvalidation.h"
-#include "Quirks.h"
 #include "Range.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
+#include "RenderStyleInlines.h"
 #include "RenderText.h"
 #include "RenderTextControl.h"
 #include "RenderTheme.h"
@@ -1506,15 +1509,15 @@ static AXTextSelection textSelectionWithDirectionAndGranularity(SelectionDirecti
 bool FrameSelection::modify(Alteration alter, SelectionDirection direction, TextGranularity granularity, UserTriggered userTriggered)
 {
     if (userTriggered == UserTriggered::Yes) {
-        FrameSelection trialFrameSelection;
-        trialFrameSelection.setSelection(m_selection);
-        trialFrameSelection.modify(alter, direction, granularity, UserTriggered::No);
+        auto trialFrameSelection = makeUniqueRef<FrameSelection>();
+        trialFrameSelection->setSelection(m_selection);
+        trialFrameSelection->modify(alter, direction, granularity, UserTriggered::No);
 
-        bool change = shouldChangeSelection(trialFrameSelection.selection());
+        bool change = shouldChangeSelection(trialFrameSelection->selection());
         if (!change)
             return false;
 
-        if (trialFrameSelection.selection().isRange() && m_selection.isCaret() && !dispatchSelectStart())
+        if (trialFrameSelection->selection().isRange() && m_selection.isCaret() && !dispatchSelectStart())
             return false;
     }
 
@@ -1645,11 +1648,11 @@ bool FrameSelection::modify(Alteration alter, unsigned verticalDistance, Vertica
         return false;
 
     if (userTriggered == UserTriggered::Yes) {
-        FrameSelection trialFrameSelection;
-        trialFrameSelection.setSelection(m_selection);
-        trialFrameSelection.modify(alter, verticalDistance, direction, UserTriggered::No);
+        auto trialFrameSelection = makeUniqueRef<FrameSelection>();
+        trialFrameSelection->setSelection(m_selection);
+        trialFrameSelection->modify(alter, verticalDistance, direction, UserTriggered::No);
 
-        bool change = shouldChangeSelection(trialFrameSelection.selection());
+        bool change = shouldChangeSelection(trialFrameSelection->selection());
         if (!change)
             return false;
     }
@@ -2263,11 +2266,11 @@ bool FrameSelection::setSelectedRange(const std::optional<SimpleRange>& range, A
         selectionOptions.add(SetSelectionOption::CloseTyping);
 
     if (userTriggered == UserTriggered::Yes) {
-        FrameSelection trialFrameSelection;
+        auto trialFrameSelection = makeUniqueRef<FrameSelection>();
 
-        trialFrameSelection.setSelection(newSelection, selectionOptions);
+        trialFrameSelection->setSelection(newSelection, selectionOptions);
 
-        if (!shouldChangeSelection(trialFrameSelection.selection()))
+        if (!shouldChangeSelection(trialFrameSelection->selection()))
             return false;
 
         selectionOptions.add(SetSelectionOption::IsUserTriggered);
@@ -2487,8 +2490,7 @@ void FrameSelection::setFocusedElementIfNeeded(OptionSet<SetSelectionOption> opt
     if (caretBrowsing) {
         if (RefPtr anchor = enclosingAnchorElement(m_selection.base())) {
             CheckedRef focusController { document->page()->focusController() };
-            Ref frame = *document->frame();
-            focusController->setFocusedElement(anchor.get(), frame);
+            focusController->setFocusedElement(anchor.get(), document->protectedFrame().get());
             return;
         }
     }
@@ -2503,7 +2505,7 @@ void FrameSelection::setFocusedElementIfNeeded(OptionSet<SetSelectionOption> opt
                 FocusOptions focusOptions;
                 if (options & SetSelectionOption::ForBindings)
                     focusOptions.trigger = FocusTrigger::Bindings;
-                document->protectedPage()->focusController().setFocusedElement(target.get(), *document->protectedFrame(), focusOptions);
+                document->protectedPage()->focusController().setFocusedElement(target.get(), document->protectedFrame().get(), focusOptions);
                 return;
             }
             target = target->parentOrShadowHostElement();
@@ -2512,7 +2514,7 @@ void FrameSelection::setFocusedElementIfNeeded(OptionSet<SetSelectionOption> opt
     }
 
     if (caretBrowsing)
-        document->protectedPage()->focusController().setFocusedElement(nullptr, *document->protectedFrame());
+        document->protectedPage()->focusController().setFocusedElement(nullptr, document->protectedFrame().get());
 }
 
 void DragCaretController::paintDragCaret(LocalFrame* frame, GraphicsContext& p, const LayoutPoint& paintOffset) const
@@ -2682,6 +2684,8 @@ void FrameSelection::revealSelection(const RevealSelectionOptions& revealSelecti
         return;
 #endif
 
+    m_selectionRevealMode = SelectionRevealMode::DoNotReveal;
+
     // FIXME: This code only handles scrolling the startContainer's layer, but
     // the selection rect could intersect more than just that.
     // See <rdar://problem/4799899>.
@@ -2766,13 +2770,13 @@ std::optional<SimpleRange> FrameSelection::rangeByExtendingCurrentSelection(Text
     if (m_selection.isNone())
         return std::nullopt;
 
-    FrameSelection frameSelection;
-    frameSelection.setSelection(m_selection);
+    auto frameSelection = makeUniqueRef<FrameSelection>();
+    frameSelection->setSelection(m_selection);
 
-    frameSelection.modify(Alteration::Move, SelectionDirection::Backward, granularity);
-    frameSelection.modify(Alteration::Extend, SelectionDirection::Forward, granularity);
+    frameSelection->modify(Alteration::Move, SelectionDirection::Backward, granularity);
+    frameSelection->modify(Alteration::Extend, SelectionDirection::Forward, granularity);
 
-    return frameSelection.selection().toNormalizedRange();
+    return frameSelection->selection().toNormalizedRange();
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -2879,8 +2883,8 @@ VisibleSelection FrameSelection::wordSelectionContainingCaretSelection(const Vis
         return VisibleSelection();
 
     ASSERT(selection.isCaretOrRange());
-    FrameSelection frameSelection;
-    frameSelection.setSelection(selection);
+    auto frameSelection = makeUniqueRef<FrameSelection>();
+    frameSelection->setSelection(selection);
 
     Position startPosBeforeExpansion(selection.start());
     Position endPosBeforeExpansion(selection.end());
@@ -2901,14 +2905,14 @@ VisibleSelection FrameSelection::wordSelectionContainingCaretSelection(const Vis
     // This has the effect of selecting the word on the line (which is
     // what we want, rather than selecting past the end of the line).
     if (isEndOfParagraph(endVisiblePosBeforeExpansion) && !isStartOfParagraph(endVisiblePosBeforeExpansion))
-        frameSelection.modify(FrameSelection::Alteration::Move, SelectionDirection::Backward, TextGranularity::CharacterGranularity);
+        frameSelection->modify(FrameSelection::Alteration::Move, SelectionDirection::Backward, TextGranularity::CharacterGranularity);
 
-    VisibleSelection newSelection = frameSelection.selection();
+    VisibleSelection newSelection = frameSelection->selection();
     newSelection.expandUsingGranularity(TextGranularity::WordGranularity);
-    frameSelection.setSelection(newSelection, defaultSetSelectionOptions(), AXTextStateChangeIntent(), CursorAlignOnScroll::IfNeeded, frameSelection.granularity());
+    frameSelection->setSelection(newSelection, defaultSetSelectionOptions(), AXTextStateChangeIntent(), CursorAlignOnScroll::IfNeeded, frameSelection->granularity());
 
-    Position startPos(frameSelection.selection().start());
-    Position endPos(frameSelection.selection().end());
+    Position startPos(frameSelection->selection().start());
+    Position endPos(frameSelection->selection().end());
 
     // Expansion cannot be allowed to change selection so that it is no longer
     // touches (or contains) the original, unexpanded selection.
@@ -2953,10 +2957,10 @@ VisibleSelection FrameSelection::wordSelectionContainingCaretSelection(const Vis
             // Space at end of line
             return VisibleSelection();
         }
-        frameSelection.moveTo(startVisiblePos);
-        frameSelection.modify(FrameSelection::Alteration::Extend, SelectionDirection::Backward, TextGranularity::WordGranularity);
-        startPos = frameSelection.selection().start();
-        endPos = frameSelection.selection().end();
+        frameSelection->moveTo(startVisiblePos);
+        frameSelection->modify(FrameSelection::Alteration::Extend, SelectionDirection::Backward, TextGranularity::WordGranularity);
+        startPos = frameSelection->selection().start();
+        endPos = frameSelection->selection().end();
         startVisiblePos = VisiblePosition(startPos);
         endVisiblePos = VisiblePosition(endPos);
         if (startVisiblePos.isNull() || endVisiblePos.isNull()) {
@@ -3018,12 +3022,12 @@ std::optional<SimpleRange> FrameSelection::rangeByAlteringCurrentSelection(Alter
     if (!amount)
         return m_selection.toNormalizedRange();
 
-    FrameSelection frameSelection;
-    frameSelection.setSelection(m_selection);
+    auto frameSelection = makeUniqueRef<FrameSelection>();
+    frameSelection->setSelection(m_selection);
     SelectionDirection direction = amount > 0 ? SelectionDirection::Forward : SelectionDirection::Backward;
     for (int i = 0; i < std::abs(amount); i++)
-        frameSelection.modify(alteration, direction, TextGranularity::CharacterGranularity);
-    return frameSelection.selection().toNormalizedRange();
+        frameSelection->modify(alteration, direction, TextGranularity::CharacterGranularity);
+    return frameSelection->selection().toNormalizedRange();
 }
 
 void FrameSelection::clearCurrentSelection()

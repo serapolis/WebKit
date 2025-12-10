@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,6 +64,8 @@ public:
     Quirks(Document&);
     ~Quirks();
 
+    bool hasRelevantQuirks() const;
+
     bool shouldSilenceResizeObservers() const;
     bool shouldSilenceWindowResizeEventsDuringApplicationSnapshotting() const;
     bool shouldSilenceMediaQueryListChangeEvents() const;
@@ -89,7 +91,6 @@ public:
 
     bool shouldPreventOrientationMediaQueryFromEvaluatingToLandscape() const;
     bool shouldFlipScreenDimensions() const;
-    bool shouldAllowDownloadsInSpiteOfCSP() const;
 
     WEBCORE_EXPORT bool shouldDispatchSyntheticMouseEventsWhenModifyingSelection() const;
     WEBCORE_EXPORT bool shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreas() const;
@@ -102,6 +103,7 @@ public:
     WEBCORE_EXPORT bool shouldIgnoreViewportArgumentsToAvoidExcessiveZoom() const;
     WEBCORE_EXPORT bool shouldIgnoreViewportArgumentsToAvoidEnlargedView() const;
     WEBCORE_EXPORT bool shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraints() const;
+    WEBCORE_EXPORT bool shouldAllowNotificationPermissionWithoutUserGesture() const;
     WEBCORE_EXPORT static bool shouldAllowNavigationToCustomProtocolWithoutUserGesture(StringView protocol, const SecurityOriginData& requesterOrigin);
 
     WEBCORE_EXPORT bool needsYouTubeMouseOutQuirk() const;
@@ -128,6 +130,7 @@ public:
     bool needsZomatoEmailLoginLabelQuirk() const;
     bool needsGoogleMapsScrollingQuirk() const;
     bool needsGoogleTranslateScrollingQuirk() const;
+    bool needsGeforcenowWarningDisplayNoneQuirk() const;
 
     bool needsPrimeVideoUserSelectNoneQuirk() const;
 
@@ -149,12 +152,13 @@ public:
 
 #if ENABLE(MEDIA_STREAM)
     bool shouldEnableFacebookFlagQuirk() const;
-    Ref<NodeList> applyFacebookFlagQuirk(Document&, const NodeList&);
+    Ref<NodeList> applyFacebookFlagQuirk(Document&, NodeList&);
     bool shouldEnableLegacyGetUserMediaQuirk() const;
     bool shouldDisableImageCaptureQuirk() const;
     bool shouldEnableSpeakerSelectionPermissionsPolicyQuirk() const;
     bool shouldEnableEnumerateDeviceQuirk() const;
     bool shouldEnableCameraAndMicrophonePermissionStateQuirk() const;
+    bool shouldEnableRemoteTrackLabelQuirk() const;
 #endif
 #if ENABLE(WEB_RTC)
     bool shouldEnableRTCEncodedStreamsQuirk() const;
@@ -163,8 +167,6 @@ public:
     bool shouldUnloadHeavyFrame() const;
 
     bool needsCanPlayAfterSeekedQuirk() const;
-
-    bool shouldAvoidPastingImagesAsWebContent() const;
 
     bool shouldNotAutoUpgradeToHTTPSNavigation(const URL&);
 
@@ -241,6 +243,11 @@ public:
     bool shouldIgnorePlaysInlineRequirementQuirk() const;
     WEBCORE_EXPORT bool shouldUseEphemeralPartitionedStorageForDOMCookies(const URL&) const;
 
+#if PLATFORM(IOS_FAMILY)
+    bool shouldAllowPopupFromMicrosoftOfficeToOneDrive() const { return m_quirksData.quirkIsEnabled(QuirksData::SiteSpecificQuirk::ShouldAllowPopupFromMicrosoftOfficeToOneDrive); }
+    bool needsPopupFromMicrosoftOfficeToOneDrive(const URL& targetURL) const;
+#endif
+
     bool needsLaxSameSiteCookieQuirk(const URL&) const;
     static String standardUserAgentWithApplicationNameIncludingCompatOverrides(const String&, const String&, UserAgentType);
 
@@ -259,11 +266,11 @@ public:
     WEBCORE_EXPORT bool needsPointerTouchCompatibility(const Element&) const;
     bool shouldTreatAddingMouseOutEventListenerAsContentChange() const;
     WEBCORE_EXPORT bool shouldHideSoftTopScrollEdgeEffectDuringFocus(const Element&) const;
+
+    bool needsClaudeSidebarViewportUnitQuirk(Element&, const RenderStyle&) const;
 #endif
 
     bool needsMozillaFileTypeForDataTransfer() const;
-
-    bool needsBingGestureEventQuirk(EventTarget*) const;
 
     WEBCORE_EXPORT bool shouldAvoidStartingSelectionOnMouseDownOverPointerCursor(const Node&) const;
 
@@ -278,9 +285,11 @@ public:
 
     WEBCORE_EXPORT bool needsNowPlayingFullscreenSwapQuirk() const;
 
-    bool needsWebKitMediaTextTrackDisplayQuirk() const;
 
-    bool needsTextInputBoxSizingBorderBoxQuirk() const;
+    enum class TikTokOverflowingContentQuirkType : bool { VideoSectionQuirk, CommentsSectionQuirk };
+    std::optional<TikTokOverflowingContentQuirkType> needsTikTokOverflowingContentQuirk(const Element&, const RenderStyle& parentStyle) const;
+
+    bool needsWebKitMediaTextTrackDisplayQuirk() const;
 
     bool shouldSupportHoverMediaQueries() const;
 
@@ -292,6 +301,10 @@ public:
     bool shouldEnterNativeFullscreenWhenCallingElementRequestFullscreenQuirk() const;
 
     bool shouldDisableDOMAudioSessionQuirk() const;
+
+    bool needsSuppressPostLayoutBoundaryEventsQuirk() const;
+
+    bool shouldExposeCredentialsContainerQuirk() const;
 
     void determineRelevantQuirks();
 

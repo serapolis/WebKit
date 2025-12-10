@@ -44,6 +44,13 @@ struct BrowserView: View {
                 viewModel.page.smartListsEnabled = smartListsEnabled
                 #endif
             }
+            .task {
+                // Safety: this is actually safe; false positive is rdar://154775389
+                for await unsafe _ in NotificationCenter.default.messages(of: UserDefaults.self, for: .didChange) {
+                    viewModel.updateWebPreferences()
+                }
+            }
+            .onAppear(perform: viewModel.updateWebPreferences)
     }
 }
 

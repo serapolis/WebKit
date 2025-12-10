@@ -67,16 +67,13 @@ Ref<SpeechSynthesisUtterance> SpeechSynthesisUtterance::create(ScriptExecutionCo
 
 SpeechSynthesisUtterance::SpeechSynthesisUtterance(ScriptExecutionContext& context, const String& text, UtteranceCompletionHandler&& completion)
     : ActiveDOMObject(&context)
-    , m_platformUtterance(PlatformSpeechSynthesisUtterance::create(*this))
+    , m_platformUtterance(PlatformSpeechSynthesisUtterance::create(this))
     , m_completionHandler(WTFMove(completion))
 {
     m_platformUtterance->setText(text);
 }
 
-SpeechSynthesisUtterance::~SpeechSynthesisUtterance()
-{
-    m_platformUtterance->setClient(nullptr);
-}
+SpeechSynthesisUtterance::~SpeechSynthesisUtterance() = default;
 
 SpeechSynthesisVoice* SpeechSynthesisUtterance::voice() const
 {

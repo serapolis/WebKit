@@ -33,8 +33,9 @@
 #include "HTMLNames.h"
 #include "KeyboardEvent.h"
 #include "LocalizedStrings.h"
+#include "NodeDocument.h"
 #include "PlatformLocale.h"
-#include "RenderStyle.h"
+#include "RenderStyleSetters.h"
 #include "RenderTheme.h"
 #include "ResolvedStyle.h"
 #include "StyleResolver.h"
@@ -207,6 +208,17 @@ void DateTimeFieldElement::updateVisibleValue(EventBehavior eventBehavior)
 bool DateTimeFieldElement::supportsFocus() const
 {
     return true;
+}
+
+bool DateTimeFieldElement::transferredFocusToPicker() const
+{
+    return m_fieldOwner && m_fieldOwner->didFieldOwnerTransferFocusToPicker();
+}
+
+void DateTimeFieldElement::didSuppressBlurDueToPickerFocusTransfer()
+{
+    if (m_fieldOwner)
+        m_fieldOwner->didSuppressBlurDueToPickerFocusTransfer();
 }
 
 } // namespace WebCore

@@ -96,14 +96,14 @@ TEST(StringBuilderTest, Append)
     EXPECT_EQ(characters, builder2.span8().data());
 
     // Test appending char32_t characters to StringBuilder.
-    StringBuilder builderForUChar32Append;
+    StringBuilder builderForUTF32Append;
     char32_t frakturAChar = 0x1D504;
-    builderForUChar32Append.append(frakturAChar); // The fraktur A is not in the BMP, so it's two UTF-16 code units long.
-    EXPECT_EQ(2U, builderForUChar32Append.length());
-    builderForUChar32Append.append(U'A');
-    EXPECT_EQ(3U, builderForUChar32Append.length());
+    builderForUTF32Append.append(frakturAChar); // The fraktur A is not in the BMP, so it's two UTF-16 code units long.
+    EXPECT_EQ(2U, builderForUTF32Append.length());
+    builderForUTF32Append.append(U'A');
+    EXPECT_EQ(3U, builderForUTF32Append.length());
     const char16_t resultArray[] = { U16_LEAD(frakturAChar), U16_TRAIL(frakturAChar), 'A' };
-    EXPECT_EQ(String({ resultArray, std::size(resultArray) }), builderContent(builderForUChar32Append));
+    EXPECT_EQ(String({ resultArray, std::size(resultArray) }), builderContent(builderForUTF32Append));
     {
         StringBuilder builder;
         StringBuilder builder2;
@@ -118,6 +118,12 @@ TEST(StringBuilderTest, Append)
         EXPECT_EQ(4U, builder.length());
         const char16_t resultArray[] = { U16_LEAD(frakturAChar), U16_TRAIL(frakturAChar), U16_LEAD(frakturAChar), U16_TRAIL(frakturAChar) };
         EXPECT_EQ(String({ resultArray, std::size(resultArray) }), builderContent(builder));
+    }
+
+    {
+        StringBuilder builder;
+        builder.append(u8"Water🍉Melon"_span);
+        EXPECT_EQ(builder.toString(), u8"Water🍉Melon"_span);
     }
 }
 

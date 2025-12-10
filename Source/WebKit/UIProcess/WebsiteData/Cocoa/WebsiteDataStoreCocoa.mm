@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +43,7 @@
 #import <WebCore/NetworkStorageSession.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/SearchPopupMenuCocoa.h>
+#import <WebCore/SecurityOriginData.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/FileSystem.h>
@@ -293,17 +294,15 @@ void WebsiteDataStore::platformDestroy()
 
 static String defaultWebsiteDataStoreRootDirectory()
 {
-    static dispatch_once_t onceToken;
-    static NeverDestroyed<RetainPtr<NSURL>> websiteDataStoreDirectory;
-    dispatch_once(&onceToken, ^{
+    static NeverDestroyed<RetainPtr<NSURL>> websiteDataStoreDirectory = [] {
         RetainPtr libraryDirectory = [[NSFileManager defaultManager] URLForDirectory:NSLibraryDirectory inDomain:NSUserDomainMask appropriateForURL:nullptr create:NO error:nullptr];
         RELEASE_ASSERT(libraryDirectory);
         RetainPtr webkitDirectory = [libraryDirectory URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
         if (!WebKit::processHasContainer())
             webkitDirectory = [webkitDirectory URLByAppendingPathComponent:applicationOrProcessIdentifier().get() isDirectory:YES];
 
-        websiteDataStoreDirectory.get() = [webkitDirectory URLByAppendingPathComponent:@"WebsiteDataStore" isDirectory:YES];
-    });
+        return [webkitDirectory URLByAppendingPathComponent:@"WebsiteDataStore" isDirectory:YES];
+    }();
 
     return websiteDataStoreDirectory.get().get().absoluteURL.path;
 }
@@ -556,21 +555,26 @@ String WebsiteDataStore::defaultResourceMonitorThrottlerDirectory(const String& 
 }
 #endif
 
+String WebsiteDataStore::defaultEnhancedSecurityDirectory(const String& baseDirectory)
+{
+    if (!baseDirectory.isEmpty())
+        return FileSystem::pathByAppendingComponent(baseDirectory, "EnhancedSecurity"_s);
+
+    return websiteDataDirectoryFileSystemRepresentation("EnhancedSecurity"_s, { }, ShouldCreateDirectory::No);
+}
+
 String WebsiteDataStore::tempDirectoryFileSystemRepresentation(const String& directoryName, ShouldCreateDirectory shouldCreateDirectory)
 {
-    static dispatch_once_t onceToken;
-    static NeverDestroyed<RetainPtr<NSURL>> tempURL;
-    
-    dispatch_once(&onceToken, ^{
-        RetainPtr url = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
+    static NeverDestroyed<RetainPtr<NSURL>> tempURL = [] {
+        RetainPtr url = [NSURL fileURLWithPath:RetainPtr { NSTemporaryDirectory() }.get() isDirectory:YES];
         if (!url)
             RELEASE_ASSERT_NOT_REACHED();
         
         if (!WebKit::processHasContainer())
             url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier().get() isDirectory:YES];
         
-        tempURL.get() = [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
-    });
+        return [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
+    }();
     
     RetainPtr url = [tempURL.get() URLByAppendingPathComponent:directoryName.createNSString().get() isDirectory:YES];
 
@@ -583,10 +587,7 @@ String WebsiteDataStore::tempDirectoryFileSystemRepresentation(const String& dir
 
 String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& directoryName, const String&, ShouldCreateDirectory shouldCreateDirectory)
 {
-    static dispatch_once_t onceToken;
-    static NeverDestroyed<RetainPtr<NSURL>> cacheURL;
-
-    dispatch_once(&onceToken, ^{
+    static NeverDestroyed<RetainPtr<NSURL>> cacheURL = [] {
         RetainPtr url = [[NSFileManager defaultManager] URLForDirectory:NSCachesDirectory inDomain:NSUserDomainMask appropriateForURL:nullptr create:NO error:nullptr];
         if (!url)
             RELEASE_ASSERT_NOT_REACHED();
@@ -594,8 +595,8 @@ String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& di
         if (!WebKit::processHasContainer())
             url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier().get() isDirectory:YES];
 
-        cacheURL.get() = [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
-    });
+        return [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
+    }();
 
     RetainPtr url = [cacheURL.get() URLByAppendingPathComponent:directoryName.createNSString().get() isDirectory:YES];
     if (shouldCreateDirectory == ShouldCreateDirectory::Yes
@@ -607,10 +608,7 @@ String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& di
 
 String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const String& directoryName, const String&, ShouldCreateDirectory shouldCreateDirectory)
 {
-    static dispatch_once_t onceToken;
-    static NeverDestroyed<RetainPtr<NSURL>> websiteDataURL;
-
-    dispatch_once(&onceToken, ^{
+    static NeverDestroyed<RetainPtr<NSURL>> websiteDataURL = [] {
         RetainPtr url = [[NSFileManager defaultManager] URLForDirectory:NSLibraryDirectory inDomain:NSUserDomainMask appropriateForURL:nullptr create:NO error:nullptr];
         if (!url)
             RELEASE_ASSERT_NOT_REACHED();
@@ -619,8 +617,8 @@ String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const Stri
         if (!WebKit::processHasContainer())
             url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier().get() isDirectory:YES];
 
-        websiteDataURL.get() = [url URLByAppendingPathComponent:@"WebsiteData" isDirectory:YES];
-    });
+        return [url URLByAppendingPathComponent:@"WebsiteData" isDirectory:YES];
+    }();
 
     RetainPtr url = [websiteDataURL.get() URLByAppendingPathComponent:directoryName.createNSString().get() isDirectory:YES];
 
@@ -802,9 +800,25 @@ static HashSet<WebCore::RegistrableDomain>& managedDomains()
     return managedDomains;
 }
 
-NSString *kManagedSitesIdentifier = @"com.apple.mail-shared";
-NSString *kCrossSiteTrackingPreventionRelaxedDomainsKey = @"CrossSiteTrackingPreventionRelaxedDomains";
-NSString *kCrossSiteTrackingPreventionRelaxedAppsKey = @"CrossSiteTrackingPreventionRelaxedApps";
+#if PLATFORM(MAC)
+static NSString *managedSitesIdentifierSingleton()
+{
+    static NSString *identifier = @"com.apple.mail-shared";
+    return identifier;
+}
+
+static NSString *crossSiteTrackingPreventionRelaxedDomainsKeySingleton()
+{
+    static NSString *key = @"CrossSiteTrackingPreventionRelaxedDomains";
+    return key;
+}
+
+static NSString *crossSiteTrackingPreventionRelaxedAppsKeySingleton()
+{
+    static NSString *key = @"CrossSiteTrackingPreventionRelaxedApps";
+    return key;
+}
+#endif
 
 void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReinitialization)
 {
@@ -823,9 +837,10 @@ void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReini
         bool isSafari = false;
 #if PLATFORM(MAC)
         isSafari = WTF::MacApplication::isSafari();
-        RetainPtr managedSitesPrefs = adoptNS([[NSDictionary alloc] initWithContentsOfFile:[adoptNS([[NSString alloc] initWithFormat:@"/Library/Managed Preferences/%@/%@.plist", NSUserName(), kManagedSitesIdentifier]) stringByStandardizingPath]]);
-        crossSiteTrackingPreventionRelaxedDomains = [managedSitesPrefs objectForKey:kCrossSiteTrackingPreventionRelaxedDomainsKey];
-        crossSiteTrackingPreventionRelaxedApps = [managedSitesPrefs objectForKey:kCrossSiteTrackingPreventionRelaxedAppsKey];
+        RetainPtr path = [adoptNS([[NSString alloc] initWithFormat:@"/Library/Managed Preferences/%@/%@.plist", RetainPtr { NSUserName() }.get(), managedSitesIdentifierSingleton()]) stringByStandardizingPath];
+        RetainPtr managedSitesPrefs = adoptNS([[NSDictionary alloc] initWithContentsOfFile:path.get()]);
+        crossSiteTrackingPreventionRelaxedDomains = [managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedDomainsKeySingleton()];
+        crossSiteTrackingPreventionRelaxedApps = [managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedAppsKeySingleton()];
 #elif !PLATFORM(MACCATALYST)
         isSafari = WTF::IOSApplication::isMobileSafari();
         if ([PAL::getMCProfileConnectionClassSingleton() instancesRespondToSelector:@selector(crossSiteTrackingPreventionRelaxedDomains)])
@@ -926,7 +941,7 @@ void WebsiteDataStore::reinitializeManagedDomains()
 
 bool WebsiteDataStore::networkProcessHasEntitlementForTesting(const String& entitlement)
 {
-    return WTF::hasEntitlement(networkProcess().connection().xpcConnection(), entitlement);
+    return WTF::hasEntitlement(networkProcess().protectedConnection()->protectedXPCConnection().get(), entitlement);
 }
 
 std::optional<double> WebsiteDataStore::defaultOriginQuotaRatio()
@@ -1001,11 +1016,7 @@ String WebsiteDataStore::resolvedContainerTemporaryDirectory()
 
 String WebsiteDataStore::defaultResolvedContainerTemporaryDirectory()
 {
-    static NeverDestroyed<String> resolvedTemporaryDirectory;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        resolvedTemporaryDirectory.get() = resolveAndCreateReadWriteDirectoryForSandboxExtension(String(NSTemporaryDirectory()));
-    });
+    static NeverDestroyed<String> resolvedTemporaryDirectory = resolveAndCreateReadWriteDirectoryForSandboxExtension(String(NSTemporaryDirectory()));
     return resolvedTemporaryDirectory;
 }
 
@@ -1039,6 +1050,93 @@ void WebsiteDataStore::removeRecentSearches(WallTime oldestTimeToRemove, Complet
         WebCore::removeRecentlyModifiedRecentSearchesFromFile(time, directory);
         RunLoop::mainSingleton().dispatch(WTFMove(completionHandler));
     });
+}
+
+HashSet<WebCore::RegistrableDomain> WebsiteDataStore::platformAdditionalDomainsWithUserInteraction() const
+{
+    RetainPtr<id> arrayOrCommaDelimitedString;
+    if (!m_configuration->additionalDomainsWithUserInteractionForTesting().isEmpty())
+        arrayOrCommaDelimitedString = m_configuration->additionalDomainsWithUserInteractionForTesting().createNSString();
+    else
+        arrayOrCommaDelimitedString = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKitDebugAdditionalDomainsWithUserInteraction"];
+
+    if (!arrayOrCommaDelimitedString)
+        return { };
+
+    HashSet<WebCore::RegistrableDomain> result { };
+    auto addHost = [&result](String host) {
+        WebCore::SecurityOriginData origin { "https"_s, host, std::nullopt };
+        WebCore::RegistrableDomain domain { origin };
+        if (!domain.isEmpty())
+            result.add(domain);
+    };
+
+    if ([arrayOrCommaDelimitedString isKindOfClass:[NSArray class]]) {
+        for (id host in arrayOrCommaDelimitedString.get()) {
+            if ([host isKindOfClass:[NSString class]])
+                addHost((NSString *)host);
+        }
+    } else if ([arrayOrCommaDelimitedString isKindOfClass:[NSString class]]) {
+        String commaDelimitedString = (NSString *)arrayOrCommaDelimitedString;
+        for (String host : commaDelimitedString.split(","_s))
+            addHost(host.trim(isASCIIWhitespace<char16_t>));
+    }
+
+    return result;
+}
+
+EnhancedSecuritySitesHolder& WebsiteDataStore::enhancedSecuritySitesHolder()
+{
+    ASSERT(isPersistent());
+
+    if (!m_enhancedSecuritySites)
+        lazyInitialize(m_enhancedSecuritySites, EnhancedSecuritySitesHolder::create(resolvedDirectories().enhancedSecurityDirectory));
+
+    return *m_enhancedSecuritySites;
+}
+
+void WebsiteDataStore::trackEnhancedSecurityForDomain(WebCore::RegistrableDomain&& domain, EnhancedSecurity reason)
+{
+    if (!isPersistent())
+        return;
+
+    enhancedSecuritySitesHolder().trackEnhancedSecurityForDomain(WTFMove(domain), reason);
+}
+
+void WebsiteDataStore::fetchEnhancedSecurityOnlyDomains(CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&& completionHandler)
+{
+    if (!isPersistent())
+        return completionHandler({ });
+
+    enhancedSecuritySitesHolder().fetchEnhancedSecurityOnlyDomains(WTFMove(completionHandler));
+}
+
+void WebsiteDataStore::fetchAllEnhancedSecuritySites(CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&& completionHandler)
+{
+    if (!isPersistent())
+        return completionHandler({ });
+
+    enhancedSecuritySitesHolder().fetchAllEnhancedSecuritySites(WTFMove(completionHandler));
+}
+
+void WebsiteDataStore::removeEnhancedSecuritySites(const Vector<WebCore::SecurityOriginData>& origins, CompletionHandler<void()>&& completionHandler)
+{
+    if (!isPersistent())
+        return completionHandler();
+
+    auto sites = origins.map([](auto& origin) {
+        return WebCore::RegistrableDomain { origin };
+    });
+
+    enhancedSecuritySitesHolder().deleteSites(WTFMove(sites), WTFMove(completionHandler));
+}
+
+void WebsiteDataStore::removeAllEnhancedSecuritySites(CompletionHandler<void()>&& completionHandler)
+{
+    if (!isPersistent())
+        return completionHandler();
+
+    enhancedSecuritySitesHolder().deleteAllSites(WTFMove(completionHandler));
 }
 
 }

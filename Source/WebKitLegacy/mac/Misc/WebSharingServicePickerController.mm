@@ -195,7 +195,9 @@ RetainPtr<NSImage> WebSharingServicePickerClient::imageForCurrentSharingServiceP
     else if ([item isKindOfClass:[NSItemProvider class]]) {
         NSItemProvider *itemProvider = (NSItemProvider *)item;
         NSString *itemUTI = itemProvider.registeredTypeIdentifiers.firstObject;
-        
+
+        // FIXME: <rdar://165255055> Migrate from deprecated NSItemProvider APIs
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         [itemProvider loadItemForTypeIdentifier:itemUTI options:nil completionHandler:^(id receivedData, NSError *dataError) {
             if (!receivedData) {
                 LOG_ERROR("Did not receive data from NSItemProvider");
@@ -212,6 +214,7 @@ RetainPtr<NSImage> WebSharingServicePickerClient::imageForCurrentSharingServiceP
             }];
 
         }];
+ALLOW_DEPRECATED_DECLARATIONS_END
     }
     else if ([item isKindOfClass:[NSAttributedString class]]) {
         if (RefPtr frame = _pickerClient->pageForSharingServicePicker(*self)->focusController().focusedOrMainFrame())
@@ -238,12 +241,12 @@ RetainPtr<NSImage> WebSharingServicePickerClient::imageForCurrentSharingServiceP
     if (!_pickerClient)
         return nil;
 
-    return _pickerClient->imageForCurrentSharingServicePickerItem(*self).get();
+    return _pickerClient->imageForCurrentSharingServicePickerItem(*self).unsafeGet();
 }
 
 - (NSWindow *)sharingService:(NSSharingService *)sharingService sourceWindowForShareItems:(NSArray *)items sharingContentScope:(NSSharingContentScope *)sharingContentScope
 {
-    return _pickerClient->windowForSharingServicePicker(*self).get();
+    return _pickerClient->windowForSharingServicePicker(*self).unsafeGet();
 }
 
 @end

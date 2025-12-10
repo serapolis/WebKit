@@ -25,6 +25,7 @@
 #include "AffineTransform.h"
 #include "Document.h"
 #include "FloatRect.h"
+#include "NodeDocument.h"
 #include "NodeInlines.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElement.h"
@@ -43,11 +44,12 @@ SVGFitToViewBox::SVGFitToViewBox(SVGElement* contextElement, SVGPropertyAccess a
     : m_viewBox(SVGAnimatedRect::create(contextElement, access))
     , m_preserveAspectRatio(SVGAnimatedPreserveAspectRatio::create(contextElement, access))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::viewBoxAttr, &SVGFitToViewBox::m_viewBox>();
         PropertyRegistry::registerProperty<SVGNames::preserveAspectRatioAttr, &SVGFitToViewBox::m_preserveAspectRatio>();
-    });
+    }
 }
 
 void SVGFitToViewBox::setViewBox(const FloatRect& viewBox)

@@ -25,12 +25,11 @@
 #include "FEDiffuseLighting.h"
 #include "NodeName.h"
 #include "RenderElement.h"
-#include "RenderStyle.h"
+#include "RenderStyleInlines.h"
 #include "SVGFELightElement.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
-#include "SVGRenderStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -42,13 +41,14 @@ inline SVGFEDiffuseLightingElement::SVGFEDiffuseLightingElement(const QualifiedN
 {
     ASSERT(hasTagName(SVGNames::feDiffuseLightingTag));
 
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFEDiffuseLightingElement::m_in1>();
         PropertyRegistry::registerProperty<SVGNames::diffuseConstantAttr, &SVGFEDiffuseLightingElement::m_diffuseConstant>();
         PropertyRegistry::registerProperty<SVGNames::surfaceScaleAttr, &SVGFEDiffuseLightingElement::m_surfaceScale>();
         PropertyRegistry::registerProperty<SVGNames::kernelUnitLengthAttr, &SVGFEDiffuseLightingElement::m_kernelUnitLengthX, &SVGFEDiffuseLightingElement::m_kernelUnitLengthY>();
-    });
+    }
 }
 
 Ref<SVGFEDiffuseLightingElement> SVGFEDiffuseLightingElement::create(const QualifiedName& tagName, Document& document)
@@ -91,7 +91,7 @@ bool SVGFEDiffuseLightingElement::setFilterEffectAttribute(FilterEffect& filterE
     switch (attrName.nodeName()) {
     case AttributeNames::lighting_colorAttr: {
         auto& style = renderer()->style();
-        auto color = style.colorWithColorFilter(style.svgStyle().lightingColor());
+        auto color = style.colorWithColorFilter(style.lightingColor());
         return effect.setLightingColor(color);
     }
     case AttributeNames::surfaceScaleAttr:
@@ -168,7 +168,7 @@ RefPtr<FilterEffect> SVGFEDiffuseLightingElement::createFilterEffect(const Filte
     Ref lightSource = lightElement->lightSource();
     auto& style = renderer->style();
 
-    Color color = style.colorWithColorFilter(style.svgStyle().lightingColor());
+    Color color = style.colorWithColorFilter(style.lightingColor());
 
     return FEDiffuseLighting::create(color, surfaceScale(), diffuseConstant(), kernelUnitLengthX(), kernelUnitLengthY(), WTFMove(lightSource));
 }

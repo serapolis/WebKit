@@ -27,6 +27,8 @@
 #include "LayoutIntegrationGridLayout.h"
 
 #include "FormattingContextBoxIterator.h"
+#include "GridFormattingContext.h"
+#include "LayoutIntegrationBoxGeometryUpdater.h"
 #include "LayoutIntegrationBoxTreeUpdater.h"
 #include "RenderGrid.h"
 #include "RenderView.h"
@@ -44,9 +46,66 @@ GridLayout::GridLayout(RenderGrid& renderGrid)
 {
 }
 
+void GridLayout::updateFormattingContextGeometries()
+{
+    auto boxGeometryUpdater = BoxGeometryUpdater { layoutState(), gridBox() };
+    CheckedPtr gridBoxContainingBlock = CheckedRef { gridBoxRenderer() }->containingBlock();
+
+    boxGeometryUpdater.setFormattingContextRootGeometry(gridBoxContainingBlock->contentBoxLogicalWidth());
+    boxGeometryUpdater.setFormattingContextContentGeometry(CheckedRef { layoutState() }->geometryForBox(gridBox()).contentBoxWidth(), { });
+}
+
+static inline Layout::GridFormattingContext::GridLayoutConstraints constraintsForGridContent(const Layout::ElementBox& gridContainer)
+{
+    CheckedRef gridContainerRenderer = downcast<RenderGrid>(*gridContainer.rendererForIntegration());
+
+    auto availableInlineSpace = [&]() -> LayoutUnit {
+        if (auto overridingWidth = gridContainerRenderer->overridingBorderBoxLogicalWidth())
+            return gridContainerRenderer->contentBoxLogicalWidth(*overridingWidth);
+        return gridContainerRenderer->contentBoxLogicalWidth();
+    }();
+    auto availableBlockSpace = gridContainerRenderer->availableLogicalHeightForContentBox();
+
+    return {
+        .inlineAxisAvailableSpace = availableInlineSpace,
+        .blockAxisAvailableSpace = availableBlockSpace
+    };
+}
+
+void GridLayout::updateGridItemRenderers()
+{
+    for (CheckedRef layoutBox : formattingContextBoxes(gridBox())) {
+        CheckedRef renderer = downcast<RenderBox>(*layoutBox->rendererForIntegration());
+        auto& gridItemGeometry = CheckedRef { layoutState() }->geometryForBox(layoutBox);
+        auto borderBoxRect = Layout::BoxGeometry::borderBoxRect(gridItemGeometry);
+
+        renderer->setLocation(borderBoxRect.topLeft());
+        renderer->setWidth(borderBoxRect.width());
+        renderer->setHeight(borderBoxRect.height());
+
+        renderer->setMarginBefore(gridItemGeometry.marginBefore());
+        renderer->setMarginAfter(gridItemGeometry.marginAfter());
+        renderer->setMarginStart(gridItemGeometry.marginStart());
+        renderer->setMarginEnd(gridItemGeometry.marginEnd());
+    }
+}
+
+void GridLayout::updateFormattingContextRootRenderer()
+{
+    CheckedRef renderGrid = gridBoxRenderer();
+    auto& currentGrid = renderGrid->currentGrid();
+    currentGrid.setNeedsItemsPlacement(false);
+    OrderIteratorPopulator orderIteratorPopulator(currentGrid.orderIterator());
+
+    for (CheckedRef layoutBox : formattingContextBoxes(gridBox()))
+        orderIteratorPopulator.collectChild(CheckedRef { downcast<RenderBox>(*layoutBox->rendererForIntegration()) });
+}
+
 void GridLayout::layout()
 {
-    // FIXME: implement this.
+    Layout::GridFormattingContext { gridBox(), layoutState() }.layout(constraintsForGridContent(gridBox()));
+    updateGridItemRenderers();
+    updateFormattingContextRootRenderer();
 }
 
 TextStream& operator<<(TextStream& stream, const GridLayout& layout)

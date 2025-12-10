@@ -29,17 +29,8 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 namespace WebCore {
-class AbstractScriptBufferHolder;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::AbstractScriptBufferHolder> : std::true_type { };
-}
-
-namespace WebCore {
-
-class AbstractScriptBufferHolder : public CanMakeWeakPtr<AbstractScriptBufferHolder> {
+class AbstractScriptBufferHolder {
 public:
     virtual void clearDecodedData() = 0;
     virtual void tryReplaceScriptBuffer(const ScriptBuffer&) = 0;
@@ -47,7 +38,7 @@ public:
     virtual ~AbstractScriptBufferHolder() { }
 };
 
-class ScriptBufferSourceProvider final : public JSC::SourceProvider, public AbstractScriptBufferHolder {
+class ScriptBufferSourceProvider final : public JSC::SourceProvider, public AbstractScriptBufferHolder, public CanMakeWeakPtr<ScriptBufferSourceProvider> {
     WTF_MAKE_TZONE_ALLOCATED(ScriptBufferSourceProvider);
 public:
     static Ref<ScriptBufferSourceProvider> create(const ScriptBuffer& scriptBuffer, const JSC::SourceOrigin& sourceOrigin, String sourceURL, String preRedirectURL, const TextPosition& startPosition = TextPosition(), JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Program)
@@ -99,13 +90,15 @@ private:
     {
     }
 
+    bool isScriptBufferSourceProvider() const final { return true; }
+
     StringView sourceImpl(const AbstractLocker&) const
     {
         if (m_scriptBuffer.isEmpty())
             return emptyString();
 
         if (!m_contiguousBuffer && (!m_containsOnlyASCII || *m_containsOnlyASCII))
-            m_contiguousBuffer = m_scriptBuffer.protectedBuffer()->makeContiguous();
+            m_contiguousBuffer = m_scriptBuffer.buffer()->makeContiguous();
         if (!m_containsOnlyASCII) {
             m_containsOnlyASCII = charactersAreAllASCII(m_contiguousBuffer->span());
             if (*m_containsOnlyASCII)
@@ -132,3 +125,7 @@ private:
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ScriptBufferSourceProvider)
+    static bool isType(const JSC::SourceProvider& provider) { return provider.isScriptBufferSourceProvider(); }
+SPECIALIZE_TYPE_TRAITS_END()

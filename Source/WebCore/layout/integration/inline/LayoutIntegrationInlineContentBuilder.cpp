@@ -27,7 +27,7 @@
 #include "LayoutIntegrationInlineContentBuilder.h"
 
 #include "InlineDamage.h"
-#include "InlineDisplayBox.h"
+#include "InlineDisplayBoxInlines.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutIntegrationInlineContent.h"
 #include "LayoutState.h"
@@ -187,22 +187,29 @@ void InlineContentBuilder::adjustDisplayLines(InlineContent& inlineContent, size
                 continue;
             }
 
-            if (box.isAtomicInlineBox()) {
+            if (box.isAtomicInlineBox() || box.isBlockLevelBox()) {
+                if (box.isBlockLevelBox())
+                    inlineContent.setHasBlockLevelBoxes();
+
                 auto& renderer = downcast<RenderBox>(*box.layoutBox().rendererForIntegration());
                 if (!renderer.hasSelfPaintingLayer()) {
                     auto childInkOverflow = renderer.logicalVisualOverflowRectForPropagation(renderer.parent()->writingMode());
                     childInkOverflow.move(box.left(), box.top());
                     lineInkOverflowRect.unite(childInkOverflow);
                 }
-                auto childScrollableOverflow = renderer.layoutOverflowRectForPropagation(renderer.parent()->writingMode());
-                childScrollableOverflow.move(box.left(), box.top());
-                lineScrollableOverflowRect.unite(childScrollableOverflow);
+
+                if (!renderer.hasControlClip()) {
+                    auto childScrollableOverflow = renderer.layoutOverflowRectForPropagation(renderer.parent()->writingMode());
+                    childScrollableOverflow.move(box.left(), box.top());
+                    lineScrollableOverflowRect.unite(childScrollableOverflow);
+                }
                 continue;
             }
 
             if (box.isInlineBox()) {
                 if (!downcast<RenderElement>(*box.layoutBox().rendererForIntegration()).hasSelfPaintingLayer())
                     lineInkOverflowRect.unite(box.inkOverflow());
+                continue;
             }
         }
 

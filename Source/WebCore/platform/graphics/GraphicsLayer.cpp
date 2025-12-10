@@ -44,8 +44,12 @@
 #include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 #include "AcceleratedEffectStack.h"
+#endif
+
+#if PLATFORM(COCOA)
+#include <QuartzCore/CALayer.h>
 #endif
 
 #ifndef NDEBUG
@@ -61,7 +65,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(FilterAnimationValue);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(KeyframeValueList);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GraphicsLayer);
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 String acceleratedEffectPropertyIDAsString(AcceleratedEffectProperty property)
 {
     switch (property) {
@@ -632,7 +636,7 @@ void GraphicsLayer::setOffsetFromRenderer(const FloatSize& offset, ShouldSetNeed
     m_offsetFromRenderer = offset;
 
     // If the compositing layer offset changes, we need to repaint.
-    if (shouldSetNeedsDisplay == SetNeedsDisplay)
+    if (shouldSetNeedsDisplay == ShouldSetNeedsDisplay::Set)
         setNeedsDisplay();
 }
 
@@ -644,7 +648,7 @@ void GraphicsLayer::setScrollOffset(const ScrollOffset& offset, ShouldSetNeedsDi
     m_scrollOffset = offset;
 
     // If the compositing layer offset changes, we need to repaint.
-    if (shouldSetNeedsDisplay == SetNeedsDisplay)
+    if (shouldSetNeedsDisplay == ShouldSetNeedsDisplay::Set)
         setNeedsDisplay();
 }
 
@@ -684,7 +688,7 @@ void GraphicsLayer::paintGraphicsLayerContents(GraphicsContext& context, const F
         clipRect.move(offset);
     }
 
-    client().paintContents(this, context, clipRect, layerPaintBehavior);
+    client().paintContents(*this, context, clipRect, layerPaintBehavior);
 }
 
 FloatRect GraphicsLayer::adjustCoverageRectForMovement(const FloatRect& coverageRect, const FloatRect& previousVisibleRect, const FloatRect& currentVisibleRect)
@@ -865,7 +869,7 @@ int GraphicsLayer::validateFilterOperations(const KeyframeValueList& valueList)
     return firstIndex;
 }
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 void GraphicsLayer::setAcceleratedEffectsAndBaseValues(AcceleratedEffects&& effects, AcceleratedEffectValues&& baseValues)
 {
     if (effects.isEmpty()) {
@@ -1173,6 +1177,14 @@ String GraphicsLayer::layerTreeAsText(OptionSet<LayerTreeAsTextOptions> options,
     dumpLayer(ts, options);
     return ts.release();
 }
+
+#if PLATFORM(COCOA)
+RetainPtr<CALayer> GraphicsLayer::protectedPlatformLayer() const
+{
+    // FIXME: CALayer.h is included but static analysis is still warning.
+    SUPPRESS_FORWARD_DECL_ARG return platformLayer();
+}
+#endif
 
 } // namespace WebCore
 

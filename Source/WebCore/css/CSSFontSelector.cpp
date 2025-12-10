@@ -38,8 +38,7 @@
 #include "CSSValueList.h"
 #include "CachedFont.h"
 #include "CachedResourceLoader.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentSettingsValues.h"
 #include "Font.h"
 #include "FontCache.h"
 #include "FontCascadeDescription.h"
@@ -50,7 +49,6 @@
 #include "LocalFrame.h"
 #include "Logging.h"
 #include "ResourceLoadObserver.h"
-#include "Settings.h"
 #include "StyleProperties.h"
 #include "StyleResolver.h"
 #include "StyleRule.h"
@@ -75,7 +73,10 @@ CSSFontSelector::CSSFontSelector(ScriptExecutionContext& context)
     : ActiveDOMObject(&context)
     , m_context(context)
     , m_cssFontFaceSet(CSSFontFaceSet::create(this))
-    , m_fontModifiedObserver([this] { fontModified(); })
+    , m_fontModifiedObserver(CSSFontFaceSet::FontModifiedObserver::create([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->fontModified();
+    }))
     , m_uniqueId(++fontSelectorId)
     , m_version(0)
 {
@@ -85,7 +86,7 @@ CSSFontSelector::CSSFontSelector(ScriptExecutionContext& context)
             m_fontFamilyNames.constructAndAppend(familyName);
     } else {
         m_fontFamilyNames.appendContainerWithMapping(familyNamesData.get(), [](auto& familyName) {
-            return familyName;
+            return AtomString { *familyName };
         });
     }
 
@@ -292,8 +293,15 @@ void CSSFontSelector::opportunisticallyStartFontDataURLLoading(const FontCascade
     const auto& segmentedFontFace = m_cssFontFaceSet->fontFace(description.fontSelectionRequest(), familyName);
     if (!segmentedFontFace)
         return;
+
+    RefPtr context = m_context.get();
+    if (!context)
+        return;
+
+    auto trustedType = context->settingsValues().downloadableBinaryFontTrustedTypes;
+
     for (auto& face : segmentedFontFace->constituentFaces())
-        face->opportunisticallyStartFontDataURLLoading();
+        face->opportunisticallyStartFontDataURLLoading(trustedType);
 }
 
 void CSSFontSelector::fontLoaded(CSSFontFace&)

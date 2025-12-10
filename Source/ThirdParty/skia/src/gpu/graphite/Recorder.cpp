@@ -14,6 +14,7 @@
 #include "include/core/SkPixmap.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSize.h"
+#include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/graphite/BackendTexture.h"
@@ -27,6 +28,7 @@
 #include "src/gpu/AtlasTypes.h"
 #include "src/gpu/GpuTypesPriv.h"
 #include "src/gpu/RefCntedCallback.h"
+#include "src/gpu/Token.h"
 #include "src/gpu/graphite/AtlasProvider.h"
 #include "src/gpu/graphite/BufferManager.h"
 #include "src/gpu/graphite/Caps.h"
@@ -34,6 +36,7 @@
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/Log.h"
+#include "src/gpu/graphite/PaintParamsKey.h"
 #include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/ProxyCache.h"
 #include "src/gpu/graphite/QueueManager.h"
@@ -99,14 +102,19 @@ RecorderOptions::RecorderOptions(const RecorderOptions&) = default;
 RecorderOptions::~RecorderOptions() = default;
 
 /**************************************************************************************************/
-static uint32_t next_id() {
-    static std::atomic<uint32_t> nextID{1};
+
+namespace {
+
+uint32_t next_id() {
+    static std::atomic<uint32_t> nextID{SK_InvalidGenID + 1};
     uint32_t id;
     do {
         id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id == SK_InvalidGenID);
     return id;
 }
+
+} // anonymous namespace
 
 Recorder::Recorder(sk_sp<SharedContext> sharedContext,
                    const RecorderOptions& options,
@@ -143,7 +151,7 @@ Recorder::Recorder(sk_sp<SharedContext> sharedContext,
     fUploadBufferManager = std::make_unique<UploadBufferManager>(fResourceProvider,
                                                                  fSharedContext->caps());
 
-    DrawBufferManager::DrawBufferManagerOptions dbmOpts = {};
+    DrawBufferManager::Options dbmOpts = {};
 #if defined(GPU_TEST_UTILS)
     if (options.fRecorderOptionsPriv && options.fRecorderOptionsPriv->fDbmOptions.has_value()) {
         dbmOpts = *options.fRecorderOptionsPriv->fDbmOptions;
@@ -197,7 +205,7 @@ std::unique_ptr<Recording> Recorder::snap() {
         fTargetProxyCanvas.reset();
     }
     // Collect all pending tasks on the deferred recording canvas and any other tracked device.
-    this->priv().flushTrackedDevices();
+    this->priv().flushTrackedDevices(SK_DUMP_TASKS_CODE("Recorder::Snap"));
 
     // The scratch resources only need to be tracked until prepareResources() is finished, so
     // Recorder doesn't hold a persistent manager and it can be deleted when snap() returns.
@@ -217,11 +225,20 @@ std::unique_ptr<Recording> Recorder::snap() {
     fUploadBufferManager->transferToRecording(recording.get());
     // Add one task for all root uploads before the rest of the rendering tasks might depend on them
     if (fRootUploads->size() > 0) {
-        recording->priv().taskList()->add(UploadTask::Make(fRootUploads.get()));
+        sk_sp<Task> uploadTask = UploadTask::Make(fRootUploads.get());
+
+        // If we are dumping tasks, we want to be able to associate each task with the current flush
+        // count, so each task gets a flushToken---just an int---to track this.
+        SK_DUMP_TASKS_CODE(uploadTask->fFlushToken =
+                this->priv().tokenTracker()->currentFlushToken();)
+
+        recording->priv().taskList()->add(std::move(uploadTask));
         SkASSERT(fRootUploads->size() == 0); // Drained by the newly added task
     }
     recording->priv().taskList()->add(std::move(*fRootTaskList));
     SkASSERT(!fRootTaskList->hasTasks());
+
+    SK_DUMP_TASKS_CODE(this->dumpTasks(recording->priv().taskList()));
 
     // In both the "task failed" case and the "everything is discarded" case, there's no work that
     // needs to be done in insertRecording(). However, we use nullptr as a failure signal, so
@@ -246,6 +263,13 @@ std::unique_ptr<Recording> Recorder::snap() {
         fAtlasProvider->invalidateAtlases();
     }
 
+    // For each KeyAndDataBuilder owned by the Recorder, check if the high watermark of data usage
+    // over the lifetime snap is less than half of allocated capacity. If so, shrink the capacity.
+    for (const std::unique_ptr<KeyAndDataBuilder>& keyDB : fKeyAndDataBuilders) {
+        SkASSERT(keyDB);
+        keyDB->first.tryShrinkCapacity();
+        keyDB->second.tryShrinkCapacity();
+    }
     return recording;
 }
 
@@ -276,6 +300,12 @@ SkCanvas* Recorder::makeCaptureCanvas(SkCanvas* canvas) {
         return fSharedContext->captureManager()->makeCaptureCanvas(canvas);
     }
     return nullptr;
+}
+
+void Recorder::createCaptureBreakpoint(SkSurface* surface) {
+   if (fSharedContext->captureManager()) {
+        fSharedContext->captureManager()->snapPicture(surface);
+    }
 }
 
 void Recorder::registerDevice(sk_sp<Device> device) {
@@ -416,7 +446,8 @@ bool Recorder::updateBackendTexture(const BackendTexture& backendTex,
     sk_sp<Task> uploadTask = UploadTask::Make(std::move(upload));
 
     // Need to flush any pending work in case it depends on this texture
-    this->priv().flushTrackedDevices();
+    this->priv().flushTrackedDevices(
+        SK_DUMP_TASKS_CODE("Recorder::updateBackendTexture: Update Backend Texture"));
 
     this->priv().add(std::move(uploadTask));
 
@@ -470,7 +501,8 @@ bool Recorder::updateCompressedBackendTexture(const BackendTexture& backendTex,
     sk_sp<Task> uploadTask = UploadTask::Make(std::move(upload));
 
     // Need to flush any pending work in case it depends on this texture
-    this->priv().flushTrackedDevices();
+    this->priv().flushTrackedDevices(SK_DUMP_TASKS_CODE(
+            "Recorder::updateCompressedBackendTexture Update Compressed Backend Texture"));
 
     this->priv().add(std::move(uploadTask));
 
@@ -546,6 +578,27 @@ void Recorder::dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) const {
     // used bytes here (see Ganesh implementation).
 }
 
+#if defined(SK_DUMP_TASKS)
+void Recorder::dumpTasks(TaskList* taskList) const {
+    ASSERT_SINGLE_OWNER
+    SkDebugf("\n=========== RECORDING %u ===========\n", fUniqueID);
+    int taskIndex = 0;
+    uint64_t lastToken = skgpu::Token::InvalidToken().value();
+    taskList->visit([&](const Task* task, bool isLast) {
+        if (!task) {
+            return;
+        }
+        uint64_t currToken = task->fFlushToken.value();
+        if (currToken != lastToken) {
+            SkDebugf("**** FLUSH TOKEN %llu %s ****\n", currToken, fFlushSources[currToken - 1]);
+            lastToken = currToken;
+        }
+        task->dump(taskIndex++, "");
+    });
+    SkDebugf("--------------- END ---------------\n");
+}
+#endif
+
 sk_sp<RuntimeEffectDictionary> RecorderPriv::runtimeEffectDictionary() {
     return fRecorder->fRuntimeEffectDict;
 }
@@ -557,10 +610,38 @@ void RecorderPriv::addPendingRead(const TextureProxy* proxy) {
 
 void RecorderPriv::add(sk_sp<Task> task) {
     ASSERT_SINGLE_OWNER_PRIV
+    // Associate each task with current flush count.
+    SK_DUMP_TASKS_CODE(task->fFlushToken = fRecorder->fTokenTracker->nextFlushToken();)
     fRecorder->fRootTaskList->add(std::move(task));
 }
 
-void RecorderPriv::flushTrackedDevices() {
+void RecorderPriv::flushTrackedDevices(const TextureProxy* dependency) {
+    // This version of flushTrackedDevices() must be re-entrant because it is entirely possible for
+    // client-owned surfaces to read and write to each other, where this will be called with
+    // different textures for `dependency`. The recursion stops once the encountered surfaces have
+    // snapped remaining pending work from their DrawContext. But because we might recurse, we do
+    // not perform any cleanup of the fTrackedDevices list. That is deferred until snap() time.
+
+    for (int i = 0; i < fRecorder->fTrackedDevices.size(); ++i) {
+        // Entries may be set to null from a call to deregisterDevice(), which will be cleaned up
+        // along with any immutable or uniquely held Devices once everything is snapped.
+        Device* device = fRecorder->fTrackedDevices[i].get();
+        if (device && device->hasPendingReads(dependency)) {
+            device->flushPendingWork(/*drawContext=*/nullptr);
+        }
+    }
+
+    // TODO(michaelludwig): These flushes are currently only triggered for client-owned surfaces
+    // drawn into other surfaces. This function could be used to flush a more targeted set of
+    // devices when an atlas fills up; in that case we could increment the flush token as part of
+    // that work. As-is, we don't increment the flush token because there could be a tracked atlas
+    // that depended on the atlas's texture state that did *not* depend on `dependency` so it still
+    // requires the atlas to be using the old flush token. The surfaces that were flushed here could
+    // advance to a new token but the token tracking isn't that precise. This all may be moot
+    // anyways if we can successfully switch to a rolling atlas page system.
+}
+
+void RecorderPriv::flushTrackedDevices(SK_DUMP_TASKS_CODE(const char* flushSource)) {
     ASSERT_SINGLE_OWNER_PRIV
 
     // If this is the initial flushTrackedDevices() call, fFlushingTrackedDevicesIndex will be -1
@@ -592,6 +673,11 @@ void RecorderPriv::flushTrackedDevices() {
     // always uses this method. Calling in Device::flushPendingWorkToRecorder may
     // miss parent device flushes, increment too often, and lead to atlas corruption.
     this->tokenTracker()->issueFlushToken();
+#if defined(SK_DUMP_TASKS)
+    fRecorder->fFlushSources.push_back(flushSource);
+    SkASSERT(this->tokenTracker()->currentFlushToken().value() ==
+             static_cast<uint64_t>(fRecorder->fFlushSources.size()));
+#endif
 
     if (startingIndex < 0) {
         // Initial call to flushTrackedDevices() so cleanup null/immutable devices and reset the
@@ -612,6 +698,33 @@ void RecorderPriv::flushTrackedDevices() {
 
         fRecorder->fFlushingDevicesIndex = -1;
     }
+}
+
+std::unique_ptr<KeyAndDataBuilder> RecorderPriv::popOrCreateKeyAndDataBuilder() {
+    if (!fRecorder->fKeyAndDataBuilders.empty()) {
+        std::unique_ptr<KeyAndDataBuilder> keyDB = std::move(fRecorder->fKeyAndDataBuilders.back());
+        fRecorder->fKeyAndDataBuilders.pop_back();
+        return keyDB;
+    }
+
+    const bool useStorageBuffers = this->caps()->storageBufferSupport();
+    const auto& bindingReq = this->caps()->resourceBindingRequirements();
+    auto gathererLayout = useStorageBuffers ? bindingReq.fStorageBufferLayout
+                                            : bindingReq.fUniformBufferLayout;
+
+    return std::make_unique<KeyAndDataBuilder>(
+        PipelineDataGatherer(gathererLayout),
+        PaintParamsKeyBuilder(this->shaderCodeDictionary()));
+    }
+
+void RecorderPriv::pushKeyAndDataBuilder(std::unique_ptr<KeyAndDataBuilder> keyDB) {
+    SkASSERT(keyDB);
+
+    if (fRecorder->fKeyAndDataBuilders.size() < Recorder::kMaxKeyAndDataBuilders) {
+        fRecorder->fKeyAndDataBuilders.push_back(std::move(keyDB));
+        return;
+    }
+    // If no empty slot was found, the "keyDB" unique_ptr goes out of scope here.
 }
 
 sk_sp<TextureProxy> RecorderPriv::CreateCachedProxy(Recorder* recorder,
@@ -650,8 +763,6 @@ void RecorderPriv::setContext(Context* context) {
 void RecorderPriv::issueFlushToken() {
     fRecorder->fTokenTracker->issueFlushToken();
 }
-
 #endif
-
 
 } // namespace skgpu::graphite

@@ -528,7 +528,7 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
         // this point when we know which memory mode to use.
         Wasm::CalleeGroup* calleeGroup = m_instance->calleeGroup();
         if (!calleeGroup || !calleeGroup->runnable()) {
-            calleeGroup = m_instance->module().compileSync(vm, m_instance->memory()->mode()).ptr();
+            calleeGroup = m_instance->module().compileSync(vm, m_instance->memory()->mode()).unsafePtr();
             if (!calleeGroup->runnable())
                 return exception(createJSWebAssemblyLinkError(globalObject, vm, calleeGroup->errorMessage()));
         }
@@ -553,18 +553,10 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
 
         // 1. If e is a closure c:
         //   i. If there is an Exported Function Exotic Object func in funcs whose func.[[Closure]] equals c, then return func.
-        //   ii. (Note: At most one wrapper is created for any closure, so func is unique, even if there are multiple occurrances in the list. Moreover, if the item was an import that is already an Exported Function Exotic Object, then the original function object will be found. For imports that are regular JS functions, a new wrapper will be created.)
+        //   ii. (Note: At most one wrapper is created for any closure, so func is unique, even if there are multiple occurrences in the list. Moreover, if the item was an import that is already an Exported Function Exotic Object, then the original function object will be found. For imports that are regular JS functions, a new wrapper will be created.)
         if (functionIndexSpace < functionImportCount) {
-            JSObject* functionImport = m_instance->importFunction(functionIndexSpace).get();
-            if (!functionImport) {
-                // No function import means the import is a wasm builtin.
-                // The boxed callee in callLinkInfo is a WasmBuiltinCallee with a pointer to the builtin.
-                auto* callLinkInfo = m_instance->importFunctionInfo(functionIndexSpace);
-                auto* callee = std::bit_cast<Wasm::WasmBuiltinCallee*>(callLinkInfo->boxedCallee.asNativeCallee());
-                ASSERT(callee->compilationMode() == Wasm::CompilationMode::WasmBuiltinMode);
-                const WebAssemblyBuiltin* builtin = callee->builtin();
-                wrapper = builtin->jsWrapper(globalObject);
-            } else if (isWebAssemblyHostFunction(functionImport))
+            JSObject* functionImport = m_instance->getImportFunctionObject(functionIndexSpace, globalObject);
+            if (isWebAssemblyHostFunction(functionImport))
                 wrapper = functionImport;
             else {
                 Wasm::TypeIndex typeIndex = module->typeIndexFromFunctionIndexSpace(functionIndexSpace);
@@ -820,6 +812,9 @@ void WebAssemblyModuleRecord::initializeExports(JSGlobalObject* globalObject)
         ASSERT(signature.returnsVoid());
         if (startFunctionIndexSpace < calleeGroup->functionImportCount()) {
             JSObject* startFunction = m_instance->importFunction(startFunctionIndexSpace).get();
+            // startFunction can be nullptr if the import is a Wasm builtin.
+            // Currently there are no nullary Wasm builtins so this is never nullptr.
+            ASSERT(startFunction);
             m_startFunction.set(vm, this, startFunction);
         } else {
             auto& jsToWasmCallee = calleeGroup->jsToWasmCalleeFromFunctionIndexSpace(startFunctionIndexSpace);
@@ -965,7 +960,7 @@ JSValue WebAssemblyModuleRecord::evaluate(JSGlobalObject* globalObject)
     ASSERT(!exception);
 
     if (JSObject* startFunction = m_startFunction.get()) {
-        auto callData = JSC::getCallData(startFunction);
+        auto callData = JSC::getCallDataInline(startFunction);
         call(globalObject, startFunction, callData, jsUndefined(), *vm.emptyList);
         RETURN_IF_EXCEPTION(scope, { });
     }

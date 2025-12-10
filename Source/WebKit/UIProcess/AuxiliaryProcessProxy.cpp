@@ -28,9 +28,11 @@
 
 #include "AuxiliaryProcessCreationParameters.h"
 #include "AuxiliaryProcessMessages.h"
+#include "Connection.h"
 #include "Logging.h"
 #include "MessageNames.h"
 #include "OverrideLanguages.h"
+#include "StreamClientConnection.h"
 #include "UIProcessLogInitialization.h"
 #include "WebPageProxy.h"
 #include "WebPageProxyIdentifier.h"
@@ -164,7 +166,7 @@ void AuxiliaryProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& lau
 #endif
 #if ENABLE(BUBBLEWRAP_SANDBOX)
     case ProcessLauncher::ProcessType::DBusProxy:
-        ASSERT_NOT_REACHED();
+        RELEASE_ASSERT_NOT_REACHED();
         break;
 #endif
     }
@@ -377,7 +379,7 @@ void AuxiliaryProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::C
     }
 
 #if USE(RUNNINGBOARD)
-    m_throttler.didConnectToProcess(*this);
+    protectedThrottler()->didConnectToProcess(*this);
 #if USE(EXTENSIONKIT)
     ASSERT(launcher);
     if (launcher)
@@ -452,7 +454,7 @@ void AuxiliaryProcessProxy::shutDownProcess()
 
 AuxiliaryProcessProxy* AuxiliaryProcessProxy::fromConnection(const IPC::Connection& connection)
 {
-    return connectionToProcessMap().get(connection.uniqueID()).get();
+    return connectionToProcessMap().get(connection.uniqueID());
 }
 
 void AuxiliaryProcessProxy::setProcessSuppressionEnabled(bool processSuppressionEnabled)
@@ -560,6 +562,11 @@ AuxiliaryProcessCreationParameters AuxiliaryProcessProxy::auxiliaryProcessParame
     auto* exemptClassNames = SecureCoding::classNamesExemptFromSecureCodingCrash();
     if (exemptClassNames)
         parameters.classNamesExemptFromSecureCodingCrash = WTF::makeUnique<HashSet<String>>(*exemptClassNames);
+#endif
+
+#if ENABLE(CORE_IPC_SIGNPOSTS)
+    parameters.shouldEnableIPCSignposts = IPC::Connection::signpostsEnabled();
+    parameters.shouldEnableStreamingIPCSignposts = IPC::StreamClientConnection::signpostsEnabled();
 #endif
 
     return parameters;

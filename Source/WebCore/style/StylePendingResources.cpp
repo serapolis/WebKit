@@ -27,8 +27,8 @@
 #include "StylePendingResources.h"
 
 #include "CSSCursorImageValue.h"
-#include "CachedResourceLoader.h"
-#include "DocumentInlines.h"
+#include "DocumentResourceLoader.h"
+#include "DocumentView.h"
 #include "RenderStyleInlines.h"
 #include "SVGURIReference.h"
 #include "Settings.h"
@@ -48,6 +48,7 @@ static void loadPendingImage(Document& document, const StyleImage* styleImage, c
     bool isInUserAgentShadowTree = element && element->isInUserAgentShadowTree();
     ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
     options.contentSecurityPolicyImposition = isInUserAgentShadowTree ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
+    options.shouldEnableContentExtensionsCheck = isInUserAgentShadowTree ? ShouldEnableContentExtensionsCheck::No : ShouldEnableContentExtensionsCheck::Yes;
 
     if (!isInUserAgentShadowTree && document.settings().useAnonymousModeWhenFetchingMaskImages()) {
         switch (loadPolicy) {
@@ -69,7 +70,7 @@ static void loadPendingImage(Document& document, const StyleImage* styleImage, c
 
 void loadPendingResources(RenderStyle& style, Document& document, const Element* element)
 {
-    for (auto& backgroundLayer : style.backgroundLayers())
+    for (auto& backgroundLayer : style.backgroundLayers().usedValues())
         loadPendingImage(document, backgroundLayer.image().tryStyleImage().get(), element);
 
     if (auto* contentData = style.content().tryData()) {
@@ -98,14 +99,14 @@ void loadPendingResources(RenderStyle& style, Document& document, const Element*
     // Masking operations may be sensitive to timing attacks that can be used to reveal the pixel data of
     // the image used as the mask. As a means to mitigate such attacks CSS mask images and shape-outside
     // images are retrieved in "Anonymous" mode, which uses a potentially CORS-enabled fetch.
-    for (auto& maskLayer : style.maskLayers())
+    for (auto& maskLayer : style.maskLayers().usedValues())
         loadPendingImage(document, maskLayer.image().tryStyleImage().get(), element, LoadPolicy::CORS);
 
     if (RefPtr shapeValueImage = style.shapeOutside().image())
         loadPendingImage(document, shapeValueImage.get(), element, LoadPolicy::Anonymous);
 
     // Are there other pseudo-elements that need resource loading? 
-    if (auto* firstLineStyle = style.getCachedPseudoStyle({ PseudoId::FirstLine }))
+    if (auto* firstLineStyle = style.getCachedPseudoStyle({ PseudoElementType::FirstLine }))
         loadPendingResources(*firstLineStyle, document, element);
 }
 

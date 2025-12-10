@@ -77,9 +77,13 @@ struct SessionWrapper : public CanMakeWeakPtr<SessionWrapper>, public CanMakeChe
 struct IsolatedSession {
     WTF_MAKE_TZONE_ALLOCATED(IsolatedSession);
 public:
-    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage; }
+    IsolatedSession()
+        : sessionWithCredentialStorage(makeUniqueRef<SessionWrapper>())
+    { }
 
-    SessionWrapper sessionWithCredentialStorage;
+    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage.get(); }
+
+    UniqueRef<SessionWrapper> sessionWithCredentialStorage;
     WallTime lastUsed;
 };
 
@@ -97,15 +101,18 @@ public:
 
     std::unique_ptr<IsolatedSession> appBoundSession;
 
-    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage; }
-    CheckedRef<SessionWrapper> checkedEphemeralStatelessSession() { return ephemeralStatelessSession; }
+    CheckedRef<SessionWrapper> checkedSessionWithCredentialStorage() { return sessionWithCredentialStorage.get(); }
+    CheckedRef<SessionWrapper> checkedEphemeralStatelessSession() { return ephemeralStatelessSession.get(); }
 
-    SessionWrapper sessionWithCredentialStorage;
-    SessionWrapper ephemeralStatelessSession;
+    UniqueRef<SessionWrapper> sessionWithCredentialStorage;
+    UniqueRef<SessionWrapper> ephemeralStatelessSession;
 
 private:
 
-    SessionSet() = default;
+    SessionSet()
+        : sessionWithCredentialStorage(makeUniqueRef<SessionWrapper>())
+        , ephemeralStatelessSession(makeUniqueRef<SessionWrapper>())
+    { }
 };
 
 class NetworkSessionCocoa final : public NetworkSession {

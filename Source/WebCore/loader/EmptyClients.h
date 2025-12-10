@@ -31,6 +31,7 @@
 #include <WebCore/ChromeClient.h>
 #include <WebCore/CryptoClient.h>
 #include <WebCore/ExceptionOr.h>
+#include <WebCore/PageIdentifier.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
@@ -41,12 +42,18 @@
 // First created for SVGImage as it had no way to access the current Page (nor should it, since Images are not tied to a page).
 // See http://bugs.webkit.org/show_bug.cgi?id=5971 for the original discussion about this file.
 
+namespace PAL {
+class SessionID;
+}
+
 namespace WebCore {
 
 class DiagnosticLoggingClient;
 class EditorClient;
 class HTMLImageElement;
 class PageConfiguration;
+enum class BroadcastFocusedElement : bool;
+struct FocusOptions;
 
 class EmptyChromeClient : public ChromeClient {
     WTF_MAKE_TZONE_ALLOCATED(EmptyChromeClient);
@@ -64,7 +71,7 @@ class EmptyChromeClient : public ChromeClient {
     bool canTakeFocus(FocusDirection) const final { return false; }
     void takeFocus(FocusDirection) final { }
 
-    void focusedElementChanged(Element*) final { }
+    void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement) final { }
     void focusedFrameChanged(Frame*) final { }
 
     RefPtr<Page> createWindow(LocalFrame&, const String&, const WindowFeatures&, const NavigationAction&) final { return nullptr; }
@@ -80,7 +87,7 @@ class EmptyChromeClient : public ChromeClient {
 
     void setResizable(bool) final { }
 
-    void addMessageToConsole(MessageSource, MessageLevel, const String&, unsigned, unsigned, const String&) final { }
+    void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String&, unsigned, unsigned, const String&) final { }
 
     bool canRunBeforeUnloadConfirmPanel() final { return false; }
     bool runBeforeUnloadConfirmPanel(String&&, LocalFrame&) final { return true; }
@@ -119,6 +126,8 @@ class EmptyChromeClient : public ChromeClient {
     IntRect rootViewToAccessibilityScreen(const IntRect& r) const final { return r; };
 #if PLATFORM(IOS_FAMILY)
     void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&) const final { };
+    void relayAriaNotifyNotification(AriaNotifyData&&) const final { };
+    void relayLiveRegionNotification(LiveRegionAnnouncementData&&) const final { };
 #endif
 
     void didFinishLoadingImageForElement(HTMLImageElement&) final { }
@@ -142,8 +151,8 @@ class EmptyChromeClient : public ChromeClient {
 
     RefPtr<DateTimeChooser> createDateTimeChooser(DateTimeChooserClient&) final;
 
-    void setTextIndicator(const TextIndicatorData&) const final;
-    void updateTextIndicator(const TextIndicatorData&) const final;
+    void setTextIndicator(RefPtr<TextIndicator>&&) const final;
+    void updateTextIndicator(RefPtr<TextIndicator>&&) const final;
 
     DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const final;
 
@@ -170,7 +179,7 @@ class EmptyChromeClient : public ChromeClient {
     void AXFinishFrameLoad() final { }
 #endif
 
-#if PLATFORM(PLAYSTATION)
+#if PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
     void postAccessibilityNotification(AccessibilityObject&, AXNotification) final { }
     void postAccessibilityNodeTextChangeNotification(AccessibilityObject*, AXTextChange, unsigned, const String&) final { }
     void postAccessibilityFrameLoadingEventNotification(AccessibilityObject*, AXLoadingEvent) final { }
@@ -226,9 +235,6 @@ WEBCORE_EXPORT PageConfiguration pageConfigurationWithEmptyClients(std::optional
 
 class EmptyCryptoClient: public CryptoClient {
     WTF_MAKE_TZONE_ALLOCATED(EmptyCryptoClient);
-public:
-    EmptyCryptoClient() = default;
-    ~EmptyCryptoClient() = default;
 };
 
 }

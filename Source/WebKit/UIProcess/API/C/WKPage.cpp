@@ -81,6 +81,7 @@
 #include "WKPagePolicyClientInternal.h"
 #include "WKPageRenderingProgressEventsInternal.h"
 #include "WKPluginInformation.h"
+#include "WebBackForwardCache.h"
 #include "WebBackForwardList.h"
 #include "WebFormClient.h"
 #include "WebFrameProxy.h"
@@ -279,8 +280,8 @@ static String encodingOf(const String& string)
 static std::span<const uint8_t> dataFrom(const String& string)
 {
     if (string.isNull() || !string.is8Bit())
-        return asBytes(string.span16());
-    return byteCast<uint8_t>(string.span8());
+        return asBytes(string.span<char16_t>());
+    return asBytes(string.span<Latin1Character>());
 }
 
 static Ref<WebCore::DataSegment> dataReferenceFrom(const String& string)
@@ -312,14 +313,8 @@ void WKPageLoadHTMLStringWithUserData(WKPageRef pageRef, WKStringRef htmlStringR
 void WKPageLoadAlternateHTMLString(WKPageRef pageRef, WKStringRef htmlStringRef, WKURLRef baseURLRef, WKURLRef unreachableURLRef)
 {
     CRASH_IF_SUSPENDED;
-    WKPageLoadAlternateHTMLStringWithUserData(pageRef, htmlStringRef, baseURLRef, unreachableURLRef, nullptr);
-}
-
-void WKPageLoadAlternateHTMLStringWithUserData(WKPageRef pageRef, WKStringRef htmlStringRef, WKURLRef baseURLRef, WKURLRef unreachableURLRef, WKTypeRef userDataRef)
-{
-    CRASH_IF_SUSPENDED;
     String string = toWTFString(htmlStringRef);
-    toProtectedImpl(pageRef)->loadAlternateHTML(dataReferenceFrom(string), encodingOf(string), URL { toWTFString(baseURLRef) }, URL { toWTFString(unreachableURLRef) }, toProtectedImpl(userDataRef).get());
+    toProtectedImpl(pageRef)->loadAlternateHTML(dataReferenceFrom(string), encodingOf(string), URL { toWTFString(baseURLRef) }, URL { toWTFString(unreachableURLRef) }, nullptr);
 }
 
 void WKPageLoadPlainTextString(WKPageRef pageRef, WKStringRef plainTextStringRef)
@@ -332,14 +327,6 @@ void WKPageLoadPlainTextStringWithUserData(WKPageRef pageRef, WKStringRef plainT
 {
     CRASH_IF_SUSPENDED;
     loadString(pageRef, plainTextStringRef, "text/plain"_s, aboutBlankURL().string(), userDataRef);
-}
-
-void WKPageLoadWebArchiveData(WKPageRef, WKDataRef)
-{
-}
-
-void WKPageLoadWebArchiveDataWithUserData(WKPageRef, WKDataRef, WKTypeRef)
-{
 }
 
 void WKPageStopLoading(WKPageRef pageRef)
@@ -458,8 +445,7 @@ void WKPageUpdateWebsitePolicies(WKPageRef pageRef, WKWebsitePoliciesRef website
     CRASH_IF_SUSPENDED;
     RELEASE_ASSERT_WITH_MESSAGE(!toProtectedImpl(websitePoliciesRef)->websiteDataStore(), "Setting WebsitePolicies.websiteDataStore is only supported during WKFramePolicyListenerUseWithPolicies().");
     RELEASE_ASSERT_WITH_MESSAGE(!toProtectedImpl(websitePoliciesRef)->userContentController(), "Setting WebsitePolicies.userContentController is only supported during WKFramePolicyListenerUseWithPolicies().");
-    auto data = toProtectedImpl(websitePoliciesRef)->data();
-    toProtectedImpl(pageRef)->updateWebsitePolicies(WTFMove(data));
+    toProtectedImpl(pageRef)->updateWebsitePolicies(*toProtectedImpl(websitePoliciesRef));
 }
 
 WKStringRef WKPageCopyTitle(WKPageRef pageRef)
@@ -2717,10 +2703,16 @@ void WKPageEvaluateJavaScriptInMainFrame(WKPageRef pageRef, WKStringRef scriptRe
 void WKPageEvaluateJavaScriptInFrame(WKPageRef pageRef, WKFrameInfoRef frame, WKStringRef scriptRef, void* context, WKPageEvaluateJavaScriptFunction callback)
 {
     CRASH_IF_SUSPENDED;
+    auto scriptString = IPC::TransferString::create(toProtectedImpl(scriptRef)->stringView());
+    if (!scriptString) {
+        if (callback)
+            callback(nullptr, nullptr, context);
+        return;
+    };
 
     auto frameID = frame ? std::optional(toImpl(frame)->frameInfoData().frameID) : std::nullopt;
     toProtectedImpl(pageRef)->runJavaScriptInFrameInScriptWorld(WebKit::RunJavaScriptParameters {
-        toProtectedImpl(scriptRef)->string(),
+        WTFMove(*scriptString),
         JSC::SourceTaintedOrigin::Untainted,
         URL { },
         WebCore::RunAsAsyncFunction::No,
@@ -2750,10 +2742,16 @@ static void callAsyncJavaScript(bool withUserGesture, WKPageRef page, WKStringRe
         }
         return { WTFMove(result) };
     };
+    auto scriptString = IPC::TransferString::create(toProtectedImpl(script)->stringView());
+    if (!scriptString) {
+        if (callback)
+            callback(nullptr, nullptr, context);
+        return;
+    }
 
     auto frameID = frame ? std::optional(toImpl(frame)->frameInfoData().frameID) : std::nullopt;
     toProtectedImpl(page)->runJavaScriptInFrameInScriptWorld(WebKit::RunJavaScriptParameters {
-        toProtectedImpl(script)->string(),
+        WTFMove(*scriptString),
         JSC::SourceTaintedOrigin::Untainted,
         URL { },
         WebCore::RunAsAsyncFunction::Yes,
@@ -3524,4 +3522,10 @@ void WKPageFindStringForTesting(WKPageRef pageRef, void* context, WKStringRef st
     toProtectedImpl(pageRef)->findString(toWTFString(string), toFindOptions(options), maxMatchCount, [context, completionHandler] (bool found) {
         completionHandler(found, context);
     });
+}
+
+void WKPageClearBackForwardCache(WKPageRef page)
+{
+    RefPtr protectedPage = toProtectedImpl(page);
+    protectedPage->protectedBackForwardCache()->removeEntriesForPage(*protectedPage);
 }

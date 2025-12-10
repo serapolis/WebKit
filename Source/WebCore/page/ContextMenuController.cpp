@@ -36,15 +36,17 @@
 #include "ContextMenuClient.h"
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
-#include "Document.h"
 #include "DocumentFragment.h"
 #include "DocumentLoader.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "EditorClient.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "Event.h"
 #include "EventHandler.h"
 #include "FormState.h"
+#include "FrameInlines.h"
 #include "FrameLoadRequest.h"
 #include "FrameLoader.h"
 #include "FrameSelection.h"
@@ -59,7 +61,6 @@
 #include "HitTestResult.h"
 #include "ImageBuffer.h"
 #include "ImageOverlay.h"
-#include "InspectorController.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
 #include "LocalizedStrings.h"
@@ -67,6 +68,7 @@
 #include "NavigationAction.h"
 #include "Node.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "PlatformEvent.h"
 #include "PlatformMouseEvent.h"
 #include "RenderImage.h"
@@ -237,7 +239,7 @@ std::unique_ptr<ContextMenu> ContextMenuController::maybeCreateContextMenu(Event
     if (!frame)
         return nullptr;
 
-    auto result = frame->eventHandler().hitTestResultAtPoint(LayoutPoint(mouseEvent->absoluteLocation()), WTFMove(hitType));
+    auto result = frame->eventHandler().hitTestResultAtPoint(flooredIntPoint(mouseEvent->absoluteLocation()), WTFMove(hitType));
     if (!result.innerNonSharedNode())
         return nullptr;
 
@@ -245,7 +247,10 @@ std::unique_ptr<ContextMenu> ContextMenuController::maybeCreateContextMenu(Event
 #if ENABLE(CONTEXT_MENU_QR_CODE_DETECTION)
     prepareContextForQRCode(m_context);
 #endif
-    
+
+    if (RefPtr menuProvider = m_menuProvider)
+        menuProvider->prepareContext(m_context);
+
     return makeUnique<ContextMenu>();
 }
 
@@ -414,8 +419,10 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
     case ContextMenuItemTagCopyLinkWithHighlight:
         if (RefPtr page = frame->page()) {
             auto url = page->fragmentDirectiveURLForSelectedText();
-            if (url.isValid())
-                frame->editor().copyURL(url, { });
+            if (url.isValid()) {
+                auto selectedRange = frame->selection().selection().toNormalizedRange();
+                frame->editor().copyURL(url, selectedRange ? plainText(*selectedRange) : nullString());
+            }
         }
         break;
     case ContextMenuItemTagGoBack:
@@ -1861,6 +1868,10 @@ void ContextMenuController::checkOrEnableIfNeeded(ContextMenuItem& item) const
         case ContextMenuItemTagRewrite:
         case ContextMenuItemTagSummarize:
             break;
+#if ENABLE(VIDEO)
+        case ContextMenuItemCaptionDisplayStyleSubmenu:
+            break;
+#endif
     }
 
     item.setChecked(shouldCheck);

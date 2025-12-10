@@ -91,8 +91,8 @@ ExceptionOr<void> ServiceWorkerClient::postMessage(JSC::JSGlobalObject& globalOb
 
     MessageWithMessagePorts message = { messageData.releaseReturnValue(), portsOrException.releaseReturnValue() };
     Ref context = downcast<ServiceWorkerGlobalScope>(*scriptExecutionContext());
-    auto sourceIdentifier = context->thread().identifier();
-    callOnMainThread([message = WTFMove(message), destinationIdentifier = identifier(), sourceIdentifier, sourceOrigin = context->origin().isolatedCopy()] {
+    auto sourceIdentifier = context->thread()->identifier();
+    callOnMainThread([message = WTFMove(message), destinationIdentifier = identifier(), sourceIdentifier, sourceOrigin = context->protectedSecurityOrigin()->data().isolatedCopy()] {
         if (RefPtr connection = SWContextManager::singleton().connection())
             connection->postMessageToServiceWorkerClient(destinationIdentifier, message, sourceIdentifier, sourceOrigin);
     });

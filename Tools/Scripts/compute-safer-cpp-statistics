@@ -21,14 +21,16 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
 import argparse
+import os
+import re
 
 from webkitpy.safer_cpp.checkers import Checker
 
 # FIXME: Make this configurable
 EXCLUDED_DIRNAMES = ['CoordinatedGraphics', 'atoms', 'cairo', 'curl', 'gbm', 'glib', 'gstreamer', 'gtk', 'libwpe', 'linux', 'manette', 'playstation', 'skia', 'socket', 'soup', 'unified-sources', 'unix', 'wc', 'win', 'wpe']
 RELEVANT_FILE_EXTENSIONS = ['.c', '.cpp', '.h', '.m', '.mm']
+EXPECTATION_LINE_RE = r'(\s*\[\s*(?P<platform>\w+)\s*\]\s*)?(?P<path>.+)'
 
 
 def parser():
@@ -54,6 +56,10 @@ def parser():
         help='Specify the directory to ignore relative to the project root (e.g. WebProcess for Source/WebKit/WebProcess)'
     )
     parser.add_argument(
+        '--platform',
+        help='Specify the platform to compute statistics for. e.g. mac'
+    )
+    parser.add_argument(
         '--csv',
         help='Specify a path to a CSV file to be generated. CSV file will not be generated if omitted'
     )
@@ -70,18 +76,30 @@ def matching_checkers(checker):
     return [matching_checker]
 
 
-def load_expectations(checker_list, project):
+def load_expectations(checker_list, project, platform):
     file_to_expectations_map = {}
+    expectation_line_re = re.compile(EXPECTATION_LINE_RE)
     for checker in checker_list:
         expectations_path = checker.expectations_path(project)
         if not os.path.isfile(expectations_path):
             return
         with open(expectations_path) as expectation_file:
-            for file_key in expectation_file:
-                file_key = file_key.strip()
+            for line in expectation_file:
+                if line.startswith('//') or line.startswith('#'):
+                    continue
+                match = expectation_line_re.match(line)
+                if not match:
+                    print(f'Unexpected line: {line}')
+                    continue
+                expectation_platform = match.group('platform')
+                file_key = match.group('path')
+                if platform and expectation_platform and expectation_platform.lower() != platform.lower():
+                    print(f'Excluding: {file_key} ({expectation_platform})')
+                    continue
                 file_to_expectations_map.setdefault(file_key, set())
                 file_to_expectations_map[file_key].add(checker.name())
     return file_to_expectations_map
+
 
 def count_number_of_lines(file_path):
     with open(file_path) as file_handle:
@@ -113,14 +131,18 @@ def gather_statistics(line_counts, checkers, file_to_expectations_map, dir_path,
         expected_checkers = file_to_expectations_map.get(file_key)
         if expected_checkers:
             line_counts['unsafe'] += number_of_lines
+            line_counts['unsafeFiles'] += 1
         else:
             line_counts['safe'] += number_of_lines
+            line_counts['safeFiles'] += 1
         for checker in checkers:
             per_checker_counts = line_counts['checkers'][checker.name()]
             if expected_checkers and checker.name() in expected_checkers:
                 per_checker_counts['unsafe'] += number_of_lines
+                per_checker_counts['unsafeFiles'] += 1
             else:
                 per_checker_counts['safe'] += number_of_lines
+                per_checker_counts['safeFiles'] += 1
 
 
 def safe_ratio(line_counts):
@@ -128,7 +150,7 @@ def safe_ratio(line_counts):
 
 
 def print_percentage(label, line_counts):
-    return print('{}: {:.2f}% safe'.format(label, safe_ratio(line_counts) * 100))
+    return print('{}: {:.2f}% safe ({} safe files / {} unsafe files)'.format(label, safe_ratio(line_counts) * 100, line_counts['safeFiles'], line_counts['unsafeFiles']))
 
 
 def main():
@@ -138,10 +160,10 @@ def main():
     if not checkers:
         return
 
-    file_to_expectations_map = load_expectations(checkers, args.project)
-    line_counts = {'safe': 0, 'unsafe': 0, 'checkers': {}}
+    file_to_expectations_map = load_expectations(checkers, args.project, args.platform)
+    line_counts = {'safe': 0, 'unsafe': 0, 'safeFiles': 0, 'unsafeFiles': 0, 'checkers': {}}
     for checker in checkers:
-        line_counts['checkers'][checker.name()] = {'safe': 0, 'unsafe': 0}
+        line_counts['checkers'][checker.name()] = {'safe': 0, 'unsafe': 0, 'safeFiles': 0, 'unsafeFiles': 0}
 
     project = args.project
     project_path = Checker.enumerate()[0].project_path(project)

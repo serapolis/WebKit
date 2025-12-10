@@ -29,15 +29,19 @@
 #if ENABLE(APPLICATION_MANIFEST)
 
 #include "CachedApplicationManifest.h"
-#include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "CachedResourceRequestInitiatorTypes.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentResourceLoader.h"
 #include "FrameDestructionObserverInlines.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 
 namespace WebCore {
+
+Ref<ApplicationManifestLoader> ApplicationManifestLoader::create(DocumentLoader& documentLoader, const URL& url, bool useCredentials)
+{
+    return adoptRef(*new ApplicationManifestLoader(documentLoader, url, useCredentials));
+}
 
 ApplicationManifestLoader::ApplicationManifestLoader(DocumentLoader& documentLoader, const URL& url, bool useCredentials)
     : m_documentLoader(documentLoader)
@@ -54,7 +58,7 @@ ApplicationManifestLoader::~ApplicationManifestLoader()
 bool ApplicationManifestLoader::startLoading()
 {
     ASSERT(!m_resource);
-    RefPtr frame = m_documentLoader->frame();
+    RefPtr frame = m_documentLoader ? m_documentLoader->frame() : nullptr;
     if (!frame)
         return false;
 
@@ -122,7 +126,8 @@ std::optional<ApplicationManifest>& ApplicationManifestLoader::processManifest()
 void ApplicationManifestLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetrics&, LoadWillContinueInAnotherProcess)
 {
     ASSERT_UNUSED(resource, &resource == m_resource);
-    Ref { m_documentLoader.get() }->finishedLoadingApplicationManifest(*this);
+    if (RefPtr documentLoader = m_documentLoader.get())
+        documentLoader->finishedLoadingApplicationManifest(*this);
 }
 
 } // namespace WebCore

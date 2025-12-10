@@ -35,6 +35,7 @@
 #include "WKBase.h"
 #include "WebLocalFrameLoaderClient.h"
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSBase.h>
 #include <WebCore/AdvancedPrivacyProtections.h>
 #include <WebCore/FrameLoaderTypes.h>
@@ -84,6 +85,7 @@ class InjectedBundleHitTestResult;
 class InjectedBundleNodeHandle;
 class InjectedBundleRangeHandle;
 class InjectedBundleScriptWorld;
+class WebFrameInspectorTarget;
 class WebKeyboardEvent;
 class WebImage;
 class WebMouseEvent;
@@ -272,6 +274,10 @@ public:
 
     void takeSnapshotOfNode(WebCore::JSHandleIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
 
+    void connectInspector(Inspector::FrontendChannel::ConnectionType);
+    void disconnectInspector();
+    void sendMessageToInspectorTarget(const String& message);
+
 private:
     WebFrame(WebPage&, WebCore::FrameIdentifier);
 
@@ -286,6 +292,8 @@ private:
     RefPtr<WebCore::LocalFrame> localFrame();
 
     void findFocusableElementDescendingIntoRemoteFrame(WebCore::FocusDirection, const WebCore::FocusEventData&, CompletionHandler<void(WebCore::FoundElementInRemoteFrame)>&&);
+
+    WebFrameInspectorTarget& ensureInspectorTarget();
 
     WeakPtr<WebCore::Frame> m_coreFrame;
     WeakPtr<WebPage> m_page;
@@ -309,6 +317,8 @@ private:
     SafeBrowsingCheckOngoing m_isSafeBrowsingCheckOngoing { SafeBrowsingCheckOngoing::No };
     Markable<WebCore::LayerHostingContextIdentifier> m_layerHostingContextIdentifier;
     Markable<WebCore::FrameIdentifier> m_frameIDBeforeProvisionalNavigation;
+
+    std::unique_ptr<WebFrameInspectorTarget> m_inspectorTarget;
 };
 
 } // namespace WebKit

@@ -32,6 +32,7 @@
 
 namespace WebKit {
 class LockdownModeObserver;
+class WebProcessProxy;
 class WebUserContentControllerProxy;
 class WebsiteDataStore;
 struct WebsitePoliciesData;
@@ -47,7 +48,7 @@ public:
 
     Ref<WebsitePolicies> copy() const;
 
-    WebKit::WebsitePoliciesData data();
+    WebKit::WebsitePoliciesData dataForProcess(WebKit::WebProcessProxy&) const;
 
     const WebCore::ContentExtensionEnablement& contentExtensionEnablement() const { return m_data.contentExtensionEnablement; }
     void setContentExtensionEnablement(WebCore::ContentExtensionEnablement&& enablement) { m_data.contentExtensionEnablement = WTFMove(enablement); }
@@ -112,8 +113,9 @@ public:
     WebCore::AllowsContentJavaScript allowsContentJavaScript() const { return m_data.allowsContentJavaScript; }
     void setAllowsContentJavaScript(WebCore::AllowsContentJavaScript allows) { m_data.allowsContentJavaScript = allows; }
 
-    bool enhancedSecurityEnabled() const { return m_enhancedSecurityEnabled; }
-    void setEnhancedSecurityEnabled(bool enabled) { m_enhancedSecurityEnabled = enabled; }
+    bool isEnhancedSecurityEnabled() const { return m_isEnhancedSecurityEnabled.value_or(false); }
+    void setIsEnhancedSecurityEnabled(std::optional<bool> isEnabled) { m_isEnhancedSecurityEnabled = isEnabled; }
+    bool isEnhancedSecurityExplicitlySet() const { return !!m_isEnhancedSecurityEnabled; }
 
     bool lockdownModeEnabled() const;
     void setLockdownModeEnabled(std::optional<bool> enabled) { m_lockdownModeEnabled = enabled; }
@@ -164,12 +166,15 @@ public:
     bool allowsJSHandleCreationInPageWorld() const { return m_data.allowsJSHandleCreationInPageWorld; }
     void setAllowsJSHandleCreationInPageWorld(bool allows) { m_data.allowsJSHandleCreationInPageWorld = allows; }
 
+    void setOverrideReferrerForAllRequests(WTF::String&& referrer) { m_data.overrideReferrerForAllRequests = WTFMove(referrer); }
+    const WTF::String& overrideReferrerForAllRequests() const { return m_data.overrideReferrerForAllRequests; }
+
 private:
     WebKit::WebsitePoliciesData m_data;
     RefPtr<WebKit::WebsiteDataStore> m_websiteDataStore;
     RefPtr<WebKit::WebUserContentControllerProxy> m_userContentController;
     std::optional<bool> m_lockdownModeEnabled;
-    bool m_enhancedSecurityEnabled { false };
+    std::optional<bool> m_isEnhancedSecurityEnabled;
 #if PLATFORM(COCOA)
     const std::unique_ptr<WebKit::LockdownModeObserver> m_lockdownModeObserver;
 #endif

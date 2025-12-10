@@ -28,6 +28,7 @@
 
 #include "Logging.h"
 #include <JavaScriptCore/DataView.h>
+#include <wtf/CrossThreadCopier.h>
 #include <wtf/JSONValues.h>
 #include <wtf/URL.h>
 
@@ -56,11 +57,11 @@ private:
         if (characterCount > bytesRemaining)
             return false;
 
-        Vector<char8_t> characters;
+        Vector<Latin1Character> characters;
         characters.reserveInitialCapacity(static_cast<size_t>(characterCount));
         while (characterCount--) {
-            char8_t character = 0;
-            if (!checkedRead<char8_t>(character, view, localOffset, BigEndian))
+            int8_t character = 0;
+            if (!checkedRead<int8_t>(character, view, localOffset, BigEndian))
                 return false;
             characters.append(character);
         }
@@ -84,9 +85,9 @@ ISOWebVTTCue::ISOWebVTTCue(const MediaTime& presentationTime, const MediaTime& d
 {
 }
 
-ISOWebVTTCue::ISOWebVTTCue(MediaTime&& presentationTime, MediaTime&& duration, AtomString&& cueID, String&& cueText, String&& settings, String&& sourceID, String&& originalStartTime)
-    : m_presentationTime(WTFMove(presentationTime))
-    , m_duration(WTFMove(duration))
+ISOWebVTTCue::ISOWebVTTCue(const MediaTime& presentationTime, const MediaTime& duration, String&& cueID, String&& cueText, String&& settings, String&& sourceID, String&& originalStartTime)
+    : m_presentationTime(presentationTime)
+    , m_duration(duration)
     , m_sourceID(WTFMove(sourceID))
     , m_identifier(WTFMove(cueID))
     , m_originalStartTime(WTFMove(originalStartTime))
@@ -138,6 +139,16 @@ String ISOWebVTTCue::toJSONString() const
     object->setDouble("duration"_s, m_duration.toDouble());
 
     return object->toJSONString();
+}
+
+ISOWebVTTCue ISOWebVTTCue::isolatedCopy() const &
+{
+    return { m_presentationTime, m_duration, crossThreadCopy(m_identifier), crossThreadCopy(m_cueText), crossThreadCopy(m_settings), crossThreadCopy(m_sourceID), crossThreadCopy(m_originalStartTime) };
+}
+
+ISOWebVTTCue ISOWebVTTCue::isolatedCopy() &&
+{
+    return { m_presentationTime, m_duration, crossThreadCopy(WTFMove(m_identifier)), crossThreadCopy(WTFMove(m_cueText)), crossThreadCopy(WTFMove(m_settings)), crossThreadCopy(WTFMove(m_sourceID)), crossThreadCopy(WTFMove(m_originalStartTime)) };
 }
 
 } // namespace WebCore

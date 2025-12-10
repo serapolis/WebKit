@@ -27,12 +27,11 @@
 #include "FESpecularLighting.h"
 #include "NodeName.h"
 #include "RenderElement.h"
-#include "RenderStyle.h"
+#include "RenderStyleInlines.h"
 #include "SVGFELightElement.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
-#include "SVGRenderStyle.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -44,14 +43,15 @@ inline SVGFESpecularLightingElement::SVGFESpecularLightingElement(const Qualifie
 {
     ASSERT(hasTagName(SVGNames::feSpecularLightingTag));
     
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFESpecularLightingElement::m_in1>();
         PropertyRegistry::registerProperty<SVGNames::specularConstantAttr, &SVGFESpecularLightingElement::m_specularConstant>();
         PropertyRegistry::registerProperty<SVGNames::specularExponentAttr, &SVGFESpecularLightingElement::m_specularExponent>();
         PropertyRegistry::registerProperty<SVGNames::surfaceScaleAttr, &SVGFESpecularLightingElement::m_surfaceScale>();
         PropertyRegistry::registerProperty<SVGNames::kernelUnitLengthAttr, &SVGFESpecularLightingElement::m_kernelUnitLengthX, &SVGFESpecularLightingElement::m_kernelUnitLengthY>();
-    });
+    }
 }
 
 Ref<SVGFESpecularLightingElement> SVGFESpecularLightingElement::create(const QualifiedName& tagName, Document& document)
@@ -97,7 +97,7 @@ bool SVGFESpecularLightingElement::setFilterEffectAttribute(FilterEffect& filter
     switch (attrName.nodeName()) {
     case AttributeNames::lighting_colorAttr: {
         auto& style = renderer()->style();
-        auto color = style.colorWithColorFilter(style.svgStyle().lightingColor());
+        auto color = style.colorWithColorFilter(style.lightingColor());
         return effect.setLightingColor(color);
     }
     case AttributeNames::surfaceScaleAttr:
@@ -169,7 +169,7 @@ RefPtr<FilterEffect> SVGFESpecularLightingElement::createFilterEffect(const Filt
     Ref lightSource = lightElement->lightSource();
     auto& style = renderer->style();
 
-    auto color = style.colorWithColorFilter(style.svgStyle().lightingColor());
+    auto color = style.colorWithColorFilter(style.lightingColor());
 
     return FESpecularLighting::create(color, surfaceScale(), specularConstant(), specularExponent(), kernelUnitLengthX(), kernelUnitLengthY(), WTFMove(lightSource));
 }

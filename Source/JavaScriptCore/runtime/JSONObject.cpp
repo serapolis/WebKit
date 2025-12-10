@@ -125,7 +125,7 @@ private:
         bool m_hasFastObjectProperties { false };
         unsigned m_index { 0 };
         unsigned m_size { 0 };
-        RefPtr<PropertyNameArrayData> m_propertyNames;
+        RefPtr<PropertyNameArray> m_propertyNames;
         Vector<std::tuple<PropertyName, unsigned>, 8> m_propertiesAndOffsets;
     };
 
@@ -147,7 +147,7 @@ private:
     JSGlobalObject* const m_globalObject;
     JSValue m_replacer;
     bool m_usingArrayReplacer { false };
-    PropertyNameArray m_arrayReplacerPropertyNames;
+    PropertyNameArrayBuilder m_arrayReplacerPropertyNames;
     CallData m_replacerCallData;
     String m_gap;
 
@@ -557,7 +557,7 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 });
                 m_size = m_propertiesAndOffsets.size();
             } else {
-                PropertyNameArray objectPropertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                PropertyNameArrayBuilder objectPropertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                 m_object->methodTable()->getOwnPropertyNames(m_object, globalObject, objectPropertyNames, DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, false);
                 m_propertyNames = objectPropertyNames.releaseData();
@@ -714,6 +714,7 @@ private:
     void append(JSValue);
     String result();
 
+    // FIXME These should probably just take an ASCIILiteral.
     void append(char, char, char, char);
     void append(char, char, char, char, char);
     template<typename T> void recordFailure(FailureReason, T&& reason);
@@ -769,7 +770,7 @@ static void logOutcomeImpl(String&& outcome)
         Vector<KeyValuePair<String, unsigned>> vector;
         for (auto& pair : set.get())
             vector.append(pair);
-        std::sort(vector.begin(), vector.end(), [](auto& a, auto &b) {
+        std::ranges::sort(vector, [](auto& a, auto &b) {
             return a.value != b.value ? a.value > b.value : codePointCompareLessThan(a.key, b.key);
         });
         dataLogLn("fastStringify outcomes");
@@ -968,7 +969,7 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         return true;
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
-        if (newSize > StringImpl::MaxLength) [[unlikely]]
+        if (!StringImpl::isValidLength<CharType>(newSize)) [[unlikely]]
             return false;
 
         if (!m_dynamicBuffer.tryGrow(newSize)) [[unlikely]]
@@ -1081,7 +1082,7 @@ static ALWAYS_INLINE bool stringCopySameType(std::span<const CharType> span, Cha
 #if (CPU(ARM64) || CPU(X86_64)) && COMPILER(CLANG)
     constexpr size_t stride = SIMD::stride<CharType>;
     if (span.size() >= stride) {
-        using UnsignedType = SIMD::SameSizeUnsignedInteger<CharType>;
+        using UnsignedType = SameSizeUnsignedInteger<CharType>;
         using BulkType = decltype(SIMD::load(static_cast<const UnsignedType*>(nullptr)));
         constexpr auto quoteMask = SIMD::splat<UnsignedType>('"');
         constexpr auto escapeMask = SIMD::splat<UnsignedType>('\\');
@@ -1257,32 +1258,23 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             recordFailure("String::tryGetValue"_s);
             return;
         }
-
         auto stringLength = string.data.length();
-        if constexpr (sizeof(CharType) == 1) {
-            if (!string.data.is8Bit()) [[unlikely]] {
-                if constexpr (bufferMode == BufferMode::DynamicBuffer)
-                    recordFailure(FailureReason::Unknown, "16-bit string"_s);
-                else
-                    recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string"_s);
-                return;
-            }
-            if (!hasRemainingCapacity(1 + stringLength + 1)) [[unlikely]] {
-                recordBufferFull();
-                return;
-            }
-            buffer()[m_length] = '"';
-            if (!stringCopySameType(string.data.span8(), buffer() + m_length + 1)) [[likely]] {
-                buffer()[m_length + 1 + stringLength] = '"';
-                m_length += 1 + stringLength + 1;
-                return;
+        if (!hasRemainingCapacity(1 + stringLength + 1)) [[unlikely]] {
+            recordBufferFull();
+            return;
+        }
+        buffer()[m_length] = '"';
+
+        if constexpr (std::same_as<CharType, Latin1Character>) {
+            if (string.data.is8Bit()) [[likely]] {
+                if (!stringCopySameType(string.data.span8(), buffer() + m_length + 1)) [[likely]] {
+                    buffer()[m_length + 1 + stringLength] = '"';
+                    m_length += 1 + stringLength + 1;
+                    return;
+                }
             }
         } else {
-            if (!hasRemainingCapacity(1 + stringLength + 1)) [[unlikely]] {
-                recordBufferFull();
-                return;
-            }
-            buffer()[m_length] = '"';
+            static_assert(std::same_as<CharType, char16_t>);
             if (string.data.is8Bit()) {
                 if (!stringCopyUpconvert(string.data.span8(), buffer() + m_length + 1)) [[likely]] {
                     buffer()[m_length + 1 + stringLength] = '"';
@@ -1307,14 +1299,30 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             recordBufferFull();
             return;
         }
+
+        ASSERT(buffer()[m_length] == '"');
         auto output = bufferSpan().subspan(m_length + 1);
-        if constexpr (sizeof(CharType) == 2) {
+        if constexpr (std::same_as<CharType, char16_t>) {
             if (string.data.is8Bit())
                 WTF::appendEscapedJSONStringContent(output, string.data.span8());
             else
                 WTF::appendEscapedJSONStringContent(output, string.data.span16());
-        } else
-            WTF::appendEscapedJSONStringContent(output, string.data.span8());
+        } else {
+            if (string.data.is8Bit())
+                WTF::appendEscapedJSONStringContent(output, string.data.span8());
+            else {
+                // It's possible the UTF-16 string is actually Latin-1. We try to avoid that but bailing out here is _way_ more expensive if it does sometimes happen.
+                bool success = WTF::appendEscapedJSONStringContent(output, string.data.span16());
+                if (!success) [[unlikely]] {
+                    if constexpr (bufferMode == BufferMode::DynamicBuffer)
+                        recordFailure(FailureReason::Unknown, "16-bit string, "_s);
+                    else
+                        recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string, "_s);
+                    return;
+                }
+            }
+        }
+
         consume(output) = '"';
         m_length = output.data() - buffer();
         return;
@@ -1362,6 +1370,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             }
 
             // Right now, we do not support 16-bit name here since name in 16-bit is significantly more rare than 16-bit string.
+            // FIXME: We should just extract the `StringType` case into a helper and use that.
             if (!name.is8Bit()) [[unlikely]] {
                 recordFailure("16-bit property name"_s);
                 return false;
@@ -1386,7 +1395,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 buffer()[m_length++] = ',';
             buffer()[m_length] = '"';
 
-            if constexpr (sizeof(CharType) == 2) {
+            if constexpr (std::same_as<CharType, char16_t>) {
                 if (stringCopyUpconvert(span, buffer() + m_length + 1)) [[unlikely]] {
                     recordFailure("property name character needs escaping"_s);
                     return false;
@@ -1590,7 +1599,7 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
     VM& vm = m_globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Vector<PropertyNameArray, 16, UnsafeVectorOverflow> propertyStack;
+    Vector<PropertyNameArrayBuilder, 16, UnsafeVectorOverflow> propertyStack;
     Vector<uint32_t, 16, UnsafeVectorOverflow> indexStack;
     MarkedArgumentBuffer markedStack;
     Vector<const JSONRanges::Entry*, 16> entryStack;
@@ -1710,7 +1719,7 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                     entryStack.append(inValueRange);
                 }
                 indexStack.append(0);
-                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_globalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, { });
             }
@@ -1719,7 +1728,7 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
             case ObjectStartVisitMember: {
                 JSObject* object = jsCast<JSObject*>(markedStack.last());
                 uint32_t index = indexStack.last();
-                PropertyNameArray& properties = propertyStack.last();
+                PropertyNameArrayBuilder& properties = propertyStack.last();
                 if (index == properties.size()) {
                     outValue = object;
                     if (m_sourceRanges)

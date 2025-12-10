@@ -166,10 +166,9 @@ private:
     template<typename CharacterType>
     ALWAYS_INLINE const Identifier* makeIdentifier(std::span<const CharacterType>);
 
-    ALWAYS_INLINE const Identifier* makeLCharIdentifier(std::span<const Latin1Character>);
-    ALWAYS_INLINE const Identifier* makeLCharIdentifier(std::span<const char16_t>);
+    ALWAYS_INLINE const Identifier* makeLatin1Identifier(std::span<const Latin1Character>);
+    ALWAYS_INLINE const Identifier* makeLatin1Identifier(std::span<const char16_t>);
     ALWAYS_INLINE const Identifier* makeRightSizedIdentifier(std::span<const char16_t>, char16_t orAllChars);
-    ALWAYS_INLINE const Identifier* makeIdentifierLCharFromUChar(std::span<const char16_t>);
     ALWAYS_INLINE const Identifier* makeEmptyIdentifier();
 
     ALWAYS_INLINE bool lastTokenWasRestrKeyword() const;
@@ -296,14 +295,14 @@ ALWAYS_INLINE const Identifier* Lexer<T>::makeIdentifier(std::span<const Charact
 template <>
 ALWAYS_INLINE const Identifier* Lexer<Latin1Character>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t)
 {
-    return &m_arena->makeIdentifierLCharFromUChar(m_vm, characters);
+    return &m_arena->makeLatin1Identifier(m_vm, characters);
 }
 
 template <>
 ALWAYS_INLINE const Identifier* Lexer<char16_t>::makeRightSizedIdentifier(std::span<const char16_t> characters, char16_t orAllChars)
 {
     if (!(orAllChars & ~0xff))
-        return &m_arena->makeIdentifierLCharFromUChar(m_vm, characters);
+        return &m_arena->makeLatin1Identifier(m_vm, characters);
 
     return &m_arena->makeIdentifier(m_vm, characters);
 }
@@ -329,21 +328,15 @@ ALWAYS_INLINE void Lexer<char16_t>::setCodeStart(StringView sourceString)
 }
 
 template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeIdentifierLCharFromUChar(std::span<const char16_t> characters)
-{
-    return &m_arena->makeIdentifierLCharFromUChar(m_vm, characters);
-}
-
-template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeLCharIdentifier(std::span<const Latin1Character> characters)
+ALWAYS_INLINE const Identifier* Lexer<T>::makeLatin1Identifier(std::span<const Latin1Character> characters)
 {
     return &m_arena->makeIdentifier(m_vm, characters);
 }
 
 template <typename T>
-ALWAYS_INLINE const Identifier* Lexer<T>::makeLCharIdentifier(std::span<const char16_t> characters)
+ALWAYS_INLINE const Identifier* Lexer<T>::makeLatin1Identifier(std::span<const char16_t> characters)
 {
-    return &m_arena->makeIdentifierLCharFromUChar(m_vm, characters);
+    return &m_arena->makeLatin1Identifier(m_vm, characters);
 }
 
 #if ASSERT_ENABLED
@@ -393,7 +386,7 @@ ALWAYS_INLINE JSTokenType Lexer<T>::lexExpectIdentifier(JSToken* tokenRecord, Op
         )
         tokenData->ident = nullptr;
     else
-        tokenData->ident = makeLCharIdentifier({ start, ptr });
+        tokenData->ident = makeLatin1Identifier({ start, ptr });
 
     tokenRecord->m_startPosition = startPosition;
     tokenRecord->m_endPosition = currentPosition();

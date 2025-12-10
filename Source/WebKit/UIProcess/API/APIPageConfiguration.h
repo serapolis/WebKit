@@ -27,9 +27,11 @@
 
 #include "APIObject.h"
 #include "WebPreferencesDefaultValues.h"
+#include "WebPreferencesDefinitions.h"
 #include "WebURLSchemeHandler.h"
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/Site.h>
 #include <WebCore/WindowFeatures.h>
@@ -40,6 +42,14 @@
 #include <wtf/Markable.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/text/WTFString.h>
+
+#if PLATFORM(COCOA)
+#include "ClassStructPtr.h"
+#endif
+
+#if ENABLE(DATA_DETECTION)
+#include <WebCore/DataDetectorType.h>
+#endif
 
 #if PLATFORM(IOS_FAMILY)
 OBJC_PROTOCOL(_UIClickInteractionDriving);
@@ -124,6 +134,9 @@ public:
 
     WebCore::SandboxFlags initialSandboxFlags() const { return m_data.initialSandboxFlags; }
     void setInitialSandboxFlags(WebCore::SandboxFlags);
+
+    WebCore::ReferrerPolicy initialReferrerPolicy() const { return m_data.initialReferrerPolicy; }
+    void setInitialReferrerPolicy(WebCore::ReferrerPolicy);
 
     const std::optional<WebCore::WindowFeatures>& windowFeatures() const;
     void setWindowFeatures(WebCore::WindowFeatures&&);
@@ -374,9 +387,6 @@ public:
     bool allowUniversalAccessFromFileURLs() const { return m_data.allowUniversalAccessFromFileURLs; }
     void setAllowUniversalAccessFromFileURLs(bool allow) { m_data.allowUniversalAccessFromFileURLs = allow; }
 
-    void setOverrideReferrerForAllRequests(WTF::String&& referrer) { m_data.overrideReferrerForAllRequests = WTFMove(referrer); }
-    const WTF::String& overrideReferrerForAllRequests() const { return m_data.overrideReferrerForAllRequests; }
-
     bool allowTopNavigationToDataURLs() const { return m_data.allowTopNavigationToDataURLs; }
     void setAllowTopNavigationToDataURLs(bool allow) { m_data.allowTopNavigationToDataURLs = allow; }
 
@@ -441,7 +451,7 @@ public:
     bool isLockdownModeExplicitlySet() const;
     bool lockdownModeEnabled() const;
     
-    bool enhancedSecurityEnabled() const;
+    bool isEnhancedSecurityEnabled() const;
 
     void setAllowTestOnlyIPC(bool enabled) { m_data.allowTestOnlyIPC = enabled; }
     bool allowTestOnlyIPC() const { return m_data.allowTestOnlyIPC; }
@@ -529,6 +539,7 @@ private:
         WTF::String openedMainFrameName;
         std::optional<WebCore::WindowFeatures> windowFeatures;
         WebCore::SandboxFlags initialSandboxFlags;
+        WebCore::ReferrerPolicy initialReferrerPolicy { WebCore::ReferrerPolicy::EmptyString };
         WeakPtr<WebKit::WebPageProxy> pageToCloneSessionStorageFrom;
         WeakPtr<WebKit::WebPageProxy> alternateWebViewForNavigationGestures;
 
@@ -619,7 +630,6 @@ private:
 #endif
         WTF::String groupIdentifier;
         WTF::String mediaContentTypesRequiringHardwareSupport;
-        WTF::String overrideReferrerForAllRequests;
         std::optional<WTF::String> applicationNameForUserAgent;
         double sampledPageTopColorMaxDifference { DEFAULT_VALUE_FOR_SampledPageTopColorMaxDifference };
         double sampledPageTopColorMinHeight { DEFAULT_VALUE_FOR_SampledPageTopColorMinHeight };

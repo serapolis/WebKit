@@ -333,6 +333,12 @@ WebAnimationTime AnimationEffect::iterationDuration()
     return m_timing.iterationDuration;
 }
 
+WebAnimationTime AnimationEffect::iterationDuration() const
+{
+    ASSERT(!m_timingDidMutate);
+    return m_timing.iterationDuration;
+}
+
 void AnimationEffect::setIterationDuration(const std::optional<Seconds>& duration)
 {
     if (m_timing.specifiedIterationDuration == duration)
@@ -408,7 +414,7 @@ Seconds AnimationEffect::timeToNextTick(const BasicEffectTiming& timing)
     return Seconds::infinity();
 }
 
-void AnimationEffect::animationTimelineDidChange(const AnimationTimeline*)
+void AnimationEffect::animationTimelineDidChange()
 {
     m_timingDidMutate = true;
 }

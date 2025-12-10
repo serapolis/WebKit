@@ -26,6 +26,9 @@
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
 #include "DocumentMarkerController.h"
+#include "DocumentPage.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "ElementInlines.h"
 #include "File.h"
@@ -42,13 +45,13 @@
 #include "LocalFrame.h"
 #include "NodeInlines.h"
 #include "OriginAccessPatterns.h"
-#include "Page.h"
 #include "PseudoElement.h"
 #include "Range.h"
 #include "RenderBlockFlow.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
 #include "RenderObjectStyle.h"
+#include "RenderStyleInlines.h"
 #include "SVGAElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImageElement.h"
@@ -78,21 +81,33 @@ static inline void appendToNodeSet(const HitTestResult::NodeSet& source, HitTest
 
 HitTestResult::HitTestResult() = default;
 
+HitTestResult::HitTestResult(const IntPoint& point)
+    : m_hitTestLocation(point)
+    , m_doublePointInInnerNodeFrame(point)
+{
+}
+
 HitTestResult::HitTestResult(const LayoutPoint& point)
     : m_hitTestLocation(point)
-    , m_pointInInnerNodeFrame(point)
+    , m_doublePointInInnerNodeFrame(point)
+{
+}
+
+HitTestResult::HitTestResult(const DoublePoint& point)
+    : m_hitTestLocation(LayoutPoint(point))
+    , m_doublePointInInnerNodeFrame(point)
 {
 }
 
 HitTestResult::HitTestResult(const LayoutRect& rect)
     : m_hitTestLocation { rect }
-    , m_pointInInnerNodeFrame { rect.center() }
+    , m_doublePointInInnerNodeFrame { rect.center() }
 {
 }
 
 HitTestResult::HitTestResult(const HitTestLocation& other)
     : m_hitTestLocation(other)
-    , m_pointInInnerNodeFrame(m_hitTestLocation.point())
+    , m_doublePointInInnerNodeFrame(m_hitTestLocation.point())
 {
 }
 
@@ -100,7 +115,7 @@ HitTestResult::HitTestResult(const HitTestResult& other)
     : m_hitTestLocation(other.m_hitTestLocation)
     , m_innerNode(other.innerNode())
     , m_innerNonSharedNode(other.innerNonSharedNode())
-    , m_pointInInnerNodeFrame(other.m_pointInInnerNodeFrame)
+    , m_doublePointInInnerNodeFrame(other.m_doublePointInInnerNodeFrame)
     , m_localPoint(other.localPoint())
     , m_innerURLElement(other.URLElement())
     , m_scrollbar(other.scrollbar())
@@ -121,7 +136,7 @@ HitTestResult& HitTestResult::operator=(const HitTestResult& other)
     m_hitTestLocation = other.m_hitTestLocation;
     m_innerNode = other.innerNode();
     m_innerNonSharedNode = other.innerNonSharedNode();
-    m_pointInInnerNodeFrame = other.m_pointInInnerNodeFrame;
+    m_doublePointInInnerNodeFrame = other.m_doublePointInInnerNodeFrame;
     m_localPoint = other.localPoint();
     m_innerURLElement = other.URLElement();
     m_scrollbar = other.scrollbar();
@@ -209,12 +224,12 @@ LocalFrame* HitTestResult::frame() const
     return nullptr;
 }
 
-Frame* HitTestResult::targetFrame() const
+RefPtr<Frame> HitTestResult::targetFrame() const
 {
     if (!m_innerURLElement)
         return nullptr;
 
-    auto* frame = m_innerURLElement->document().frame();
+    RefPtr frame = m_innerURLElement->document().frame();
     if (!frame)
         return nullptr;
 
@@ -834,7 +849,7 @@ void HitTestResult::append(const HitTestResult& other, const HitTestRequest& req
         m_innerNode = other.innerNode();
         m_innerNonSharedNode = other.innerNonSharedNode();
         m_localPoint = other.localPoint();
-        m_pointInInnerNodeFrame = other.m_pointInInnerNodeFrame;
+        m_doublePointInInnerNodeFrame = other.m_doublePointInInnerNodeFrame;
         m_innerURLElement = other.URLElement();
         m_scrollbar = other.scrollbar();
         m_isOverWidget = other.isOverWidget();
@@ -948,6 +963,16 @@ void HitTestResult::toggleEnhancedFullscreenForVideo() const
     else
         videoElement->webkitSetPresentationMode(HTMLVideoElement::VideoPresentationMode::PictureInPicture);
 #endif
+}
+
+RefPtr<Node> HitTestResult::protectedInnerNonSharedNode() const
+{
+    return innerNonSharedNode();
+}
+
+RefPtr<Element> HitTestResult::protectedURLElement() const
+{
+    return URLElement();
 }
 
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)

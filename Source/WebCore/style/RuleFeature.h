@@ -82,6 +82,8 @@ struct RuleAndSelector {
     RefPtr<const StyleRule> styleRule;
     uint16_t selectorIndex; // Keep in sync with RuleData's selectorIndex size.
     uint16_t selectorListIndex; // Keep in sync with RuleData's selectorListIndex size.
+
+    const CSSSelector& selector() const;
 };
 
 struct RuleFeature : public RuleAndSelector {

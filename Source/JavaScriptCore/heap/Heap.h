@@ -235,6 +235,7 @@ class Heap;
     v(float32ArraySpace, cellHeapCellType, JSFloat32Array) \
     v(float64ArraySpace, cellHeapCellType, JSFloat64Array) \
     v(functionRareDataSpace, destructibleCellHeapCellType, FunctionRareData) \
+    v(functionWithFieldsSpace, cellHeapCellType, JSFunctionWithFields) \
     v(generatorSpace, cellHeapCellType, JSGenerator) \
     v(globalObjectSpace, globalObjectHeapCellType, JSGlobalObject) \
     v(injectedScriptHostSpace, injectedScriptHostSpaceHeapCellType, Inspector::JSInjectedScriptHost) \
@@ -297,7 +298,9 @@ class Heap;
     v(weakSetSpace, weakSetHeapCellType, JSWeakSet) \
     v(withScopeSpace, cellHeapCellType, JSWithScope) \
     v(wrapForValidIteratorSpace, cellHeapCellType, JSWrapForValidIterator) \
-    v(promiseAllContextSpace, cellHeapCellType, JSPromiseAllContext) \
+    v(promiseCombinatorsContextSpace, cellHeapCellType, JSPromiseCombinatorsContext) \
+    v(promiseCombinatorsGlobalContextSpace, cellHeapCellType, JSPromiseCombinatorsGlobalContext) \
+    v(promiseReactionSpace, cellHeapCellType, JSPromiseReaction) \
     v(asyncFromSyncIteratorSpace, cellHeapCellType, JSAsyncFromSyncIterator) \
     v(regExpStringIteratorSpace, cellHeapCellType, JSRegExpStringIterator) \
     v(disposableStackSpace, cellHeapCellType, JSDisposableStack) \
@@ -807,7 +810,7 @@ private:
     void dumpHeapStatisticsAtVMDestruction();
 
     static bool useGenerationalGC();
-    static bool shouldSweepSynchronously();
+    bool shouldSweepSynchronously();
 
     void verifyGC();
     void verifierMark();
@@ -888,8 +891,13 @@ private:
 
     unsigned m_barrierThreshold { Options::forceFencedBarrier() ? tautologicalThreshold : blackThreshold };
 
+#if PLATFORM(MAC)
     Seconds m_lastFullGCLength { 2_ms };
     Seconds m_lastEdenGCLength { 2_ms };
+#else
+    Seconds m_lastFullGCLength { 10_ms };
+    Seconds m_lastEdenGCLength { 10_ms };
+#endif
 
     Vector<WeakBlock*> m_logicallyEmptyWeakBlocks;
     size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
@@ -975,7 +983,7 @@ private:
     uint64_t m_gcVersion { 0 };
     Box<Lock> m_threadLock;
     const Ref<AutomaticThreadCondition> m_threadCondition; // The mutator must not wait on this. It would cause a deadlock.
-    RefPtr<AutomaticThread> m_thread;
+    const RefPtr<AutomaticThread> m_thread;
 
     RefPtr<Thread> m_collectContinuouslyThread { nullptr };
     

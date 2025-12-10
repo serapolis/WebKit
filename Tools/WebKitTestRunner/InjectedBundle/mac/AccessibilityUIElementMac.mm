@@ -35,6 +35,7 @@
 #import <Foundation/Foundation.h>
 #import <JavaScriptCore/JSObjectRef.h>
 #import <JavaScriptCore/JSStringRefCF.h>
+#import <WebCore/CocoaAccessibilityConstants.h>
 #import <WebCore/DateComponents.h>
 #import <WebKit/WKBundleFrame.h>
 #import <wtf/RetainPtr.h>
@@ -126,9 +127,7 @@ AccessibilityUIElement::AccessibilityUIElement(const AccessibilityUIElement& oth
 {
 }
 
-AccessibilityUIElement::~AccessibilityUIElement()
-{
-}
+AccessibilityUIElement::~AccessibilityUIElement() = default;
 
 bool AccessibilityUIElement::isEqual(AccessibilityUIElement* otherElement)
 {
@@ -490,7 +489,8 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::childAtIndexWithRemoteEle
 {
     RetainPtr<NSArray> children;
     s_controller->executeOnAXThreadAndWait([&children, index, this] {
-        children = [m_element _accessibilityChildrenFromIndex:index maxCount:1 returnPlatformElements:NO];
+        if ([m_element respondsToSelector:@selector(_accessibilityChildrenFromIndex:maxCount:returnPlatformElements:)])
+            children = [m_element _accessibilityChildrenFromIndex:index maxCount:1 returnPlatformElements:NO];
     });
     auto resultChildren = makeVector<RefPtr<AccessibilityUIElement>>(children.get());
     return resultChildren.size() == 1 ? resultChildren[0] : nullptr;
@@ -575,7 +575,7 @@ void AccessibilityUIElement::elementAtPointResolvingRemoteFrame(JSContextRef con
 {
     JSValueProtect(context, jsCallback);
     s_controller->executeOnAXThreadAndWait([x, y, protectedThis = Ref { *this }, jsCallback = WTFMove(jsCallback), context = JSRetainPtr { JSContextGetGlobalContext(context) }] () mutable {
-        auto callback = [jsCallback = WTFMove(jsCallback), context = WTFMove(context)](NSString *result) {
+        auto callback = [jsCallback = WTFMove(jsCallback), context = WTFMove(context)](NSString *result) mutable {
             s_controller->executeOnMainThread([result = WTFMove(result), jsCallback = WTFMove(jsCallback), context = WTFMove(context)] () {
                 JSValueRef arguments[1];
                 arguments[0] = makeValueRefForValue(context.get(), result);
@@ -792,7 +792,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::allAttributes()
             continue;
 
         if ([attribute isEqualToString:@"AXVisibleCharacterRange"]) {
-            id value = attributeValue(NSAccessibilityRoleAttribute).get();
+            id value = attributeValue(NSAccessibilityRoleAttribute).unsafeGet();
             NSString *role = [value isKindOfClass:[NSString class]] ? (NSString *)value : nil;
             if (role == nil || [role isEqualToString:@"AXList"] || [role isEqualToString:@"AXLink"] || [role isEqualToString:@"AXGroup"] || [role isEqualToString:@"AXRow"] || [role isEqualToString:@"AXColumn"] || [role isEqualToString:@"AXTable"] || [role isEqualToString:@"AXWebArea"]) {
                 // For some roles, behavior with ITM on and ITM off differ for this API in ways
@@ -1767,7 +1767,7 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::horizontalScrollbar() con
         return nullptr;
 
     BEGIN_AX_OBJC_EXCEPTIONS
-    if (id scrollbar = attributeValue(NSAccessibilityHorizontalScrollBarAttribute).get())
+    if (id scrollbar = attributeValue(NSAccessibilityHorizontalScrollBarAttribute).unsafeGet())
         return AccessibilityUIElement::create(scrollbar);
     END_AX_OBJC_EXCEPTIONS
 
@@ -1780,7 +1780,7 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::verticalScrollbar() const
         return nullptr;
 
     BEGIN_AX_OBJC_EXCEPTIONS
-    if (id scrollbar = attributeValue(NSAccessibilityVerticalScrollBarAttribute).get())
+    if (id scrollbar = attributeValue(NSAccessibilityVerticalScrollBarAttribute).unsafeGet())
         return AccessibilityUIElement::create(scrollbar);
     END_AX_OBJC_EXCEPTIONS
 
@@ -2102,7 +2102,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::popupValue() const
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::focusableAncestor()
 {
     BEGIN_AX_OBJC_EXCEPTIONS
-    if (id ancestor = attributeValue(@"AXFocusableAncestor").get())
+    if (id ancestor = attributeValue(@"AXFocusableAncestor").unsafeGet())
         return AccessibilityUIElement::create(ancestor);
     END_AX_OBJC_EXCEPTIONS
 
@@ -2112,7 +2112,7 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::focusableAncestor()
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::editableAncestor()
 {
     BEGIN_AX_OBJC_EXCEPTIONS
-    if (id ancestor = attributeValue(@"AXEditableAncestor").get())
+    if (id ancestor = attributeValue(@"AXEditableAncestor").unsafeGet())
         return AccessibilityUIElement::create(ancestor);
     END_AX_OBJC_EXCEPTIONS
 
@@ -2122,7 +2122,7 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::editableAncestor()
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::highestEditableAncestor()
 {
     BEGIN_AX_OBJC_EXCEPTIONS
-    if (id ancestor = attributeValue(@"AXHighestEditableAncestor").get())
+    if (id ancestor = attributeValue(@"AXHighestEditableAncestor").unsafeGet())
         return AccessibilityUIElement::create(ancestor);
     END_AX_OBJC_EXCEPTIONS
 
@@ -2609,6 +2609,9 @@ static JSRetainPtr<JSStringRef> createJSStringRef(id string, bool includeDidSpel
         id attachment = [attributes objectForKey:NSAccessibilityAttachmentTextAttribute];
         if (attachment)
             [mutableString appendFormat:@"%@: {present}\n", NSAccessibilityAttachmentTextAttribute];
+
+        if ([attributes objectForKey:NSAccessibilityTableAttribute])
+            [mutableString appendFormat:@"%@: {present}\n", NSAccessibilityTableAttribute];
     };
     [string enumerateAttributesInRange:NSMakeRange(0, [string length]) options:(NSAttributedStringEnumerationOptions)0 usingBlock:attributeEnumerationBlock];
     [mutableString appendString:[string string]];

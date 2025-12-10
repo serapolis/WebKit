@@ -34,24 +34,17 @@
 #include <WebCore/CDMInstanceSession.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/BoxPtr.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Condition.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/VectorHash.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
 
 #if ENABLE(THUNDER)
 #include "CDMOpenCDMTypes.h"
 #endif
-
-namespace WebCore {
-class CDMProxyDecryptionClient;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::CDMProxyDecryptionClient> : std::true_type { };
-}
 
 namespace WebCore {
 
@@ -271,7 +264,7 @@ protected:
 
 private:
     mutable Lock m_instanceLock;
-    CDMInstanceProxy* m_instance WTF_GUARDED_BY_LOCK(m_instanceLock);
+    CheckedPtr<CDMInstanceProxy> m_instance WTF_GUARDED_BY_LOCK(m_instanceLock);
 
     mutable Lock m_keysLock;
     mutable Condition m_keysCondition;
@@ -315,7 +308,9 @@ private:
 
 // Base class for common session management code and for communicating messages
 // from "real CDM" state changes to JS.
-class CDMInstanceProxy : public CDMInstance, public CanMakeWeakPtr<CDMInstanceProxy> {
+class CDMInstanceProxy : public CDMInstance, public CanMakeWeakPtr<CDMInstanceProxy>, public CanMakeThreadSafeCheckedPtr<CDMInstanceProxy> {
+    WTF_MAKE_TZONE_ALLOCATED(CDMInstanceProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CDMInstanceProxy);
 public:
     explicit CDMInstanceProxy(const String& keySystem)
     {
@@ -324,7 +319,11 @@ public:
         if (m_cdmProxy)
             m_cdmProxy->setInstance(this);
     }
-    virtual ~CDMInstanceProxy() = default;
+    virtual ~CDMInstanceProxy()
+    {
+        if (m_cdmProxy)
+            m_cdmProxy->setInstance(nullptr);
+    }
 
     // Main-thread only.
     void mergeKeysFrom(const KeyStore&);
@@ -346,7 +345,9 @@ private:
     std::atomic<int> m_numDecryptorsWaitingForKey { 0 };
 };
 
-class CDMProxyDecryptionClient : public CanMakeWeakPtr<CDMProxyDecryptionClient, WeakPtrFactoryInitialization::Eager> {
+class CDMProxyDecryptionClient : public CanMakeWeakPtr<CDMProxyDecryptionClient, WeakPtrFactoryInitialization::Eager>, public CanMakeCheckedPtr<CDMProxyDecryptionClient> {
+    WTF_MAKE_TZONE_ALLOCATED(CDMProxyDecryptionClient);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CDMProxyDecryptionClient);
 public:
     virtual bool isAborting() = 0;
     virtual ~CDMProxyDecryptionClient() = default;

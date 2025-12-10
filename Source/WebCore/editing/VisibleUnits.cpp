@@ -29,7 +29,6 @@
 
 #include "BoundaryPointInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Editing.h"
 #include "HTMLBRElement.h"
 #include "HTMLElement.h"
@@ -57,29 +56,29 @@
 
 namespace WebCore {
 
-static Node* previousLeafWithSameEditability(Node* node, EditableType editableType)
+static RefPtr<Node> previousLeafWithSameEditability(Node* node, EditableType editableType)
 {
     bool editable = hasEditableStyle(*node, editableType);
-    node = previousLeafNode(node);
-    while (node) {
-        if (editable == hasEditableStyle(*node, editableType))
-            return node;
-        node = previousLeafNode(node);
+    RefPtr previousNode = previousLeafNode(node);
+    while (previousNode) {
+        if (editable == hasEditableStyle(*previousNode, editableType))
+            return previousNode;
+        previousNode = previousLeafNode(previousNode.get());
     }
     return nullptr;
 }
 
-static Node* nextLeafWithSameEditability(Node* node, EditableType editableType)
+static RefPtr<Node> nextLeafWithSameEditability(Node* node, EditableType editableType)
 {
     if (!node)
         return nullptr;
     
     bool editable = hasEditableStyle(*node, editableType);
-    node = nextLeafNode(node);
-    while (node) {
-        if (editable == hasEditableStyle(*node, editableType))
-            return node;
-        node = nextLeafNode(node);
+    RefPtr nextNode = nextLeafNode(node);
+    while (nextNode) {
+        if (editable == hasEditableStyle(*nextNode, editableType))
+            return nextNode;
+        nextNode = nextLeafNode(nextNode.get());
     }
     return nullptr;
 }
@@ -574,11 +573,11 @@ static VisiblePosition previousBoundary(const VisiblePosition& position, Boundar
     if (!next)
         return it.atEnd() ? makeDeprecatedLegacyPosition(searchRange->start) : position;
 
-    auto& node = (it.atEnd() ? *searchRange : it.range()).start.container.get();
-    auto* textNode = dynamicDowncast<Text>(node);
+    Ref node = (it.atEnd() ? *searchRange : it.range()).start.container;
+    RefPtr textNode = dynamicDowncast<Text>(node);
     if (textNode && !suffixLength && next <= textNode->length()) {
         // The next variable contains a usable index into a text node.
-        return makeDeprecatedLegacyPosition(&node, next);
+        return makeDeprecatedLegacyPosition(node.ptr(), next);
     }
 
     // Use the character iterator to translate the next value into a DOM position.
@@ -1006,7 +1005,9 @@ VisiblePosition previousLinePosition(const VisiblePosition& visiblePosition, Lay
             return positionInParentBeforeNode(node.get());
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
-        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine, HitTestSource::Script);
+        auto* renderBox = dynamicDowncast<RenderBox>(renderer.get());
+        auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script);
     }
     
     // Could not find a previous line. This means we must already be on the first line.
@@ -1066,7 +1067,9 @@ VisiblePosition nextLinePosition(const VisiblePosition& visiblePosition, LayoutU
             return positionInParentBeforeNode(node.get());
         // FIXME: The HitTestSource state should be propagated down from calls into JavaScript bindings.
         // For the time being, just err on the side of passing in `Bindings`.
-        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine, HitTestSource::Script);
+        auto* renderBox = dynamicDowncast<RenderBox>(renderer.get());
+        auto localOffset = renderBox ? renderBox->locationOffset() : LayoutSize { };
+        return const_cast<RenderObject&>(renderer.get()).visiblePositionForPoint(pointInLine - localOffset, HitTestSource::Script);
     }
 
     // Could not find a next line. This means we must already be on the last line.

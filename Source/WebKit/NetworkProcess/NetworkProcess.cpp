@@ -1163,6 +1163,28 @@ void NetworkProcess::clearUserInteraction(PAL::SessionID sessionID, RegistrableD
     }
 }
 
+void NetworkProcess::hasLocalStorageOrCookies(PAL::SessionID sessionID, const RegistrableDomain& domain, CompletionHandler<void(bool)>&& completionHandler)
+{
+    CheckedPtr session = networkSession(sessionID);
+    CheckedPtr networkStorageSession = storageSession(sessionID);
+
+    if (!session || !networkStorageSession)
+        return completionHandler(false);
+
+    networkStorageSession->hasCookies(domain, [session = WeakPtr { *session }, domain, completionHandler = WTFMove(completionHandler)](bool hasCookies) mutable {
+        if (hasCookies)
+            return completionHandler(true);
+
+        if (session) {
+            session->storageManager().fetchData({ WebsiteDataType::LocalStorage }, NetworkStorageManager::ShouldComputeSize::No, [domain, completionHandler = WTFMove(completionHandler)](auto entries) mutable {
+                completionHandler(std::ranges::any_of(entries, [&domain](auto& entry) {
+                    return domain.matches(entry.origin);
+                }));
+            });
+        }
+    });
+}
+
 void NetworkProcess::hasLocalStorage(PAL::SessionID sessionID, const RegistrableDomain& domain, CompletionHandler<void(bool)>&& completionHandler)
 {
     CheckedPtr session = networkSession(sessionID);
@@ -1614,6 +1636,20 @@ void NetworkProcess::setSessionIsControlledByAutomation(PAL::SessionID sessionID
         m_sessionsControlledByAutomation.add(sessionID);
     else
         m_sessionsControlledByAutomation.remove(sessionID);
+}
+
+void NetworkProcess::fetchWebsitesWithUserInteractions(PAL::SessionID sessionID, CompletionHandler<void(HashSet<RegistrableDomain>&&)>&& completionHandler)
+{
+    CheckedPtr session = networkSession(sessionID);
+    ASSERT(session);
+    if (!session)
+        return completionHandler({ });
+
+    RefPtr resourceLoadStatistics = session->resourceLoadStatistics();
+    if (!resourceLoadStatistics)
+        return completionHandler({ });
+
+    resourceLoadStatistics->loadWebsitesWithUserInteraction(WTFMove(completionHandler));
 }
 
 void NetworkProcess::fetchWebsiteData(PAL::SessionID sessionID, OptionSet<WebsiteDataType> websiteDataTypes, OptionSet<WebsiteDataFetchOption> fetchOptions, CompletionHandler<void(WebsiteData&&)>&& completionHandler)
@@ -2410,6 +2446,15 @@ void NetworkProcess::runningOrTerminatingServiceWorkerCountForTesting(PAL::Sessi
     completionHandler(session->ensureSWServer().runningOrTerminatingCount());
 }
 
+void NetworkProcess::isStorageSuspendedForTesting(PAL::SessionID sessionID, CompletionHandler<void(bool)>&& completionHandler)
+{
+    CheckedPtr session = networkSession(sessionID);
+    if (!session)
+        return completionHandler(true);
+
+    completionHandler(session->storageManager().isSuspended());
+}
+
 void NetworkProcess::prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&& completionHandler)
 {
 #if !RELEASE_LOG_DISABLED
@@ -2825,6 +2870,12 @@ void NetworkProcess::storePrivateClickMeasurement(PAL::SessionID sessionID, WebC
         session->storePrivateClickMeasurement(WTFMove(privateClickMeasurement));
 }
 
+void NetworkProcess::simulatePrivateClickMeasurementConversion(PAL::SessionID sessionID, int priority, int triggerData, const URL& sourceURL, const URL& destinationURL)
+{
+    if (CheckedPtr session = networkSession(sessionID))
+        session->simulatePrivateClickMeasurementConversion(priority, triggerData, sourceURL, destinationURL);
+}
+
 void NetworkProcess::dumpPrivateClickMeasurement(PAL::SessionID sessionID, CompletionHandler<void(String)>&& completionHandler)
 {
     if (CheckedPtr session = networkSession(sessionID))
@@ -3008,11 +3059,11 @@ RefPtr<NetworkConnectionToWebProcess> NetworkProcess::protectedWebProcessConnect
     return webProcessConnection(identifier);
 }
 
-NetworkConnectionToWebProcess* NetworkProcess::webProcessConnection(const IPC::Connection& connection) const
+RefPtr<NetworkConnectionToWebProcess> NetworkProcess::protectedWebProcessConnection(const IPC::Connection& connection) const
 {
     for (Ref webProcessConnection : m_webProcessConnections.values()) {
         if (webProcessConnection->connection().uniqueID() == connection.uniqueID())
-            return webProcessConnection.ptr();
+            return webProcessConnection;
     }
     return nullptr;
 }

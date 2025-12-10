@@ -134,8 +134,10 @@ ScriptBuffer SWScriptStorage::retrieve(const ServiceWorkerRegistrationKey& regis
     }
 
     // FIXME: Do we need to disable file mapping in more cases to avoid having too many file descriptors open?
-    RefPtr<FragmentedSharedBuffer> buffer = SharedBuffer::createWithContentsOfFile(scriptPath, FileSystem::MappedFileMode::Private, shouldUseFileMapping(*fileSize) ? SharedBuffer::MayUseFileMapping::Yes : SharedBuffer::MayUseFileMapping::No);
-    return buffer;
+    RefPtr buffer = SharedBuffer::createWithContentsOfFile(scriptPath, FileSystem::MappedFileMode::Private, shouldUseFileMapping(*fileSize) ? SharedBuffer::MayUseFileMapping::Yes : SharedBuffer::MayUseFileMapping::No);
+    if (!buffer)
+        return { };
+    return ScriptBuffer { *buffer };
 }
 
 void SWScriptStorage::clear(const ServiceWorkerRegistrationKey& registrationKey)

@@ -38,8 +38,6 @@ typedef HICON HCURSOR;
 #include <wtf/RefCounted.h>
 #elif PLATFORM(COCOA)
 #include <wtf/RetainPtr.h>
-#elif PLATFORM(GTK)
-#include "GRefPtrGtk.h"
 #endif
 
 #if HAVE(NSCURSOR)
@@ -74,8 +72,6 @@ private:
 using PlatformCursor = RefPtr<SharedCursor>;
 #elif HAVE(NSCURSOR)
 using PlatformCursor = NSCursor *;
-#elif PLATFORM(GTK)
-using PlatformCursor = GRefPtr<GdkCursor>;
 #else
 using PlatformCursor = void*;
 #endif
@@ -270,7 +266,7 @@ inline auto Cursor::ipcData() const -> IPCData
     auto type = this->type();
     if (type != Type::Custom)
         return type;
-    if (m_image->isNull())
+    if (Ref { *m_image }->isNull())
         return std::nullopt;
     return CustomCursorIPCData {
         *m_image

@@ -28,6 +28,7 @@
 #include "HTMLDocumentParser.h"
 
 #include "CustomElementReactionQueue.h"
+#include "CustomElementRegistry.h"
 #include "DocumentFragment.h"
 #include "DocumentLoader.h"
 #include "EventLoop.h"
@@ -43,11 +44,16 @@
 #include "LocalFrame.h"
 #include "Microtasks.h"
 #include "NavigationScheduler.h"
+#include "NodeDocument.h"
 #include "ScriptElement.h"
 #include "TaskSource.h"
 #include "ThrowOnDynamicMarkupInsertionCountIncrementer.h"
-
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/SystemTracing.h>
+
+#if PLATFORM(COCOA)
+#include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
 
 namespace WebCore {
 
@@ -67,7 +73,7 @@ HTMLDocumentParser::HTMLDocumentParser(HTMLDocument& document, OptionSet<ParserC
     , m_scriptRunner(makeUnique<HTMLScriptRunner>(document, static_cast<HTMLScriptRunnerHost&>(*this)))
     , m_treeBuilder(makeUniqueRef<HTMLTreeBuilder>(*this, document, parserContentPolicy(), m_options))
     , m_parserScheduler(HTMLParserScheduler::create(*this))
-    , m_preloader(makeUnique<HTMLResourcePreloader>(document))
+    , m_preloader(HTMLResourcePreloader::create(document))
     , m_shouldEmitTracePoints(isMainDocumentLoadingFromHTTP(document))
 {
 }
@@ -581,6 +587,17 @@ void HTMLDocumentParser::appendCurrentInputStreamToPreloadScannerAndScan()
     m_preloadScanner->scan(*m_preloader, *protectedDocument());
 }
 
+static ALWAYS_INLINE bool canChangeModuleScriptsExecutionTiming()
+{
+#if PLATFORM(COCOA)
+    // https://bugs.webkit.org/show_bug.cgi?id=300905
+    static const bool caChangeTiming = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ExecutionTimingChangeOfModuleScripts);
+    return caChangeTiming;
+#else
+    return true;
+#endif
+}
+
 void HTMLDocumentParser::notifyFinished(PendingScript& pendingScript)
 {
     // pumpTokenizer can cause this parser to be detached from the Document,
@@ -594,16 +611,18 @@ void HTMLDocumentParser::notifyFinished(PendingScript& pendingScript)
     ASSERT(m_scriptRunner);
     ASSERT(!isExecutingScript());
     if (isStopping()) {
-        // If we're currently in a microtask checkpoint, schedule end() as a regular task.
-        // This ensures it runs after ALL microtasks (including any created during execution) complete.
-        RefPtr document = this->document();
-        if (document->eventLoop().microtaskQueue().isPerformingCheckpoint()) {
-            document->eventLoop().queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
-                if (protectedThis->isStopped())
-                    return;
-                protectedThis->attemptToRunDeferredScriptsAndEnd();
-            });
-            return;
+        if (canChangeModuleScriptsExecutionTiming()) [[likely]] {
+            // If we're currently in a microtask checkpoint, schedule end() as a regular task.
+            // This ensures it runs after ALL microtasks (including any created during execution) complete.
+            RefPtr document = this->document();
+            if (document->eventLoop().microtaskQueue().isPerformingCheckpoint()) {
+                document->eventLoop().queueTask(TaskSource::InternalAsyncTask, [protectedThis = Ref { *this }] {
+                    if (protectedThis->isStopped())
+                        return;
+                    protectedThis->attemptToRunDeferredScriptsAndEnd();
+                });
+                return;
+            }
         }
         attemptToRunDeferredScriptsAndEnd();
         return;

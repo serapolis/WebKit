@@ -45,8 +45,7 @@ enum class EnableWeakPtrThreadingAssertions : bool { No, Yes };
 template<typename T, typename WeakPtrImpl>
 class WeakRef {
 public:
-    template<typename = std::enable_if_t<!IsSmartPtr<T>::value && !std::is_pointer_v<T>>>
-    WeakRef(const T& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes)
+    WeakRef(const T& object, EnableWeakPtrThreadingAssertions shouldEnableAssertions = EnableWeakPtrThreadingAssertions::Yes) requires (!IsSmartPtr<T>::value && !std::is_pointer_v<T>)
         : m_impl(object.weakImpl())
 #if ASSERT_ENABLED
         , m_shouldEnableAssertions(shouldEnableAssertions == EnableWeakPtrThreadingAssertions::Yes)
@@ -139,7 +138,8 @@ private:
 #endif
 };
 
-template<class T, typename = std::enable_if_t<!IsSmartPtr<T>::value && !std::is_pointer_v<T>>>
+template<class T>
+    requires (!IsSmartPtr<T>::value && !std::is_pointer_v<T>)
 WeakRef(const T& value, EnableWeakPtrThreadingAssertions = EnableWeakPtrThreadingAssertions::Yes) -> WeakRef<T, typename T::WeakPtrImplType>;
 
 template <typename T, typename WeakPtrImpl>
@@ -201,20 +201,20 @@ inline bool is(const WeakRef<ArgType, WeakPtrImpl>& source)
 template<typename Target, typename Source, typename WeakPtrImpl>
 inline WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> downcast(WeakRef<Source, WeakPtrImpl> source)
 {
-    static_assert(!std::is_same_v<Source, Target>, "Unnecessary cast to same type");
-    static_assert(std::is_base_of_v<Source, Target>, "Should be a downcast");
+    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
+    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
     RELEASE_ASSERT(is<Target>(source));
-    return WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> { static_reference_cast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> { unsafeRefDowncast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
 }
 
 template<typename Target, typename Source, typename WeakPtrImpl>
 inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> dynamicDowncast(WeakRef<Source, WeakPtrImpl> source)
 {
-    static_assert(!std::is_same_v<Source, Target>, "Unnecessary cast to same type");
-    static_assert(std::is_base_of_v<Source, Target>, "Should be a downcast");
+    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
+    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
     if (!is<Target>(source))
         return nullptr;
-    return WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> { static_reference_cast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> { unsafeRefDowncast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
 }
 
 } // namespace WTF

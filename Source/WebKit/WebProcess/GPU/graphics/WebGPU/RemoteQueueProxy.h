@@ -28,7 +28,6 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteAdapterProxy.h"
-#include "RemoteVideoFrameObjectHeapProxy.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUQueue.h>
 #include <wtf/TZoneMalloc.h>
@@ -60,6 +59,8 @@ private:
     RemoteQueueProxy(RemoteQueueProxy&&) = delete;
     RemoteQueueProxy& operator=(const RemoteQueueProxy&) = delete;
     RemoteQueueProxy& operator=(RemoteQueueProxy&&) = delete;
+
+    bool isRemoteQueueProxy() const final { return true; }
 
     WebGPUIdentifier backing() const { return m_backing; }
 
@@ -108,19 +109,16 @@ private:
         const WebCore::WebGPU::Extent3D& copySize) final;
 
     void setLabelInternal(const String&) final;
-#if ENABLE(VIDEO)
-    RefPtr<RemoteVideoFrameObjectHeapProxy> protectedVideoFrameObjectHeapProxy() const;
-#endif
-    RefPtr<WebCore::NativeImage> getNativeImage(WebCore::VideoFrame&) final;
 
     WebGPUIdentifier m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;
     const Ref<RemoteAdapterProxy> m_parent;
-#if ENABLE(VIDEO)
-    RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
-#endif
 };
 
 } // namespace WebKit::WebGPU
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebGPU::RemoteQueueProxy)
+    static bool isType(const WebCore::WebGPU::Queue& queue) { return queue.isRemoteQueueProxy(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(GPU_PROCESS)

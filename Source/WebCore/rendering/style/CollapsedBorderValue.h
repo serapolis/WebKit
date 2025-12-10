@@ -38,8 +38,8 @@ public:
     {
     }
 
-    CollapsedBorderValue(const BorderValue& border, const Color& color, BorderPrecedence precedence)
-        : m_width(LayoutUnit(border.nonZero() ? Style::evaluate(border.width(), 1.0f /* FIXME ZOOM EFFECTED? */) : 0))
+    CollapsedBorderValue(const BorderValue& border, const Color& color, BorderPrecedence precedence, const Style::ZoomFactor)
+        : m_width(border.nonZero() ? Style::evaluate<LayoutUnit>(border.width(), Style::ZoomNeeded { }) : 0_lu)
         , m_color(color)
         , m_style(static_cast<unsigned>(border.style()))
         , m_precedence(static_cast<unsigned>(precedence))

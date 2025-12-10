@@ -35,7 +35,6 @@
 #include <WebCore/EventListenerOptions.h>
 #include <WebCore/PlatformExportMacros.h>
 #include <WebCore/ScriptWrappable.h>
-#include <bmalloc/TZoneHeap.h>
 #include <memory>
 #include <wtf/CanMakeWeakPtr.h>
 #include <wtf/CheckedPtr.h>
@@ -156,6 +155,9 @@ public:
     bool hasValidQuerySelectorAllResults() const { return hasEventTargetFlag(EventTargetFlag::HasValidQuerySelectorAllResults); }
     void setHasValidQuerySelectorAllResults(bool flag) { setEventTargetFlag(EventTargetFlag::HasValidQuerySelectorAllResults, flag); }
 
+    bool hasInternalTouchEventHandling() const { return hasEventTargetFlag(EventTargetFlag::HasInternalTouchEventHandling); }
+    void setHasInternalTouchEventHandling(bool flag) { setEventTargetFlag(EventTargetFlag::HasInternalTouchEventHandling, flag); }
+
 protected:
     enum ConstructNodeTag { ConstructNode };
     EventTarget() = default;
@@ -184,7 +186,7 @@ protected:
         HasFormAssociatedCustomElementInterface = 1 << 11,
         HasShadowRootContainingSlots = 1 << 12,
         IsInTopLayer = 1 << 13,
-        // 1-bit free
+        HasInternalTouchEventHandling = 1 << 14,
         // SVGElement bits
         HasPendingResources = 1 << 15,
     };

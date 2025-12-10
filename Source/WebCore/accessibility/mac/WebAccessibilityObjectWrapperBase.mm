@@ -44,7 +44,6 @@
 #import "ContextMenuController.h"
 #import "Editing.h"
 #import "FrameDestructionObserverInlines.h"
-#import "FrameInlines.h"
 #import "FrameSelection.h"
 #import "LayoutRect.h"
 #import "LocalFrameInlines.h"
@@ -265,9 +264,9 @@ NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& c
         // otherwise, we get palindrome errors in the AX hierarchy.
         if (child->isAttachment()) {
             if (RetainPtr<id> attachmentView = wrapper.attachmentView)
-                return attachmentView.get();
+                return attachmentView.unsafeGet();
         } else if (child->isRemoteFrame() && returnPlatformElements)
-            return child->remoteFramePlatformElement().get();
+            return child->remoteFramePlatformElement().unsafeGet();
 
         return wrapper;
     }).autorelease();
@@ -331,18 +330,23 @@ NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& c
     // If it does become invalidated, self.axBackingObject will be nil.
     retainPtr(self).autorelease();
 
-    RefPtr<AXCoreObject> backingObject = self.axBackingObject;
-    if (!backingObject) {
-        if (!isMainThread()) {
-            // It's possible our backing object just hasn't been attached yet.
-            // Try again after making sure all isolated trees are up-to-date, which could
-            // attach an object to this wrapper.
-            AXTreeStore<AXIsolatedTree>::applyPendingChangesForAllIsolatedTrees();
-            return m_isolatedObject.get();
+    {
+        // Explicitly scope this RefPtr. Otherwise, if we get to the end of this method,
+        // and this RefPtr was the last strong-ref, self.axBackingObject would return a
+        // pointer to an object destroyed when this RefPtr is destroyed.
+        RefPtr<AXCoreObject> backingObject = self.axBackingObject;
+        if (!backingObject) {
+            if (!isMainThread()) {
+                // It's possible our backing object just hasn't been attached yet.
+                // Try again after making sure all isolated trees are up-to-date, which could
+                // attach an object to this wrapper.
+                AXTreeStore<AXIsolatedTree>::applyPendingChangesForAllIsolatedTrees();
+                return m_isolatedObject.get();
+            }
+            return nil;
         }
-        return nil;
+        backingObject->updateBackingStore();
     }
-    backingObject->updateBackingStore();
     return self.axBackingObject;
 }
 #else
@@ -607,7 +611,7 @@ std::optional<SimpleRange> makeDOMRange(Document* document, NSRange range)
         return nullptr;
     RefPtr<AXCoreObject> backingObject = self.axBackingObject;
 #endif
-    return backingObject.get();
+    return backingObject.unsafeGet();
 }
 
 - (NSArray<NSDictionary *> *)lineRectsAndText
@@ -771,7 +775,7 @@ static BOOL accessibilityShouldRepostNotifications;
 + (void)accessibilitySetShouldRepostNotifications:(BOOL)repost
 {
     accessibilityShouldRepostNotifications = repost;
-#if PLATFORM(MAC)
+#if PLATFORM(COCOA)
     AXObjectCache::setShouldRepostNotificationsForTests(repost);
 #endif
 }
@@ -789,7 +793,7 @@ static bool isValueTypeSupported(id value)
         return true;
 #endif // PLATFORM(MAC)
 
-    return [value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[WebAccessibilityObjectWrapperBase class]];
+    return [value isKindOfClass:[NSString class]] || [value isKindOfClass:[NSAttributedString class]] || [value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[WebAccessibilityObjectWrapperBase class]];
 }
 
 static NSArray *arrayRemovingNonSupportedTypes(NSArray *array)
@@ -959,7 +963,7 @@ AccessibilitySearchCriteria accessibilitySearchCriteriaForSearchPredicate(AXCore
             criteria.startRange = *nsRange;
 
         if (!criteria.startObject)
-            criteria.startObject = markerRange.start().object().get();
+            criteria.startObject = markerRange.start().object().unsafeGet();
     }
 #endif
 

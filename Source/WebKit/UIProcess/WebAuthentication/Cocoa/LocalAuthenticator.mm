@@ -106,9 +106,14 @@ constexpr std::array<uint8_t, 16> aaguid = { 0xFB, 0xFC, 0x30, 0x07, 0x15, 0x4E,
 
 constexpr char kLargeBlobMapKey[] = "largeBlob";
 
-static inline bool emptyTransportsOrContain(const Vector<AuthenticatorTransport>& transports, AuthenticatorTransport target)
+static inline bool emptyTransportsOrContain(const Vector<String>& transports, AuthenticatorTransport target)
 {
-    return transports.isEmpty() ? true : transports.contains(target);
+    if (transports.isEmpty())
+        return true;
+    return transports.containsIf([&](auto& transportString) {
+        auto transport = convertStringToAuthenticatorTransport(transportString);
+        return transport && *transport == target;
+    });
 }
 
 // A Base64 encoded string of the Credential ID is used as the key of the hash set.
@@ -193,7 +198,7 @@ std::optional<Vector<Ref<AuthenticatorAssertionResponse>>> LocalAuthenticator::g
     Vector<Ref<AuthenticatorAssertionResponse>> result;
     result.reserveInitialCapacity([sortedAttributesArray count]);
     for (NSDictionary *attributes in sortedAttributesArray.get()) {
-        auto decodedResponse = cbor::CBORReader::read(makeVector(attributes[(id)kSecAttrApplicationTag]));
+        auto decodedResponse = cbor::CBORReader::read(makeVector(retainPtr(attributes[(id)kSecAttrApplicationTag]).get()));
         if (!decodedResponse || !decodedResponse->isMap()) {
             ASSERT_NOT_REACHED();
             return std::nullopt;
@@ -202,9 +207,8 @@ std::optional<Vector<Ref<AuthenticatorAssertionResponse>>> LocalAuthenticator::g
 
         RefPtr<ArrayBuffer> userHandle;
         auto it = responseMap.find(CBOR(fido::kEntityIdMapKey));
-        if (it != responseMap.end() && it->second.isByteString()) {
+        if (it != responseMap.end() && it->second.isByteString())
             userHandle = LocalAuthenticatorInternal::toArrayBuffer(it->second.getByteString());
-        }
 
         it = responseMap.find(CBOR(fido::kEntityNameMapKey));
         if (it == responseMap.end() || !it->second.isString()) {
@@ -221,13 +225,14 @@ std::optional<Vector<Ref<AuthenticatorAssertionResponse>>> LocalAuthenticator::g
         } else
             credentialID = attributes[(id)kSecAttrApplicationLabel];
 
-        auto response = AuthenticatorAssertionResponse::create(LocalAuthenticatorInternal::toArrayBuffer(credentialID.get()), WTFMove(userHandle), String(username), (__bridge SecAccessControlRef)attributes[(id)kSecAttrAccessControl], AuthenticatorAttachment::Platform);
+        RetainPtr<SecAccessControlRef> secAccessControl = (__bridge SecAccessControlRef)attributes[(id)kSecAttrAccessControl];
+        auto response = AuthenticatorAssertionResponse::create(LocalAuthenticatorInternal::toArrayBuffer(credentialID.get()), WTFMove(userHandle), String(username), secAccessControl.get(), AuthenticatorAttachment::Platform);
 
         auto group = groupForAttributes(attributes);
         if (!group.isNull()) {
             response->setGroup(group);
             response->setSynchronizable(true);
-        } else if ([[attributes allKeys] containsObject:bridge_cast(kSecAttrSynchronizable)])
+        } else if ([retainPtr([attributes allKeys]) containsObject:bridge_cast(kSecAttrSynchronizable)])
             response->setSynchronizable([attributes[(id)kSecAttrSynchronizable] isEqual:@YES]);
         it = responseMap.find(CBOR(fido::kDisplayNameMapKey));
         if (it != responseMap.end() && it->second.isString())
@@ -303,11 +308,11 @@ void LocalAuthenticator::continueMakeCredentialAfterReceivingLAContext(LAContext
 
     RetainPtr<SecAccessControlRef> accessControl;
     {
-        CFErrorRef errorRef = nullptr;
-        accessControl = adoptCF(SecAccessControlCreateWithFlags(NULL, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence, &errorRef));
-        auto retainError = adoptCF(errorRef);
-        if (errorRef) {
-            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't create access control: "_s, String(((NSError*)errorRef).localizedDescription)) });
+        CFErrorRef rawError = nullptr;
+        accessControl = adoptCF(SecAccessControlCreateWithFlags(NULL, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, kSecAccessControlPrivateKeyUsage | kSecAccessControlUserPresence, &rawError));
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        SUPPRESS_RETAINPTR_CTOR_ADOPT if (RetainPtr error = adoptCF(rawError)) {
+            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't create access control: "_s, String(bridge_cast(error.get()).localizedDescription)) });
             return;
         }
     }
@@ -396,9 +401,10 @@ std::optional<WebCore::ExceptionData> LocalAuthenticator::processLargeBlobExtens
             return WebCore::ExceptionData { ExceptionCode::UnknownError, "Attempted to update unknown credential."_s };
         }
 
-        RetainPtr dict = bridge_cast(adoptCF(checked_cf_cast<CFDictionaryRef>(attributesArrayRef)));
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr dict = bridge_cast(adoptCF(checked_cf_cast<CFDictionaryRef>(attributesArrayRef)));
 
-        auto decodedResponse = cbor::CBORReader::read(makeVector(dict.get()[(id)kSecAttrApplicationTag]));
+        auto decodedResponse = cbor::CBORReader::read(makeVector(retainPtr(dict.get()[(id)kSecAttrApplicationTag]).get()));
         if (!decodedResponse || !decodedResponse->isMap()) {
             ASSERT_NOT_REACHED();
             return WebCore::ExceptionData { ExceptionCode::UnknownError, "Could not read credential."_s };
@@ -502,11 +508,11 @@ void LocalAuthenticator::continueMakeCredentialAfterUserVerification(SecAccessCo
     RetainPtr<CFDataRef> publicKeyDataRef;
     {
         auto publicKey = adoptCF(SecKeyCopyPublicKey(privateKey.get()));
-        CFErrorRef errorRef = nullptr;
-        publicKeyDataRef = adoptCF(SecKeyCopyExternalRepresentation(publicKey.get(), &errorRef));
-        auto retainError = adoptCF(errorRef);
-        if (errorRef) {
-            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't export the public key: "_s, String(((NSError*)errorRef).localizedDescription)) });
+        CFErrorRef rawError = nullptr;
+        publicKeyDataRef = adoptCF(SecKeyCopyExternalRepresentation(publicKey.get(), &rawError));
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        SUPPRESS_RETAINPTR_CTOR_ADOPT if (RetainPtr error = adoptCF(rawError)) {
+            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't export the public key: "_s, String((bridge_cast(error.get())).localizedDescription)) });
             return;
         }
         ASSERT(((NSData *)publicKeyDataRef.get()).length == (1 + 2 * ES256FieldElementLength)); // 04 | X | Y
@@ -654,7 +660,7 @@ void LocalAuthenticator::continueGetAssertionAfterResponseSelected(Ref<WebCore::
     auto callback = [weakThis = WeakPtr { *this }, response = WTFMove(response)] (LocalConnection::UserVerification verification) mutable {
         ASSERT(RunLoop::isMain());
         if (RefPtr protectedThis = weakThis.get())
-            protectedThis->continueGetAssertionAfterUserVerification(WTFMove(response), verification, response->laContext());
+            protectedThis->continueGetAssertionAfterUserVerification(WTFMove(response), verification, response->protectedLAContext().get());
     };
 
     m_connection->verifyUser(accessControlRef.get(), context.get(), WTFMove(callback));
@@ -715,13 +721,13 @@ void LocalAuthenticator::continueGetAssertionAfterUserVerification(Ref<WebCore::
         RetainPtr dataToSign = adoptNS([[NSMutableData alloc] initWithBytes:authData.span().data() length:authData.size()]);
         [dataToSign appendBytes:requestData().hash.span().data() length:requestData().hash.size()];
 
-        CFErrorRef errorRef = nullptr;
+        CFErrorRef rawError = nullptr;
         // FIXME: Converting CFTypeRef to SecKeyRef is quite subtle here.
-        signature = adoptCF(SecKeyCreateSignature((__bridge SecKeyRef)((id)privateKeyRef), kSecKeyAlgorithmECDSASignatureMessageX962SHA256, bridge_cast(dataToSign.get()), &errorRef));
-        auto retainError = adoptCF(errorRef);
-        if (errorRef) {
-            RELEASE_LOG_ERROR(WebAuthn, "Couldn't generate signature: %@", ((NSError*)errorRef).localizedDescription);
-            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't generate the signature: "_s, String(((NSError*)errorRef).localizedDescription)) });
+        signature = adoptCF(SecKeyCreateSignature((__bridge SecKeyRef)((id)privateKeyRef), kSecKeyAlgorithmECDSASignatureMessageX962SHA256, bridge_cast(dataToSign.get()), &rawError));
+        // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+        SUPPRESS_RETAINPTR_CTOR_ADOPT if (RetainPtr error = adoptCF(rawError)) {
+            RELEASE_LOG_ERROR(WebAuthn, "Couldn't generate signature: %@", bridge_cast(error.get()).localizedDescription);
+            receiveException({ ExceptionCode::UnknownError, makeString("Couldn't generate the signature: "_s, String(bridge_cast(error.get()).localizedDescription)) });
             return;
         }
     }

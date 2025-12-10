@@ -31,52 +31,61 @@
 #include "JSWindowProxy.h"
 #include <JavaScriptCore/JSCellInlines.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/Weak.h>
 
 namespace WebCore {
 
-// FIXME: Make PairHashTraits work with PeekTypes and use a map<identifier, pair> instead of 2 hash lookups.
-using HandleMap = HashMap<JSHandleIdentifier, JSC::Strong<JSC::JSObject>>;
+struct JSHandleData {
+    JSC::Strong<JSC::JSObject> strongReference;
+    size_t refCount { 0 };
+};
+using HandleMap = HashMap<JSHandleIdentifier, JSHandleData>;
 static HandleMap& handleMap()
 {
     static MainThreadNeverDestroyed<HandleMap> map;
     return map.get();
 }
 
-using GlobalObjectMap = HashMap<JSHandleIdentifier, JSC::JSGlobalObject*>;
-static GlobalObjectMap& globalObjectMap()
+Ref<WebKitJSHandle> WebKitJSHandle::create(JSC::JSObject* object)
 {
-    static MainThreadNeverDestroyed<GlobalObjectMap> map;
-    return map.get();
+    return adoptRef(*new WebKitJSHandle(object));
 }
 
-using ObjectMap = HashMap<JSC::JSObject*, WeakPtr<WebKitJSHandle>>;
-static ObjectMap& objectMap()
+WebKitJSHandle::~WebKitJSHandle()
 {
-    static MainThreadNeverDestroyed<ObjectMap> map;
-    return map.get();
+    jsHandleDestroyed(m_identifier);
 }
 
-Ref<WebKitJSHandle> WebKitJSHandle::getOrCreate(JSC::JSGlobalObject& globalObject, JSC::JSObject* object)
+void WebKitJSHandle::jsHandleSentToAnotherProcess(JSHandleIdentifier identifier)
 {
-    if (auto existingHandle = objectMap().get(object))
-        return *existingHandle;
-    return adoptRef(*new WebKitJSHandle(globalObject, object));
+    auto it = handleMap().find(identifier);
+    if (it == handleMap().end()) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+    ASSERT(it->value.refCount);
+    ++it->value.refCount;
 }
 
 void WebKitJSHandle::jsHandleDestroyed(JSHandleIdentifier identifier)
 {
-    ASSERT(handleMap().contains(identifier));
-    ASSERT(globalObjectMap().contains(identifier));
-    if (auto strong = handleMap().take(identifier)) {
-        ASSERT(objectMap().contains(strong.get()));
-        objectMap().remove(strong.get());
+    auto it = handleMap().find(identifier);
+    if (it == handleMap().end()) {
+        ASSERT_NOT_REACHED();
+        return;
     }
-    globalObjectMap().remove(identifier);
+    if (!--it->value.refCount)
+        handleMap().remove(identifier);
 }
 
-std::pair<JSC::JSGlobalObject*, JSC::JSObject*> WebKitJSHandle::objectForIdentifier(JSHandleIdentifier identifier)
+JSC::JSObject* WebKitJSHandle::objectForIdentifier(JSHandleIdentifier identifier)
 {
-    return { globalObjectMap().get(identifier), handleMap().get(identifier).get() };
+    auto it = handleMap().find(identifier);
+    if (it == handleMap().end()) {
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+    return it->value.strongReference.get();
 }
 
 static Markable<FrameIdentifier> windowFrameIdentifier(JSC::JSObject* object)
@@ -88,13 +97,18 @@ static Markable<FrameIdentifier> windowFrameIdentifier(JSC::JSObject* object)
     return std::nullopt;
 }
 
-WebKitJSHandle::WebKitJSHandle(JSC::JSGlobalObject& globalObject, JSC::JSObject* object)
-    : m_identifier(JSHandleIdentifier::generate())
+WebKitJSHandle::WebKitJSHandle(JSC::JSObject* object)
+    : m_identifier(JSHandleIdentifier(WebProcessJSHandleIdentifier(reinterpret_cast<uintptr_t>(object)), Process::identifier()))
     , m_windowFrameIdentifier(WebCore::windowFrameIdentifier(object))
 {
-    handleMap().add(m_identifier, JSC::Strong<JSC::JSObject> { globalObject.vm(), object });
-    globalObjectMap().add(m_identifier, &globalObject);
-    objectMap().add(object, *this);
+    auto addResult = handleMap().ensure(m_identifier, [&] {
+        return JSHandleData {
+            JSC::Strong<JSC::JSObject> { object->globalObject()->vm(), object },
+            0 // Immediately incremented.
+        };
+    });
+    auto& data = addResult.iterator->value;
+    data.refCount++;
 }
 
 }

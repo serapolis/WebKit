@@ -88,9 +88,9 @@ public:
     AnimationTimelinesController* controller() const override;
 
     const RenderBox* sourceScrollerRenderer() const;
-    const RenderElement* stickyContainer() const;
-    Element* bindingsSource() const override;
-    Element* source() const override;
+    CheckedPtr<const RenderElement> stickyContainer() const;
+    RefPtr<Element> bindingsSource() const override;
+    RefPtr<Element> source() const override;
     Style::SingleAnimationRange defaultRange() const final;
 
     std::pair<WebAnimationTime, WebAnimationTime> intervalForAttachmentRange(const Style::SingleAnimationRange&) const final;
@@ -98,7 +98,7 @@ public:
     std::pair<double, double> offsetIntervalForTimelineRangeName(Style::SingleAnimationRangeName) const;
 
 private:
-    ScrollTimeline::Data computeTimelineData() const final;
+    ScrollTimeline::Data computeTimelineData(UseCachedCurrentTime = UseCachedCurrentTime::Yes) const final;
     std::pair<double, double> intervalForTimelineRangeName(const ScrollTimeline::Data&, Style::SingleAnimationRangeName) const;
     template<typename F> double mapOffsetToTimelineRange(const ScrollTimeline::Data&, Style::SingleAnimationRangeName, F&&) const;
 

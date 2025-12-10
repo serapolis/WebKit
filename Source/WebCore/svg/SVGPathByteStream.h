@@ -181,8 +181,8 @@ public:
         return makeUnique<SVGPathByteStream>(*this);
     }
 
-    DataIterator begin() const { return m_data->bytes().begin(); }
-    DataIterator end() const { return m_data->bytes().end(); }
+    DataIterator begin() const LIFETIME_BOUND { return m_data->bytes().begin(); }
+    DataIterator end() const LIFETIME_BOUND { return m_data->bytes().end(); }
 
     void append(uint8_t byte) { m_data.access().append(byte); }
     void append(std::span<const uint8_t> bytes) { m_data.access().append(bytes); }
@@ -205,7 +205,7 @@ public:
         m_data->updatePath(path);
     }
 
-    const Data::Bytes& bytes() const { return m_data->bytes(); }
+    const Data::Bytes& bytes() const LIFETIME_BOUND { return m_data->bytes(); }
 
     DataRef<Data> data() const { return m_data; }
     void setData(DataRef<Data>&& data) { m_data = WTFMove(data); }

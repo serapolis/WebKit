@@ -387,10 +387,10 @@ void BifurcatedGraphicsContext::setMiterLimit(float miterLimit)
     VERIFY_STATE_SYNCHRONIZATION();
 }
 
-void BifurcatedGraphicsContext::drawNativeImageInternal(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void BifurcatedGraphicsContext::drawNativeImage(NativeImage& nativeImage, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
-    m_primaryContext.drawNativeImageInternal(nativeImage, destRect, srcRect, options);
-    m_secondaryContext.drawNativeImageInternal(nativeImage, destRect, srcRect, options);
+    m_primaryContext.drawNativeImage(nativeImage, destRect, srcRect, options);
+    m_secondaryContext.drawNativeImage(nativeImage, destRect, srcRect, options);
 
     VERIFY_STATE_SYNCHRONIZATION();
 }
@@ -450,7 +450,7 @@ ImageDrawResult BifurcatedGraphicsContext::drawTiledImage(Image& image, const Fl
 }
 
 #if ENABLE(VIDEO)
-void BifurcatedGraphicsContext::drawVideoFrame(VideoFrame& videoFrame, const FloatRect& destination, WebCore::ImageOrientation orientation, bool shouldDiscardAlpha)
+void BifurcatedGraphicsContext::drawVideoFrame(const VideoFrame& videoFrame, const FloatRect& destination, WebCore::ImageOrientation orientation, bool shouldDiscardAlpha)
 {
     m_primaryContext.drawVideoFrame(videoFrame, destination, orientation, shouldDiscardAlpha);
     m_secondaryContext.drawVideoFrame(videoFrame, destination, orientation, shouldDiscardAlpha);

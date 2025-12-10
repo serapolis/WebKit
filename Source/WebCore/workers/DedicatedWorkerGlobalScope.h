@@ -73,7 +73,7 @@ public:
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
-    DedicatedWorkerThread& thread();
+    Ref<DedicatedWorkerThread> thread();
 
 #if ENABLE(NOTIFICATIONS)
     NotificationClient* notificationClient() final;
@@ -104,10 +104,10 @@ private:
     String m_name;
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-    RefPtr<WorkerAnimationController> m_workerAnimationController;
+    const RefPtr<WorkerAnimationController> m_workerAnimationController;
 #endif
 #if ENABLE(NOTIFICATIONS)
-    RefPtr<WorkerNotificationClient> m_notificationClient;
+    const RefPtr<WorkerNotificationClient> m_notificationClient;
 #endif
 };
 

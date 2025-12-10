@@ -188,7 +188,7 @@ sub AddAsyncIterableOperationIfNeeded
 
     return unless $interface->asyncIterable;
     $interface->asyncIterable->extendedAttributes->{FromIterable} = 1;
-    addGenericIterableOperations($interface, $interface->asyncIterable, "[Symbol.asyncIterator]");
+    addGenericIterableOperations($interface, $interface->asyncIterable, "[Symbol.asyncIterator]", 0);
 }
 
 sub AddIterableOperationIfNeeded
@@ -198,7 +198,7 @@ sub AddIterableOperationIfNeeded
     return unless $interface->iterable;
 
     $interface->iterable->extendedAttributes->{FromIterable} = 1;
-    addGenericIterableOperations($interface, $interface->iterable, "[Symbol.Iterator]");
+    addGenericIterableOperations($interface, $interface->iterable, "[Symbol.Iterator]", 1);
 
     my $forEachOperation = IDLOperation->new();
     $forEachOperation->name("forEach");
@@ -216,6 +216,7 @@ sub addGenericIterableOperations
     my $interface = shift;
     my $iterable = shift;
     my $iteratorName = shift;
+    my $isSync = shift;
 
     my $symbolIteratorOperation = IDLOperation->new();
     $symbolIteratorOperation->name($iteratorName);
@@ -224,17 +225,20 @@ sub addGenericIterableOperations
     push(@{$iterable->operations}, $symbolIteratorOperation);
     push(@{$interface->operations}, $symbolIteratorOperation) if IsKeyValueIterableInterface($interface);
 
-    my $entriesOperation = IDLOperation->new();
-    $entriesOperation->name("entries");
-    IDLParser::copyExtendedAttributes($entriesOperation->extendedAttributes, $iterable->extendedAttributes);
-    push(@{$iterable->operations}, $entriesOperation);
-    push(@{$interface->operations}, $entriesOperation) if IsKeyValueIterableInterface($interface);
+    # FIXME: We should enable this code path for iterable as well once FontFaceSet is migrated to setlike.
+    if ($iterable->isKeyValue || $isSync) {
+        my $entriesOperation = IDLOperation->new();
+        $entriesOperation->name("entries");
+        IDLParser::copyExtendedAttributes($entriesOperation->extendedAttributes, $iterable->extendedAttributes);
+        push(@{$iterable->operations}, $entriesOperation);
+        push(@{$interface->operations}, $entriesOperation) if IsKeyValueIterableInterface($interface);
 
-    my $keysOperation = IDLOperation->new();
-    $keysOperation->name("keys");
-    IDLParser::copyExtendedAttributes($keysOperation->extendedAttributes, $iterable->extendedAttributes);
-    push(@{$iterable->operations}, $keysOperation);
-    push(@{$interface->operations}, $keysOperation) if IsKeyValueIterableInterface($interface);
+        my $keysOperation = IDLOperation->new();
+        $keysOperation->name("keys");
+        IDLParser::copyExtendedAttributes($keysOperation->extendedAttributes, $iterable->extendedAttributes);
+        push(@{$iterable->operations}, $keysOperation);
+        push(@{$interface->operations}, $keysOperation) if IsKeyValueIterableInterface($interface);
+    }
 
     my $valuesOperation = IDLOperation->new();
     $valuesOperation->name("values");
@@ -1119,7 +1123,7 @@ sub GenerateGetOwnPropertyNames
     my $namedGetterOperation = GetNamedGetterOperation($interface);
     my $indexedGetterOperation = GetIndexedGetterOperation($interface);
     
-    push(@$outputArray, "void ${className}::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)\n");
+    push(@$outputArray, "void ${className}::getOwnPropertyNames(JSObject* object, JSGlobalObject* lexicalGlobalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)\n");
     push(@$outputArray, "{\n");
     if ($indexedGetterOperation || $namedGetterOperation) {
         push(@$outputArray, "    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);\n");
@@ -1213,9 +1217,7 @@ sub GeneratePut
 
     # Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
     if (!$namedSetterOperation && !$indexedSetterOperation) {
-       AddToImplIncludes("Document.h");
-       AddToImplIncludes("DocumentInlines.h");
-       AddToImplIncludes("Quirks.h");
+       AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
        push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(jsDynamicCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
@@ -1324,9 +1326,7 @@ sub GeneratePutByIndex
     push(@$outputArray, "{\n");
     # Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
     if (!$namedSetterOperation && !$indexedSetterOperation) {
-       AddToImplIncludes("Document.h");
-       AddToImplIncludes("DocumentInlines.h");
-       AddToImplIncludes("Quirks.h");
+       AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
        push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(jsDynamicCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
@@ -1616,9 +1616,7 @@ sub GenerateDeleteProperty
 
     # Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
     if (!$namedDeleterOperation) {
-       AddToImplIncludes("Document.h");
-       AddToImplIncludes("DocumentInlines.h");
-       AddToImplIncludes("Quirks.h");
+       AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
        push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(jsDynamicCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
@@ -1669,9 +1667,7 @@ sub GenerateDeletePropertyByIndex
 
     # Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
     if (!$namedDeleterOperation) {
-       AddToImplIncludes("Document.h");
-       AddToImplIncludes("DocumentInlines.h");
-       AddToImplIncludes("Quirks.h");
+       AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
        push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(jsDynamicCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
@@ -1818,10 +1814,7 @@ sub ShouldGenerateToJSDeclaration
     return 0 if ($interface->extendedAttributes->{SuppressToJSObject});
     return 0 if not NeedsImplementationClass($interface);
     return 0 if IsDOMGlobalObject($interface);
-    return 1 if (!$hasParent or $interface->extendedAttributes->{JSGenerateToJSObject} or $interface->extendedAttributes->{CustomToJSObject});
-    return 1 if $interface->parentType && $interface->parentType->name eq "EventTarget";
-    return 1 if @{$interface->constructors} > 0 && !HasCustomConstructor($interface);
-    return 0;
+    return 1;
 }
 
 sub ShouldGenerateToJSImplementation
@@ -3253,7 +3246,7 @@ sub GenerateHeader
     }
     
     if (InstanceOverridesGetOwnPropertyNames($interface)) {
-        push(@headerContent, "    static void getOwnPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArray&, JSC::DontEnumPropertiesMode);\n");
+        push(@headerContent, "    static void getOwnPropertyNames(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);\n");
         $structureFlags{"JSC::OverridesGetOwnPropertyNames"} = 1;
     }
     
@@ -4181,27 +4174,7 @@ sub GetGnuMangledNameForInterface
 sub GetGnuVTableOffsetForType
 {
     my $typename = shift;
-    if ($typename eq "ApplePaySession"
-        || $typename eq "SVGAElement"
-        || $typename eq "SVGCircleElement"
-        || $typename eq "SVGClipPathElement"
-        || $typename eq "SVGDefsElement"
-        || $typename eq "SVGEllipseElement"
-        || $typename eq "SVGForeignObjectElement"
-        || $typename eq "SVGGElement"
-        || $typename eq "SVGImageElement"
-        || $typename eq "SVGLineElement"
-        || $typename eq "SVGPathElement"
-        || $typename eq "SVGPolyElement"
-        || $typename eq "SVGPolygonElement"
-        || $typename eq "SVGPolylineElement"
-        || $typename eq "SVGRectElement"
-        || $typename eq "SVGSVGElement"
-        || $typename eq "SVGGeometryElement"
-        || $typename eq "SVGGraphicsElement"
-        || $typename eq "SVGSwitchElement"
-        || $typename eq "SVGTextElement"
-        || $typename eq "SVGUseElement") {
+    if ($typename eq "ApplePaySession") {
         return "3";
     }
     return "2";
@@ -4394,7 +4367,7 @@ sub GenerateRuntimeEnableConditionalString
 
         my @flags = split(/&/, $context->extendedAttributes->{EnabledBySetting});
         my $exposedToWindowOnly = $interface->extendedAttributes->{Exposed} && $interface->extendedAttributes->{Exposed} eq "Window";
-        AddToImplIncludes($exposedToWindowOnly ? "DocumentInlines.h" : "ScriptExecutionContext.h");
+        AddToImplIncludes($exposedToWindowOnly ? "DocumentSettingsValues.h" : "ScriptExecutionContext.h");
         AddToImplIncludes("Settings.h");
         foreach my $flag (@flags) {
             my @orflags = split(/\|/, $flag);
@@ -4438,9 +4411,7 @@ sub GenerateRuntimeEnableConditionalString
     if ($context->extendedAttributes->{EnabledByQuirk}) {
         assert("Must specify value for EnabledByQuirk.") if $context->extendedAttributes->{DisabledByQuirk} eq "VALUE_IS_MISSING";
 
-        AddToImplIncludes("Document.h");
-        AddToImplIncludes("DocumentInlines.h");
-        AddToImplIncludes("Quirks.h");
+        AddToImplIncludes("DocumentQuirks.h");
 
         assert("EnabledByQuirk can only be used by interfaces only exposed to the Window") if $interface->extendedAttributes->{Exposed} && $interface->extendedAttributes->{Exposed} ne "Window";
 
@@ -4457,9 +4428,7 @@ sub GenerateRuntimeEnableConditionalString
     if ($context->extendedAttributes->{DisabledByQuirk}) {
         assert("Must specify value for DisabledByQuirk.") if $context->extendedAttributes->{DisabledByQuirk} eq "VALUE_IS_MISSING";
 
-        AddToImplIncludes("Document.h");
-        AddToImplIncludes("DocumentInlines.h");
-        AddToImplIncludes("Quirks.h");
+        AddToImplIncludes("DocumentQuirks.h");
 
         assert("DisabledByQuirk can only be used by interfaces only exposed to the Window") if $interface->extendedAttributes->{Exposed} && $interface->extendedAttributes->{Exposed} ne "Window";
 
@@ -5006,7 +4975,12 @@ sub GenerateImplementation
         }
         if (InterfaceNeedsAsyncIterator($interface)) {
             AddToImplIncludes("<JavaScriptCore/BuiltinNames.h>");
-            if (IsKeyValueIterableInterface($interface)) {
+            # FIXME: We should parse EnabledBySetting as done for other methods.
+            my $enabledBySettings = $interface->asyncIterable->extendedAttributes->{EnabledBySetting};
+            if ($enabledBySettings) {
+                push(@implContent, "    if (jsCast<JSDOMGlobalObject*>(globalObject())->scriptExecutionContext()->settingsValues()." . ToMethodName($enabledBySettings) . ")\n    ");
+            }
+            if ($interface->asyncIterable->isKeyValue) {
                 push(@implContent, "    putDirect(vm, vm.propertyNames->asyncIteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));\n");
             } else {
                 push(@implContent, "    putDirect(vm, vm.propertyNames->asyncIteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().valuesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));\n");
@@ -5548,7 +5522,7 @@ extern "C" { extern void (*const ${vtableRefWin}[])(); }
 extern "C" { extern void* ${vtableNameGnu}[]; }
 #endif
 template<std::same_as<${implType}> T>
-static inline void verifyVTable(${implType}* ptr) 
+static inline void verifyVTable(${implType}* ptr)
 {
     if constexpr (std::is_polymorphic_v<T>) {
         const void* actualVTablePointer = getVTablePointer<T>(ptr);
@@ -5570,9 +5544,42 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 END
 
-        push(@implContent, "JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<$implType>&& impl)\n");
+        push(@implContent, "JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Ref<$implType>&& impl)\n");
         push(@implContent, "{\n");
-        push(@implContent, <<END) if $vtableNameGnu;
+        if ($implType =~ /Document$/) {
+            AddToImplIncludes("JSDocumentCustom.h");
+            push(@implContent, "    reportMemoryForDocumentIfFrameless(*lexicalGlobalObject, impl.get());\n");
+        } else {
+            push(@implContent, "    UNUSED_PARAM(lexicalGlobalObject);\n");
+        }
+        my $hasChildInterfaces = 0;
+        unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
+            $codeGenerator->ForEachChildInterface($interface, sub {
+                my $childInterface = shift;
+                $hasChildInterfaces = 1;
+                my $childImplType = GetImplClassName($childInterface);
+                my $conditional = $childInterface->extendedAttributes->{Conditional};
+                if ($conditional) {
+                    my $conditionalString = $codeGenerator->GenerateConditionalStringFromAttributeValue($conditional);
+                    push(@implContent, "#if ${conditionalString}\n");
+                }
+                AddToImplIncludesForIDLType($childInterface->type);
+                AddToImplIncludes("JS" . $childInterface->type->name . ".h");
+                if ($childInterface->type->name =~ m/\QElement\E$/) {
+                    if ($childInterface->type->name =~ /^\QHTML/) {
+                        AddToImplIncludes("HTMLElementTypeHelpers.h");
+                    } elsif ($childInterface->type->name =~ /^\QSVG/) {
+                        AddToImplIncludes("SVGElementTypeHelpers.h");
+                    } elsif ($childInterface->type->name =~ /^\QMathML/) {
+                        AddToImplIncludes("MathMLElementTypeHelpers.h");
+                    }
+                }
+                push(@implContent, "    if (is<${childImplType}>(impl))\n");
+                push(@implContent, "        return toJSNewlyCreated(lexicalGlobalObject, globalObject, uncheckedDowncast<${childImplType}>(WTFMove(impl)));\n");
+                push(@implContent, "#endif\n") if $conditional;
+            });
+        }
+        push(@implContent, <<END) if $vtableNameGnu and not $hasChildInterfaces;
 #if ENABLE(BINDING_INTEGRITY)
     verifyVTable<$implType>(impl.ptr());
 #endif
@@ -5582,6 +5589,11 @@ END
 
         push(@implContent, "JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ${implType}& impl)\n");
         push(@implContent, "{\n");
+        if ($implType =~ /Document$/) {
+            AddToImplIncludes("JSDocumentCustom.h");
+            push(@implContent, "    if (auto* wrapper = cachedDocumentWrapper(*lexicalGlobalObject, *globalObject, impl))\n");
+            push(@implContent, "        return wrapper;\n");
+        }
         push(@implContent, "    return wrap(lexicalGlobalObject, globalObject, impl);\n");
         push(@implContent, "}\n\n");
     }
@@ -5965,6 +5977,51 @@ sub GenerateAttributeSetterBodyDefinition
         push(@$outputArray, "    UNUSED_PARAM(thisObject);\n");
         push(@$outputArray, "    UNUSED_PARAM(value);\n");
         push(@$outputArray, "    return true;\n");
+    } elsif ($attribute->type->isUnion && !$attribute->type->isNullable && $attribute->extendedAttributes->{OptimizedUnionSetterUsingOverloads}) {
+        push(@$outputArray, "    SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();\n") if !$attribute->isStatic;
+
+        my $globalObjectReference = $attribute->isStatic ? "*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)" : "*thisObject.globalObject()";
+        my $exceptionThrower = GetAttributeExceptionThrower($interface, $attribute);
+
+        push(@$outputArray, "    auto valueFunctor = [&]<typename T>(T&& nativeValueConversionResult) -> bool {\n");
+        push(@$outputArray, "        if constexpr (std::same_as<T, ConversionResultException>) {\n");
+        push(@$outputArray, "            return false;\n");
+        push(@$outputArray, "        } else {\n");
+        push(@$outputArray, "            if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]\n");
+        push(@$outputArray, "                return false;\n");
+
+        my $readValue = "nativeValueConversionResult.returnValue()";
+        my $releaseValue = PassArgumentExpression("nativeValueConversionResult.releaseReturnValue()", $attribute);
+
+        my $nativeValue = $releaseValue;
+        my ($baseFunctionName, @arguments) = $codeGenerator->SetterExpression(\%implIncludes, $interface->type->name, $attribute);
+        push(@arguments, $nativeValue);
+
+        my $functionName = GetFullyQualifiedImplementationCallName($interface, $attribute, $baseFunctionName, "impl", $conditional);
+        AddAdditionalArgumentsForImplementationCall(\@arguments, $interface, $attribute, "impl", "lexicalGlobalObject", "", "thisObject");
+
+        unshift(@arguments, GenerateCallWithUsingReferences($attribute->extendedAttributes->{SetterCallWith}, $outputArray, "false", "thisObject"));
+        unshift(@arguments, GenerateCallWithUsingReferences($attribute->extendedAttributes->{CallWith}, $outputArray, "false", "thisObject"));
+
+        my $functionString = "${functionName}(" . join(", ", @arguments) . ")";
+
+        my $callTracer = $attribute->extendedAttributes->{CallTracer} || $interface->extendedAttributes->{CallTracer};
+        if ($callTracer) {
+            my $indent = "            ";
+            my @callTracerArguments = ( ["typename T::IDL", "${readValue}"] );
+            GenerateCallTracer($outputArray, $callTracer, $attribute->name, \@callTracerArguments, $indent);
+        }
+
+        push(@$outputArray, "            invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {\n");
+        push(@$outputArray, "                return $functionString;\n");
+        push(@$outputArray, "            });\n");
+        push(@$outputArray, "            return true;\n");
+        push(@$outputArray, "        }\n");
+        push(@$outputArray, "    };\n");
+
+        my $toNativeExpression = JSValueToNative($interface, $attribute, "value", $attribute->extendedAttributes->{Conditional}, "&lexicalGlobalObject", "lexicalGlobalObject", "thisObject", $globalObjectReference, $exceptionThrower, undef, undef, undef, "valueFunctor");
+
+        push(@$outputArray, "    return $toNativeExpression;\n");
     } else {
         push(@$outputArray, "    SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();\n") if !$attribute->isStatic;
 
@@ -6023,7 +6080,7 @@ sub GenerateAttributeSetterBodyDefinition
         my $callTracer = $attribute->extendedAttributes->{CallTracer} || $interface->extendedAttributes->{CallTracer};
         if ($callTracer) {
             my $indent = "    ";
-            my @callTracerArguments = $readValue;
+            my @callTracerArguments = ( [GetIDLType($interface, $attribute->type), $readValue] );
             GenerateCallTracer($outputArray, $callTracer, $attribute->name, \@callTracerArguments, $indent);
         }
 
@@ -6726,7 +6783,7 @@ sub GenerateParametersCheck
         $argumentIndex++;
     }
 
-    push(@arguments, "WTFMove(promise)") if $operation->type && $codeGenerator->IsPromiseType($operation->type) && !$operation->extendedAttributes->{PromiseProxy};
+    push(@arguments, "WTFMove(promise)") if $operation->type && $codeGenerator->IsPromiseType($operation->type) && !$operation->extendedAttributes->{PromiseProxy} && !$operation->extendedAttributes->{ReturnsOwnPromise};
     push(@arguments, "WTFMove(promise), WTFMove(promise2)") if $operation->extendedAttributes->{ReturnsPromisePair};
 
     return "$functionName(" . join(", ", @arguments) . ")";
@@ -7068,7 +7125,7 @@ sub GenerateCallbackImplementationOperationBody
     push(@$contentRef, "    if (returnedException) {\n");
     if ($codeGenerator->IsPromiseType($operation->type)) {
         push(@$contentRef, "        auto* jsPromise = JSC::JSPromise::create(vm, globalObject.promiseStructure());\n");
-        push(@$contentRef, "        jsPromise->rejectAsHandled(&globalObject, returnedException->value());\n");
+        push(@$contentRef, "        jsPromise->rejectAsHandled(vm, &globalObject, returnedException->value());\n");
         push(@$contentRef, "        return { DOMPromise::create(globalObject, *jsPromise) };\n");
     } elsif ($isForRethrowingHandler) {
         push(@$contentRef, "        auto throwScope = DECLARE_THROW_SCOPE(vm);\n");
@@ -7247,7 +7304,7 @@ sub GenerateImplementationFunctionCall
 
     my $callTracer = $operation->extendedAttributes->{CallTracer} || $interface->extendedAttributes->{CallTracer};
     if ($callTracer) {
-        my @callTracerArguments = map { $_->name . "ConversionResult.returnValue()" } @{$operation->arguments};
+        my @callTracerArguments = map { [GetIDLTypeForArgument($interface, $_), $_->name . "ConversionResult.returnValue()"] } @{$operation->arguments};
         GenerateCallTracer($outputArray, $callTracer, $operation->name, \@callTracerArguments, $indent);
     }
 
@@ -7386,9 +7443,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static ${iteratorName}* create(JSC::VM& vm, JSC::Structure* structure, ${className}& iteratedObject, IterationKind kind)
+    static ${iteratorName}* create(JSC::VM& vm, JSC::Structure* structure, ${className}& iteratedObject, IterationKind kind, InternalIterator&& iterator)
     {
-        auto* instance = new (NotNull, JSC::allocateCell<${iteratorName}>(vm)) ${iteratorName}(structure, iteratedObject, kind);
+        auto* instance = new (NotNull, JSC::allocateCell<${iteratorName}>(vm)) ${iteratorName}(structure, iteratedObject, kind, WTFMove(iterator));
         instance->finishCreation(vm);
         return instance;
     }
@@ -7405,8 +7462,8 @@ END
 
     push(@implContent,  <<END);
 private:
-    ${iteratorName}(JSC::Structure* structure, ${className}& iteratedObject, IterationKind kind)
-        : Base(structure, iteratedObject, kind)
+    ${iteratorName}(JSC::Structure* structure, ${className}& iteratedObject, IterationKind kind, InternalIterator&& iterator)
+        : Base(structure, iteratedObject, kind, WTFMove(iterator))
     {
     }
 };
@@ -7444,9 +7501,46 @@ END
             $iterationKind = "Values" if $propertyName eq "entries" and not $iterable->isKeyValue;
 
             push(@implContent,  <<END);
-static inline EncodedJSValue ${functionName}Caller(JSGlobalObject*, CallFrame*, JS$interfaceName* thisObject)
+static inline EncodedJSValue ${functionName}Caller(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JS$interfaceName* thisObject)
 {
-    return JSValue::encode(iteratorCreate<${iteratorName}>(*thisObject, IterationKind::${iterationKind}));
+    UNUSED_PARAM(callFrame);
+    SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+END
+
+            my @creationArgumentList = ($iterationKind);
+            if ($interface->asyncIterable) {
+                my $argumentIndex = 0;
+                my $quotedFunctionName = "\"$functionName\"_s";
+                my $conditional = $codeGenerator->GenerateConditionalString($operation);
+                foreach my $argument (@{$interface->asyncIterable->arguments}) {
+                    my $name = $argument->name;
+                    my $type = $argument->type;
+                    AddToImplIncludesForIDLType($type, $conditional);
+
+                    my $globalObjectReference = "*castedThis->globalObject()";
+                    my $argumentExceptionThrowerFunctor = GetArgumentExceptionThrowerFunctor($interface, $argument, $argumentIndex, $quotedFunctionName);
+                    my $argumentDefaultValueFunctor = GetArgumentDefaultValueFunctor($interface, $argument);
+                    my $optional = 1;
+                    my $argumentLookupForConversion = "argument${argumentIndex}.value()";
+                    my $nativeValue = JSValueToNative($interface, $argument, $argumentLookupForConversion, $conditional, "lexicalGlobalObject", "*lexicalGlobalObject", "*castedThis", $globalObjectReference, $argumentExceptionThrowerFunctor, $functionName, $optional, $argumentDefaultValueFunctor);
+
+                    push(@implContent, <<END);
+    EnsureStillAliveScope argument${argumentIndex} = callFrame->argument($argumentIndex);
+    auto ${name}ConversionResult = ${nativeValue};
+    if (${name}ConversionResult.hasException(throwScope)) [[unlikely]]
+       return encodedJSValue();
+END
+                    push(@creationArgumentList, ", ");
+                    push(@creationArgumentList, PassArgumentExpression("${name}ConversionResult.releaseReturnValue()", $argument));
+
+                    $argumentIndex++;
+                }
+            }
+            my $iteratorCreateParameters = join("", @creationArgumentList);
+
+            push(@implContent,  <<END);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(iteratorCreate<${iteratorName}>(*thisObject, *lexicalGlobalObject, throwScope, IterationKind::${iteratorCreateParameters})));
 }
 
 END
@@ -7635,6 +7729,18 @@ sub GetIDLType
     return $baseIDLType;
 }
 
+sub GetIDLTypeForArgument
+{
+    my ($interface, $argument) = @_;
+
+    my $defaultValueFunctor = GetArgumentDefaultValueFunctor($interface, $argument);
+    my $optional = $argument->isOptional && ((defined($argument->default) && !WillConvertUndefinedToDefaultParameterValue($argument->type, $argument->default))|| !defined($argument->default));
+
+    my $IDLType = GetIDLType($interface, $argument->type);
+    $IDLType = "IDLOptional<" . $IDLType . ">" if $optional && !$defaultValueFunctor;
+    return $IDLType;
+}
+
 sub ShouldPassArgumentByReference
 {
     my ($argument) = @_;
@@ -7676,7 +7782,7 @@ sub IsValidContextForJSValueToNative
 
 sub JSValueToNative
 {
-    my ($interface, $context, $value, $conditional, $lexicalGlobalObjectPointer, $lexicalGlobalObjectReference, $thisObjectReference, $globalObjectReference, $exceptionThrowerFunctor, $functionName, $optional, $defaultValueFunctor) = @_;
+    my ($interface, $context, $value, $conditional, $lexicalGlobalObjectPointer, $lexicalGlobalObjectReference, $thisObjectReference, $globalObjectReference, $exceptionThrowerFunctor, $functionName, $optional, $defaultValueFunctor, $resultValueFunctor) = @_;
 
     assert("Invalid context type") if !IsValidContextForJSValueToNative($context);
 
@@ -7701,6 +7807,7 @@ sub JSValueToNative
     push(@conversionArguments, $globalObjectReference) if JSValueToNativeDOMConvertNeedsGlobalObject($type);
     push(@conversionArguments, $defaultValueFunctor) if $defaultValueFunctor;
     push(@conversionArguments, $exceptionThrowerFunctor) if $exceptionThrowerFunctor;
+    push(@conversionArguments, $resultValueFunctor) if $resultValueFunctor;
     if ($type->name eq "ScheduledAction") {
         my $interfaceName = $codeGenerator->GetVisibleInterfaceName($interface);
         if ($functionName) {
@@ -8754,7 +8861,7 @@ sub GenerateCallTracer()
     push(@$outputArray, $indent . "if (impl.hasActive" . $callTracer . "()) [[unlikely]]\n");
     push(@$outputArray, $indent . "    " . $callTracer . "::recordAction(impl, \"" . $name . "\"_s");
     if (scalar(@$arguments)) {
-        push(@$outputArray, ", { " . join(", ", map { $callTracer . "::processArgument(impl, " . $_ . ")" } @$arguments) . " }");
+        push(@$outputArray, ", { " . join(", ", map { $callTracer . "::processArgument<". @$_[0] . ">(impl, " . @$_[1] . ")" } @$arguments) . " }");
     }
     push(@$outputArray, ");\n");
 }

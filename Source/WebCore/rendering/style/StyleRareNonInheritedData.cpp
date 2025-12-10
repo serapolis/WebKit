@@ -29,9 +29,9 @@
 #include "RotateTransformOperation.h"
 #include "ScaleTransformOperation.h"
 #include "StyleImage.h"
+#include "StylePrimitiveKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include "StyleResolver.h"
-#include "StyleTextEdge.h"
 #include <wtf/PointerComparison.h>
 #include <wtf/RefPtr.h>
 #include <wtf/text/TextStream.h>
@@ -46,13 +46,10 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , lineClamp(RenderStyle::initialLineClamp())
     , zoom(RenderStyle::initialZoom())
     , maxLines(RenderStyle::initialMaxLines())
-    , overflowContinue(RenderStyle::initialOverflowContinue())
-    , touchActions(RenderStyle::initialTouchActions())
-    , marginTrim(RenderStyle::initialMarginTrim())
-    , contain(RenderStyle::initialContainment())
+    , touchAction(RenderStyle::initialTouchAction())
     , initialLetter(RenderStyle::initialInitialLetter())
     , marquee(StyleMarqueeData::create())
-    , backdropFilter(StyleFilterData::create())
+    , backdropFilter(StyleBackdropFilterData::create())
     , grid(StyleGridData::create())
     , gridItem(StyleGridItemData::create())
     , clip(RenderStyle::initialClip())
@@ -79,6 +76,7 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , viewTransitionName(RenderStyle::initialViewTransitionName())
     , columnGap(RenderStyle::initialColumnGap())
     , rowGap(RenderStyle::initialRowGap())
+    , itemTolerance(RenderStyle::initialItemTolerance())
     , offsetPath(RenderStyle::initialOffsetPath())
     , offsetDistance(RenderStyle::initialOffsetDistance())
     , offsetPosition(RenderStyle::initialOffsetPosition())
@@ -93,18 +91,17 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , viewTimelineInsets(RenderStyle::initialViewTimelineInsets())
     , viewTimelineAxes(RenderStyle::initialViewTimelineAxes())
     , viewTimelineNames(RenderStyle::initialViewTimelineNames())
-    // timelineScope
+    , timelineScope(RenderStyle::initialTimelineScope())
     , scrollbarGutter(RenderStyle::initialScrollbarGutter())
-    // scrollSnapType
-    // scrollSnapAlign
-    // scrollSnapStop
+    , scrollSnapType(RenderStyle::initialScrollSnapType())
+    , scrollSnapAlign(RenderStyle::initialScrollSnapAlign())
     , pseudoElementNameArgument(nullAtom())
     , anchorNames(RenderStyle::initialAnchorNames())
     , anchorScope(RenderStyle::initialAnchorScope())
     , positionAnchor(RenderStyle::initialPositionAnchor())
     , positionArea(RenderStyle::initialPositionArea())
     , positionTryFallbacks(RenderStyle::initialPositionTryFallbacks())
-    , lastSuccessfulPositionTryFallbackIndex()
+    , usedPositionOptionIndex()
     , blockStepSize(RenderStyle::initialBlockStepSize())
     , blockStepAlign(static_cast<unsigned>(RenderStyle::initialBlockStepAlign()))
     , blockStepInsert(static_cast<unsigned>(RenderStyle::initialBlockStepInsert()))
@@ -125,8 +122,8 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , applePayButtonStyle(static_cast<unsigned>(RenderStyle::initialApplePayButtonStyle()))
     , applePayButtonType(static_cast<unsigned>(RenderStyle::initialApplePayButtonType()))
 #endif
-    , breakBefore(static_cast<unsigned>(RenderStyle::initialBreakBetween()))
-    , breakAfter(static_cast<unsigned>(RenderStyle::initialBreakBetween()))
+    , breakBefore(static_cast<unsigned>(RenderStyle::initialBreakBefore()))
+    , breakAfter(static_cast<unsigned>(RenderStyle::initialBreakAfter()))
     , breakInside(static_cast<unsigned>(RenderStyle::initialBreakInside()))
     , containerType(static_cast<unsigned>(RenderStyle::initialContainerType()))
     , textBoxTrim(static_cast<unsigned>(RenderStyle::initialTextBoxTrim()))
@@ -134,7 +131,7 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , positionTryOrder(static_cast<unsigned>(RenderStyle::initialPositionTryOrder()))
     , positionVisibility(RenderStyle::initialPositionVisibility().toRaw())
     , fieldSizing(static_cast<unsigned>(RenderStyle::initialFieldSizing()))
-    , nativeAppearanceDisabled(static_cast<unsigned>(RenderStyle::initialNativeAppearanceDisabled()))
+    , nativeAppearanceDisabled(static_cast<unsigned>(false))
 #if HAVE(CORE_MATERIAL)
     , appleVisualEffect(static_cast<unsigned>(RenderStyle::initialAppleVisualEffect()))
 #endif
@@ -142,6 +139,11 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , usesAnchorFunctions(false)
     , anchorFunctionScrollCompensatedAxes(0)
     , isPopoverInvoker(false)
+    , useSVGZoomRulesForLength(false)
+    , marginTrim(RenderStyle::initialMarginTrim().toRaw())
+    , contain(RenderStyle::initialContain().toRaw())
+    , overflowContinue(static_cast<unsigned>(RenderStyle::initialOverflowContinue()))
+    , scrollSnapStop(static_cast<unsigned>(RenderStyle::initialScrollSnapStop()))
 {
 }
 
@@ -152,10 +154,7 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , lineClamp(o.lineClamp)
     , zoom(o.zoom)
     , maxLines(o.maxLines)
-    , overflowContinue(o.overflowContinue)
-    , touchActions(o.touchActions)
-    , marginTrim(o.marginTrim)
-    , contain(o.contain)
+    , touchAction(o.touchAction)
     , initialLetter(o.initialLetter)
     , marquee(o.marquee)
     , backdropFilter(o.backdropFilter)
@@ -185,6 +184,7 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , viewTransitionName(o.viewTransitionName)
     , columnGap(o.columnGap)
     , rowGap(o.rowGap)
+    , itemTolerance(o.itemTolerance)
     , offsetPath(o.offsetPath)
     , offsetDistance(o.offsetDistance)
     , offsetPosition(o.offsetPosition)
@@ -203,14 +203,13 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , scrollbarGutter(o.scrollbarGutter)
     , scrollSnapType(o.scrollSnapType)
     , scrollSnapAlign(o.scrollSnapAlign)
-    , scrollSnapStop(o.scrollSnapStop)
     , pseudoElementNameArgument(o.pseudoElementNameArgument)
     , anchorNames(o.anchorNames)
     , anchorScope(o.anchorScope)
     , positionAnchor(o.positionAnchor)
     , positionArea(o.positionArea)
     , positionTryFallbacks(o.positionTryFallbacks)
-    , lastSuccessfulPositionTryFallbackIndex(o.lastSuccessfulPositionTryFallbackIndex)
+    , usedPositionOptionIndex(o.usedPositionOptionIndex)
     , blockStepSize(o.blockStepSize)
     , blockStepAlign(o.blockStepAlign)
     , blockStepInsert(o.blockStepInsert)
@@ -248,6 +247,11 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , usesAnchorFunctions(o.usesAnchorFunctions)
     , anchorFunctionScrollCompensatedAxes(o.anchorFunctionScrollCompensatedAxes)
     , isPopoverInvoker(o.isPopoverInvoker)
+    , useSVGZoomRulesForLength(o.useSVGZoomRulesForLength)
+    , marginTrim(o.marginTrim)
+    , contain(o.contain)
+    , overflowContinue(o.overflowContinue)
+    , scrollSnapStop(o.scrollSnapStop)
 {
 }
 
@@ -265,10 +269,7 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && lineClamp == o.lineClamp
         && zoom == o.zoom
         && maxLines == o.maxLines
-        && overflowContinue == o.overflowContinue
-        && touchActions == o.touchActions
-        && marginTrim == o.marginTrim
-        && contain == o.contain
+        && touchAction == o.touchAction
         && initialLetter == o.initialLetter
         && marquee == o.marquee
         && backdropFilter == o.backdropFilter
@@ -278,7 +279,7 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && scrollMargin == o.scrollMargin
         && scrollPadding == o.scrollPadding
         && counterDirectives == o.counterDirectives
-        && arePointingToEqualData(willChange, o.willChange)
+        && willChange == o.willChange
         && boxReflect == o.boxReflect
         && maskBorder == o.maskBorder
         && pageSize == o.pageSize
@@ -297,6 +298,7 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && containerNames == o.containerNames
         && columnGap == o.columnGap
         && rowGap == o.rowGap
+        && itemTolerance == o.itemTolerance
         && offsetPath == o.offsetPath
         && offsetDistance == o.offsetDistance
         && offsetPosition == o.offsetPosition
@@ -314,14 +316,13 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && scrollbarGutter == o.scrollbarGutter
         && scrollSnapType == o.scrollSnapType
         && scrollSnapAlign == o.scrollSnapAlign
-        && scrollSnapStop == o.scrollSnapStop
         && pseudoElementNameArgument == o.pseudoElementNameArgument
         && anchorNames == o.anchorNames
         && anchorScope == o.anchorScope
         && positionAnchor == o.positionAnchor
         && positionArea == o.positionArea
         && positionTryFallbacks == o.positionTryFallbacks
-        && lastSuccessfulPositionTryFallbackIndex == o.lastSuccessfulPositionTryFallbackIndex
+        && usedPositionOptionIndex == o.usedPositionOptionIndex
         && blockStepSize == o.blockStepSize
         && blockStepAlign == o.blockStepAlign
         && blockStepInsert == o.blockStepInsert
@@ -360,30 +361,35 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && scrollbarWidth == o.scrollbarWidth
         && usesAnchorFunctions == o.usesAnchorFunctions
         && anchorFunctionScrollCompensatedAxes == o.anchorFunctionScrollCompensatedAxes
-        && isPopoverInvoker == o.isPopoverInvoker;
+        && isPopoverInvoker == o.isPopoverInvoker
+        && useSVGZoomRulesForLength == o.useSVGZoomRulesForLength
+        && marginTrim == o.marginTrim
+        && contain == o.contain
+        && overflowContinue == o.overflowContinue
+        && scrollSnapStop == o.scrollSnapStop;
 }
 
-OptionSet<Containment> StyleRareNonInheritedData::usedContain() const
+Style::Contain StyleRareNonInheritedData::usedContain() const
 {
-    auto containment = contain;
+    auto result = Style::Contain::fromRaw(contain);
 
     switch (static_cast<ContainerType>(containerType)) {
     case ContainerType::Normal:
         break;
     case ContainerType::Size:
-        containment.add({ Containment::Style, Containment::Size });
+        result.add({ Style::ContainValue::Style, Style::ContainValue::Size });
         break;
     case ContainerType::InlineSize:
-        containment.add({ Containment::Style, Containment::InlineSize });
+        result.add({ Style::ContainValue::Style, Style::ContainValue::InlineSize });
         break;
     };
 
-    return containment;
+    return result;
 }
 
 bool StyleRareNonInheritedData::hasBackdropFilters() const
 {
-    return !backdropFilter->filter.isNone();
+    return !backdropFilter->backdropFilter.isNone();
 }
 
 #if !LOG_DISABLED
@@ -402,11 +408,8 @@ void StyleRareNonInheritedData::dumpDifferences(TextStream& ts, const StyleRareN
     LOG_IF_DIFFERENT(zoom);
 
     LOG_IF_DIFFERENT(maxLines);
-    LOG_IF_DIFFERENT(overflowContinue);
 
-    LOG_IF_DIFFERENT(touchActions);
-    LOG_IF_DIFFERENT(marginTrim);
-    LOG_IF_DIFFERENT(contain);
+    LOG_IF_DIFFERENT(touchAction);
 
     LOG_IF_DIFFERENT(initialLetter);
 
@@ -447,6 +450,7 @@ void StyleRareNonInheritedData::dumpDifferences(TextStream& ts, const StyleRareN
 
     LOG_IF_DIFFERENT(columnGap);
     LOG_IF_DIFFERENT(rowGap);
+    LOG_IF_DIFFERENT(itemTolerance);
 
     LOG_IF_DIFFERENT(offsetPath);
     LOG_IF_DIFFERENT(offsetDistance);
@@ -471,7 +475,6 @@ void StyleRareNonInheritedData::dumpDifferences(TextStream& ts, const StyleRareN
 
     LOG_IF_DIFFERENT(scrollSnapType);
     LOG_IF_DIFFERENT(scrollSnapAlign);
-    LOG_IF_DIFFERENT(scrollSnapStop);
 
     LOG_IF_DIFFERENT(pseudoElementNameArgument);
 
@@ -480,7 +483,7 @@ void StyleRareNonInheritedData::dumpDifferences(TextStream& ts, const StyleRareN
     LOG_IF_DIFFERENT(positionAnchor);
     LOG_IF_DIFFERENT(positionArea);
     LOG_IF_DIFFERENT(positionTryFallbacks);
-    LOG_IF_DIFFERENT(lastSuccessfulPositionTryFallbackIndex);
+    LOG_IF_DIFFERENT(usedPositionOptionIndex);
     LOG_IF_DIFFERENT(positionVisibility);
 
     LOG_IF_DIFFERENT(blockStepSize);
@@ -520,19 +523,26 @@ void StyleRareNonInheritedData::dumpDifferences(TextStream& ts, const StyleRareN
     LOG_IF_DIFFERENT_WITH_CAST(TextBoxTrim, textBoxTrim);
     LOG_IF_DIFFERENT_WITH_CAST(OverflowAnchor, overflowAnchor);
     LOG_IF_DIFFERENT_WITH_CAST(Style::PositionTryOrder, positionTryOrder);
-    LOG_IF_DIFFERENT(fieldSizing);
+    LOG_IF_DIFFERENT_WITH_CAST(FieldSizing, fieldSizing);
 
-    LOG_IF_DIFFERENT(nativeAppearanceDisabled);
+    LOG_IF_DIFFERENT_WITH_CAST(bool, nativeAppearanceDisabled);
 
 #if HAVE(CORE_MATERIAL)
-    LOG_IF_DIFFERENT(appleVisualEffect);
+    LOG_IF_DIFFERENT_WITH_CAST(AppleVisualEffect, appleVisualEffect);
 #endif
 
-    LOG_IF_DIFFERENT(scrollbarWidth);
+    LOG_IF_DIFFERENT_WITH_CAST(Style::ScrollbarWidth, scrollbarWidth);
 
     LOG_IF_DIFFERENT_WITH_CAST(bool, usesAnchorFunctions);
     LOG_IF_DIFFERENT_WITH_CAST(bool, anchorFunctionScrollCompensatedAxes);
     LOG_IF_DIFFERENT_WITH_CAST(bool, isPopoverInvoker);
+    LOG_IF_DIFFERENT_WITH_CAST(bool, useSVGZoomRulesForLength);
+
+    LOG_IF_DIFFERENT_WITH_FROM_RAW(Style::MarginTrim, marginTrim);
+    LOG_IF_DIFFERENT_WITH_FROM_RAW(Style::Contain, contain);
+
+    LOG_IF_DIFFERENT_WITH_CAST(OverflowContinue, overflowContinue);
+    LOG_IF_DIFFERENT_WITH_CAST(ScrollSnapStop, scrollSnapStop);
 }
 #endif // !LOG_DISABLED
 

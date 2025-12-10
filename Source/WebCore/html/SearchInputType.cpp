@@ -41,8 +41,10 @@
 #include "KeyboardEvent.h"
 #include "NodeRenderStyle.h"
 #include "RenderSearchField.h"
+#include "RenderStyleInlines.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StylePreferredSize.h"
 #include "TextControlInnerElements.h"
 #include "UserAgentParts.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -198,13 +200,15 @@ float SearchInputType::decorationWidth(float) const
     float width = 0;
     if (RefPtr resultsButton = m_resultsButton; resultsButton && resultsButton->renderStyle()) {
         // FIXME: Document what invariant holds to allow only using fixed logical widths?
-        if (auto fixedLogicalWidth = resultsButton->renderStyle()->logicalWidth().tryFixed())
-            width += fixedLogicalWidth->value;
+        CheckedPtr renderStyle = resultsButton->renderStyle();
+        if (auto fixedLogicalWidth = renderStyle->logicalWidth().tryFixed())
+            width += fixedLogicalWidth->resolveZoom(renderStyle->usedZoomForLength());
     }
     if (RefPtr cancelButton = m_cancelButton; cancelButton && cancelButton->renderStyle()) {
         // FIXME: Document what invariant holds to allow only using fixed logical widths?
-        if (auto fixedLogicalWidth = cancelButton->renderStyle()->logicalWidth().tryFixed())
-            width += fixedLogicalWidth->value;
+        CheckedPtr renderStyle = cancelButton->renderStyle();
+        if (auto fixedLogicalWidth = renderStyle->logicalWidth().tryFixed())
+            width += fixedLogicalWidth->resolveZoom(renderStyle->usedZoomForLength());
     }
     return width;
 }

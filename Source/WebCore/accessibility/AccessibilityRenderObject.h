@@ -29,7 +29,6 @@
 #pragma once
 
 #include "AccessibilityNodeObject.h"
-#include "HTMLMediaElement.h"
 #include "LayoutRect.h"
 #include "PluginViewBase.h"
 #include "RenderObject.h"
@@ -98,6 +97,11 @@ public:
     AccessibilityObject* observableObject() const override;
     AccessibilityObject* titleUIElement() const final;
 
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    AccessibilityObject* crossFrameParentObject() const final;
+    AccessibilityObject* crossFrameChildObject() const final;
+#endif
+
     // Should be called on the root accessibility object to kick off a hit test.
     AccessibilityObject* accessibilityHitTest(const IntPoint&) const final;
 
@@ -135,7 +139,7 @@ public:
     bool isPlaying() const;
     bool isAutoplayEnabled() const;
     bool isMuted() const;
-    bool isMediaObject() const override { return is<HTMLMediaElement>(node()); }
+    bool isMediaObject() const override;
 #endif
 
     void setSelectedTextRange(CharacterRange&&) final;

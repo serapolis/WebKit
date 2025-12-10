@@ -53,7 +53,7 @@ class GraphicsLayerAnimation;
 class MutableStyleProperties;
 class RenderStyle;
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 class AcceleratedEffect;
 #endif
 
@@ -140,6 +140,7 @@ public:
     void transformRelatedPropertyDidChange();
     enum class RecomputationReason : uint8_t { LogicalPropertyChange, Other };
     std::optional<RecomputationReason> recomputeKeyframesIfNecessary(const RenderStyle* previousUnanimatedStyle, const RenderStyle& unanimatedStyle, const Style::ResolutionContext&);
+    void recomputeKeyframesAtNextOpportunity();
     void applyPendingAcceleratedActions();
     void applyPendingAcceleratedActionsOrUpdateTimingProperties();
 
@@ -163,9 +164,8 @@ public:
     const HashSet<AnimatableCSSProperty>& acceleratedProperties() const { return m_acceleratedProperties; }
     const HashSet<AnimatableCSSProperty>& acceleratedPropertiesWithImplicitKeyframe() const { return m_acceleratedPropertiesWithImplicitKeyframe; }
 
+    bool animatesMotionPath() const;
     bool computeExtentOfTransformAnimation(LayoutRect&) const;
-    bool computeTransformedExtentViaTransformList(const FloatRect&, const RenderStyle&, LayoutRect&) const;
-    bool computeTransformedExtentViaMatrix(const FloatRect&, const RenderStyle&, LayoutRect&) const;
     bool forceLayoutIfNeeded();
 
     enum class Accelerated : bool { No, Yes };
@@ -174,9 +174,7 @@ public:
     bool isRunningAcceleratedTransformRelatedAnimation() const;
 
     bool requiresPseudoElement() const;
-    bool hasImplicitKeyframes() const;
 
-    void keyframesRuleDidChange();
     void customPropertyRegistrationDidChange(const AtomString&);
 
     bool canBeAccelerated() const;
@@ -195,13 +193,15 @@ public:
 
     WebAnimationType animationType() const { return m_animationType; }
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
-    const AcceleratedEffect* acceleratedRepresentation() const { return m_acceleratedRepresentation.get(); }
-    void setAcceleratedRepresentation(const AcceleratedEffect* acceleratedRepresentation) { m_acceleratedRepresentation = acceleratedRepresentation; }
+#if ENABLE(THREADED_ANIMATIONS)
+    bool canHaveAcceleratedRepresentation() const;
+    Ref<AcceleratedEffect> acceleratedRepresentation(const IntRect&, const AcceleratedEffectValues&, OptionSet<AcceleratedEffectProperty>&);
+    void timelineAccelerationAbilityDidChange();
 #endif
 
 private:
     KeyframeEffect(Element*, const std::optional<Style::PseudoElementIdentifier>&);
+    ~KeyframeEffect();
 
     enum class AcceleratedAction : uint8_t { Play, Pause, UpdateProperties, TransformChange, Stop };
     enum class AcceleratedProperties : uint8_t { None, Some, All };
@@ -216,7 +216,7 @@ private:
     private:
         RefPtr<KeyframeEffect> m_effect;
         bool m_couldOriginallyPreventAcceleration;
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
         bool m_couldOriginallyBeAccelerated;
 #endif
     };
@@ -228,7 +228,7 @@ private:
     void addPendingAcceleratedAction(AcceleratedAction);
     bool isCompletelyAccelerated() const { return m_acceleratedPropertiesState == AcceleratedProperties::All; }
     void updateAcceleratedActions();
-    void setAnimatedPropertiesInStyle(RenderStyle&, const ComputedEffectTiming&);
+    void setAnimatedPropertiesInStyle(RenderStyle&, const ComputedEffectTiming&) const;
     const TimingFunction* timingFunctionForKeyframeAtIndex(size_t) const;
     const TimingFunction* timingFunctionForBlendingKeyframe(const BlendingKeyframe&) const;
     Ref<const GraphicsLayerAnimation> backingAnimationForCompositedRenderer();
@@ -253,7 +253,7 @@ private:
     void abilityToBeAcceleratedDidChange();
     void updateAcceleratedAnimationIfNecessary();
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
     class StackMembershipMutationScope {
         WTF_MAKE_NONCOPYABLE(StackMembershipMutationScope);
     public:
@@ -266,17 +266,17 @@ private:
         std::optional<Style::PseudoElementIdentifier> m_originalPseudoElementIdentifier;
     };
 
-    bool threadedAnimationResolutionEnabled() const;
-    void updateAssociatedThreadedEffectStack(const std::optional<const Styleable>& = std::nullopt);
+    void scheduleAssociatedAcceleratedEffectStackUpdate(const std::optional<const Styleable>& = std::nullopt);
 #endif
 
     // AnimationEffect
     bool isKeyframeEffect() const final { return true; }
     void animationDidTick() final;
+    void animationBecameReady() final;
     void animationDidChangeTimingProperties() final;
     void animationWasCanceled() final;
     void animationSuspensionStateDidChange(bool) final;
-    void animationTimelineDidChange(const AnimationTimeline*) final;
+    void animationTimelineDidChange() final;
     void animationDidFinish() final;
     void animationPlaybackRateDidChange() final;
     void setAnimation(WebAnimation*) final;
@@ -286,7 +286,7 @@ private:
     bool preventsAnimationReadiness() const final;
     void animationProgressBasedTimelineSourceDidChangeMetrics(const Style::SingleAnimationRange&) final;
 
-    const ViewTimeline* activeViewTimeline();
+    RefPtr<const ViewTimeline> activeViewTimeline() const;
     void updateComputedKeyframeOffsetsIfNeeded();
 
     // KeyframeInterpolation
@@ -308,7 +308,7 @@ private:
     RefPtr<Element> m_target;
     std::optional<Style::PseudoElementIdentifier> m_pseudoElementIdentifier { };
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
     WeakPtr<AcceleratedEffect> m_acceleratedRepresentation;
 #endif
 

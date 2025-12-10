@@ -207,6 +207,9 @@ void VulkanCaps::init(const ContextOptions& contextOptions,
 
     fSupportsYcbcrConversion = enabledFeatures.fSamplerYcbcrConversion;
     fSupportsDeviceFaultInfo = enabledFeatures.fDeviceFault;
+    fSupportsFrameBoundary = enabledFeatures.fFrameBoundary;
+
+    fSupportsPipelineCreationCacheControl = enabledFeatures.fPipelineCreationCacheControl;
 
     if (enabledFeatures.fAdvancedBlendModes) {
         fBlendEqSupport = enabledFeatures.fCoherentAdvancedBlendModes
@@ -231,16 +234,7 @@ void VulkanCaps::init(const ContextOptions& contextOptions,
     fIsInputAttachmentReadCoherent = fSupportsRasterizationOrderColorAttachmentAccess ||
                                      vendorID == kARM_VkVendor || vendorID == kImagination_VkVendor;
 
-    // TODO(skbug.com/40045541): We must force std430 array stride when using SSBOs since SPIR-V generation
-    // cannot handle mixed array strides being passed into functions.
-    fShaderCaps->fForceStd430ArrayLayout =
-            fStorageBufferSupport && fResourceBindingReqs.fStorageBufferLayout == Layout::kStd430;
-
-    // Avoid RelaxedPrecision with OpImageSampleImplicitLod due to driver bug with YCbCr sampling.
-    // (skbug.com/421927604)
-    fShaderCaps->fCannotUseRelaxedPrecisionOnImageSample = vendorID == kNvidia_VkVendor;
-
-    fShaderCaps->fDualSourceBlendingSupport = enabledFeatures.fDualSrcBlend;
+    this->initShaderCaps(enabledFeatures, vendorID);
 
     // Vulkan 1.0 dynamic state is always supported.  Dynamic state based on features of
     // VK_EXT_extended_dynamic_state and VK_EXT_extended_dynamic_state2 are also considered basic
@@ -260,6 +254,9 @@ void VulkanCaps::init(const ContextOptions& contextOptions,
     fUsePipelineLibraries =
             enabledFeatures.fGraphicsPipelineLibrary &&
             (deviceProperties.fGpl.graphicsPipelineLibraryFastLinking || vendorID == kARM_VkVendor);
+
+
+    fSupportsFrameBoundary = enabledFeatures.fFrameBoundary;
 
     // Multisampled render to single-sampled usage depends on the mandatory feature of
     // VK_EXT_multisampled_render_to_single_sampled.  Per format queries are needed to determine if
@@ -290,7 +287,7 @@ void VulkanCaps::init(const ContextOptions& contextOptions,
 
     // Note that format table initialization should be performed at the end of this method to ensure
     // all capability determinations are completed prior to populating the format tables.
-    this->initFormatTable(vkInterface, physDev, deviceProperties.fBase.properties);
+    this->initFormatTable(vkInterface, physDev, deviceProperties.fBase.properties, enabledFeatures);
     this->initDepthStencilFormatTable(vkInterface, physDev, deviceProperties.fBase.properties);
 
     this->finishInitialization(contextOptions);
@@ -319,10 +316,23 @@ VulkanCaps::EnabledFeatures VulkanCaps::getEnabledFeatures(
                     enabled.fSamplerYcbcrConversion = feature->samplerYcbcrConversion;
                     break;
                 }
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES: {
+                    const auto* feature =
+                            reinterpret_cast<const VkPhysicalDeviceVulkan13Features*>(pNext);
+                    enabled.fPipelineCreationCacheControl = feature->pipelineCreationCacheControl;
+                    break;
+                }
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES: {
                     const auto* feature =
                             reinterpret_cast<const VkPhysicalDeviceVulkan14Features*>(pNext);
                     enabled.fHostImageCopy = feature->hostImageCopy;
+                    break;
+                }
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES: {
+                    const auto* feature =
+                            reinterpret_cast<
+                                const VkPhysicalDevicePipelineCreationCacheControlFeatures*>(pNext);
+                    enabled.fPipelineCreationCacheControl = feature->pipelineCreationCacheControl;
                     break;
                 }
                 case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES: {
@@ -393,6 +403,19 @@ VulkanCaps::EnabledFeatures VulkanCaps::getEnabledFeatures(
                     const auto* feature =
                             reinterpret_cast<const VkPhysicalDeviceHostImageCopyFeatures*>(pNext);
                     enabled.fHostImageCopy = feature->hostImageCopy;
+                    break;
+                }
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAME_BOUNDARY_FEATURES_EXT: {
+                    const auto *feature = reinterpret_cast<
+                            const VkPhysicalDeviceFrameBoundaryFeaturesEXT*>(pNext);
+                    enabled.fFrameBoundary = feature->frameBoundary;
+                    break;
+                }
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RGBA10X6_FORMATS_FEATURES_EXT: {
+                    const auto *feature = reinterpret_cast<
+                            const VkPhysicalDeviceRGBA10X6FormatsFeaturesEXT*>(pNext);
+                    enabled.fFormatRGBA10x6WithoutYCbCrSampler =
+                            feature->formatRgba10x6WithoutYCbCrSampler;
                     break;
                 }
                 default:
@@ -628,6 +651,7 @@ static constexpr VkFormat kVkFormats[] = {
     VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
     VK_FORMAT_R16G16B16A16_UNORM,
     VK_FORMAT_R16G16_SFLOAT,
+    VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16
 };
 // These are all the valid depth/stencil formats that we support in Skia.
 static constexpr VkFormat kDepthStencilVkFormats[] = {
@@ -851,9 +875,23 @@ TextureInfo VulkanCaps::getDefaultStorageTextureInfo(SkColorType colorType) cons
     return TextureInfos::MakeVulkan(info);
 }
 
+void VulkanCaps::initShaderCaps(const EnabledFeatures enabledFeatures, const uint32_t vendorID) {
+    // TODO(skbug.com/40045541): We must force std430 array stride when using SSBOs since SPIR-V
+    // generation cannot handle mixed array strides being passed into functions.
+    fShaderCaps->fForceStd430ArrayLayout =
+            fStorageBufferSupport && fResourceBindingReqs.fStorageBufferLayout == Layout::kStd430;
+
+    // Avoid RelaxedPrecision with OpImageSampleImplicitLod due to driver bug with YCbCr sampling.
+    // (skbug.com/421927604)
+    fShaderCaps->fCannotUseRelaxedPrecisionOnImageSample = vendorID == kNvidia_VkVendor;
+
+    fShaderCaps->fDualSourceBlendingSupport = enabledFeatures.fDualSrcBlend;
+}
+
 void VulkanCaps::initFormatTable(const skgpu::VulkanInterface* interface,
                                  VkPhysicalDevice physDev,
-                                 const VkPhysicalDeviceProperties& properties) {
+                                 const VkPhysicalDeviceProperties& properties,
+                                 const EnabledFeatures& enabledFeatures) {
     static_assert(std::size(kVkFormats) == VulkanCaps::kNumVkFormats,
                   "Size of VkFormats array must match static value in header");
 
@@ -1250,7 +1288,7 @@ void VulkanCaps::initFormatTable(const skgpu::VulkanInterface* interface,
         auto& info = this->getFormatInfo(format);
         info.init(interface, *this, physDev, format);
         if (info.isTexturable(VK_IMAGE_TILING_OPTIMAL)) {
-            info.fColorTypeInfoCount = 1;
+            info.fColorTypeInfoCount = 2;
             info.fColorTypeInfos = std::make_unique<ColorTypeInfo[]>(info.fColorTypeInfoCount);
             int ctIdx = 0;
             // Format: VK_FORMAT_R16_UNORM, Surface: kAlpha_16
@@ -1262,6 +1300,14 @@ void VulkanCaps::initFormatTable(const skgpu::VulkanInterface* interface,
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
                 ctInfo.fReadSwizzle = skgpu::Swizzle("000r");
                 ctInfo.fWriteSwizzle = skgpu::Swizzle("a000");
+            }
+            // Format: VK_FORMAT_R16_UNORM, Surface: kR16_unorm
+            {
+                constexpr SkColorType ct = SkColorType::kR16_unorm_SkColorType;
+                auto& ctInfo = info.fColorTypeInfos[ctIdx++];
+                ctInfo.fColorType = ct;
+                ctInfo.fTransferColorType = ct;
+                ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
             }
         }
     }
@@ -1426,34 +1472,59 @@ void VulkanCaps::initFormatTable(const skgpu::VulkanInterface* interface,
         }
     }
 
+    // Format: VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16
+    // Technically without this extension and enabled feature we could still use this format to
+    // sample with a ycbcr sampler. But for simplicity until we have clients requesting that, we
+    // limit the use of this format to cases where we have the extension supported.
+    if (enabledFeatures.fFormatRGBA10x6WithoutYCbCrSampler) {
+        constexpr VkFormat format = VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16;
+        auto& info = this->getFormatInfo(format);
+        info.init(interface, *this, physDev, format);
+        if (info.isTexturable(VK_IMAGE_TILING_OPTIMAL)) {
+            info.fColorTypeInfoCount = 1;
+            info.fColorTypeInfos = std::make_unique<ColorTypeInfo[]>(info.fColorTypeInfoCount);
+            int ctIdx = 0;
+            // Format: VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16, Surface: kRGBA_10x6
+            {
+                constexpr SkColorType ct = SkColorType::kRGBA_10x6_SkColorType;
+                auto& ctInfo = info.fColorTypeInfos[ctIdx++];
+                ctInfo.fColorType = ct;
+                ctInfo.fTransferColorType = ct;
+                ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
+            }
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // Map SkColorType (used for creating Surfaces) to VkFormats. The order in which the formats are
     // passed into the setColorType function indicates the priority in selecting which format we use
     // for a given SkColorType.
     typedef SkColorType ct;
 
-    this->setColorType(ct::kAlpha_8_SkColorType,            { VK_FORMAT_R8_UNORM });
-    this->setColorType(ct::kRGB_565_SkColorType,            { VK_FORMAT_R5G6B5_UNORM_PACK16 });
+    this->setColorType(ct::kAlpha_8_SkColorType,            { VK_FORMAT_R8_UNORM                 });
+    this->setColorType(ct::kRGB_565_SkColorType,            { VK_FORMAT_R5G6B5_UNORM_PACK16      });
     this->setColorType(ct::kARGB_4444_SkColorType,          { VK_FORMAT_R4G4B4A4_UNORM_PACK16,
-                                                              VK_FORMAT_B4G4R4A4_UNORM_PACK16 });
-    this->setColorType(ct::kRGBA_8888_SkColorType,          { VK_FORMAT_R8G8B8A8_UNORM });
+                                                              VK_FORMAT_B4G4R4A4_UNORM_PACK16    });
+    this->setColorType(ct::kRGBA_8888_SkColorType,          { VK_FORMAT_R8G8B8A8_UNORM           });
     this->setColorType(ct::kSRGBA_8888_SkColorType,         { VK_FORMAT_R8G8B8A8_SRGB,
-                                                              VK_FORMAT_B8G8R8A8_SRGB });
+                                                              VK_FORMAT_B8G8R8A8_SRGB            });
     this->setColorType(ct::kRGB_888x_SkColorType,           { VK_FORMAT_R8G8B8_UNORM,
-                                                              VK_FORMAT_R8G8B8A8_UNORM });
-    this->setColorType(ct::kR8G8_unorm_SkColorType,         { VK_FORMAT_R8G8_UNORM });
-    this->setColorType(ct::kBGRA_8888_SkColorType,          { VK_FORMAT_B8G8R8A8_UNORM });
+                                                              VK_FORMAT_R8G8B8A8_UNORM           });
+    this->setColorType(ct::kR8G8_unorm_SkColorType,         { VK_FORMAT_R8G8_UNORM               });
+    this->setColorType(ct::kBGRA_8888_SkColorType,          { VK_FORMAT_B8G8R8A8_UNORM           });
     this->setColorType(ct::kRGBA_1010102_SkColorType,       { VK_FORMAT_A2B10G10R10_UNORM_PACK32 });
     this->setColorType(ct::kBGRA_1010102_SkColorType,       { VK_FORMAT_A2R10G10B10_UNORM_PACK32 });
     this->setColorType(ct::kRGB_101010x_SkColorType,        { VK_FORMAT_A2B10G10R10_UNORM_PACK32 });
-    this->setColorType(ct::kGray_8_SkColorType,             { VK_FORMAT_R8_UNORM });
-    this->setColorType(ct::kA16_float_SkColorType,          { VK_FORMAT_R16_SFLOAT });
-    this->setColorType(ct::kRGBA_F16_SkColorType,           { VK_FORMAT_R16G16B16A16_SFLOAT });
-    this->setColorType(ct::kRGB_F16F16F16x_SkColorType,     { VK_FORMAT_R16G16B16A16_SFLOAT });
-    this->setColorType(ct::kA16_unorm_SkColorType,          { VK_FORMAT_R16_UNORM });
-    this->setColorType(ct::kR16G16_unorm_SkColorType,       { VK_FORMAT_R16G16_UNORM });
-    this->setColorType(ct::kR16G16B16A16_unorm_SkColorType, { VK_FORMAT_R16G16B16A16_UNORM });
-    this->setColorType(ct::kR16G16_float_SkColorType,       { VK_FORMAT_R16G16_SFLOAT });
+    this->setColorType(ct::kGray_8_SkColorType,             { VK_FORMAT_R8_UNORM                 });
+    this->setColorType(ct::kA16_float_SkColorType,          { VK_FORMAT_R16_SFLOAT               });
+    this->setColorType(ct::kRGBA_F16_SkColorType,           { VK_FORMAT_R16G16B16A16_SFLOAT      });
+    this->setColorType(ct::kRGB_F16F16F16x_SkColorType,     { VK_FORMAT_R16G16B16A16_SFLOAT      });
+    this->setColorType(ct::kA16_unorm_SkColorType,          { VK_FORMAT_R16_UNORM                });
+    this->setColorType(ct::kR16_unorm_SkColorType,          { VK_FORMAT_R16_UNORM                });
+    this->setColorType(ct::kR16G16_unorm_SkColorType,       { VK_FORMAT_R16G16_UNORM             });
+    this->setColorType(ct::kR16G16B16A16_unorm_SkColorType, { VK_FORMAT_R16G16B16A16_UNORM       });
+    this->setColorType(ct::kR16G16_float_SkColorType,       { VK_FORMAT_R16G16_SFLOAT            });
+    this->setColorType(ct::kRGBA_10x6_SkColorType,          { VK_FORMAT_R10X6G10X6B10X6A10X6_UNORM_4PACK16 });
 }
 
 namespace {
@@ -2166,7 +2237,7 @@ void VulkanCaps::buildKeyForTexture(SkISize dimensions,
     builder[i++] = dimensions.height();
 
     if (ycbcrInfo.isValid()) {
-        SkASSERT(ycbcrInfo.fFormat != VK_FORMAT_UNDEFINED || ycbcrInfo.fExternalFormat != 0);
+        SkASSERT(ycbcrInfo.format() != VK_FORMAT_UNDEFINED || ycbcrInfo.hasExternalFormat());
         ImmutableSamplerInfo packedInfo = VulkanYcbcrConversion::ToImmutableSamplerInfo(ycbcrInfo);
 
         builder[i++] = packedInfo.fNonFormatYcbcrConversionInfo;
@@ -2207,6 +2278,51 @@ ImmutableSamplerInfo VulkanCaps::getImmutableSamplerInfo(const TextureInfo& text
     // If the YCbCr conversion for the TextureInfo is invalid, then return a default
     // ImmutableSamplerInfo struct.
     return {};
+}
+
+static constexpr const char* vk_chromafilter_to_str(VkFilter f) {
+    switch (f) {
+        case VK_FILTER_NEAREST:   return "nearest";
+        case VK_FILTER_LINEAR:    return "linear";
+        case VK_FILTER_CUBIC_EXT: return "cubic";
+        default:                  return "unknown";
+    }
+    SkUNREACHABLE;
+}
+
+std::string VulkanCaps::toString(const ImmutableSamplerInfo& immutableSamplerInfo) const {
+    const skgpu::VulkanYcbcrConversionInfo info =
+            VulkanYcbcrConversion::FromImmutableSamplerInfo(immutableSamplerInfo);
+    if (!info.isValid()) {
+        return "";
+    }
+
+    std::string result;
+
+    if (info.hasExternalFormat()) {
+        result += 'x';
+        result += std::to_string(info.externalFormat());
+    } else {
+        result += std::to_string(info.format());
+    }
+
+    result += " ";
+    result += VkModelToStr(info.model());
+    result += "+";
+    result += VkRangeToStr(info.range());
+    result += info.xChromaOffset() ? " mid"  : " cos";  // midpoint or cosited-even
+    result += info.yChromaOffset() ? " mid " : " cos "; // midpoint or cosited-even
+    result += vk_chromafilter_to_str(info.chromaFilter());
+    result += info.forceExplicitReconstruction() ? " T " : " F ";
+    result += VkSwizzleToStr(info.components().r, 'r');
+    result += VkSwizzleToStr(info.components().g, 'g');
+    result += VkSwizzleToStr(info.components().b, 'b');
+    result += VkSwizzleToStr(info.components().a, 'a');
+    result += " cf";
+    result += info.samplerFilterMustMatchChromaFilter() ? '1' : '0';
+    result += "lf";
+    result += info.supportsLinearFilter() ? '1' : '0';
+    return result;
 }
 
 } // namespace skgpu::graphite

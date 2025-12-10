@@ -857,7 +857,7 @@ Object.defineProperty(String.prototype, "truncateStart",
 
         if (this.length <= maxLength)
             return this;
-        return ellipsis + this.substr(this.length - maxLength + 1);
+        return ellipsis + this.substring(this.length - maxLength + 1);
     }
 });
 

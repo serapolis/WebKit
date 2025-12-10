@@ -75,11 +75,11 @@ static bool isVerticalPiece(ImagePiece piece)
 }
 
 template<typename WidthValue>
-static LayoutUnit computeSlice(const WidthValue& length, LayoutUnit width, LayoutUnit slice, LayoutUnit extent)
+static LayoutUnit computeSlice(const WidthValue& length, LayoutUnit width, LayoutUnit slice, LayoutUnit extent, const Style::ZoomFactor&)
 {
     return WTF::switchOn(length,
         [&](const typename WidthValue::LengthPercentage& value) {
-            return Style::evaluate(value, extent, 1.0f /* FIXME ZOOM EFFECTED? */);
+            return Style::evaluate<LayoutUnit>(value, extent, Style::ZoomNeeded { });
         },
         [&](const typename WidthValue::Number& value) {
             return LayoutUnit { value.value * width };
@@ -91,13 +91,13 @@ static LayoutUnit computeSlice(const WidthValue& length, LayoutUnit width, Layou
 }
 
 template<typename WidthValues>
-static LayoutBoxExtent computeSlices(const LayoutSize& size, const WidthValues& widths, const FloatBoxExtent& borderWidths, const LayoutBoxExtent& slices)
+static LayoutBoxExtent computeSlices(const LayoutSize& size, const WidthValues& widths, const FloatBoxExtent& borderWidths, const LayoutBoxExtent& slices, const Style::ZoomFactor& zoom)
 {
     return {
-        computeSlice(widths.values.top(),    LayoutUnit(borderWidths.top()),    slices.top(),    size.height()),
-        computeSlice(widths.values.right(),  LayoutUnit(borderWidths.right()),  slices.right(),  size.width()),
-        computeSlice(widths.values.bottom(), LayoutUnit(borderWidths.bottom()), slices.bottom(), size.height()),
-        computeSlice(widths.values.left(),   LayoutUnit(borderWidths.left()),   slices.left(),   size.width()),
+        computeSlice(widths.values.top(),    LayoutUnit(borderWidths.top()),    slices.top(),    size.height(), zoom),
+        computeSlice(widths.values.right(),  LayoutUnit(borderWidths.right()),  slices.right(),  size.width(), zoom),
+        computeSlice(widths.values.bottom(), LayoutUnit(borderWidths.bottom()), slices.bottom(), size.height(), zoom),
+        computeSlice(widths.values.left(),   LayoutUnit(borderWidths.left()),   slices.left(),   size.width(), zoom),
     };
 }
 
@@ -105,10 +105,10 @@ template<typename SliceValues>
 static LayoutBoxExtent computeSlices(const LayoutSize& size, const SliceValues& slices, int scaleFactor)
 {
     return {
-        std::min(size.height(),  Style::evaluate(slices.values.top(),    size.height(), 1.0f /* FIXME ZOOM EFFECTED? */)) * scaleFactor,
-        std::min(size.width(),   Style::evaluate(slices.values.right(),  size.width(), 1.0f /* FIXME ZOOM EFFECTED? */))  * scaleFactor,
-        std::min(size.height(),  Style::evaluate(slices.values.bottom(), size.height(), 1.0f /* FIXME ZOOM EFFECTED? */)) * scaleFactor,
-        std::min(size.width(),   Style::evaluate(slices.values.left(),   size.width(), 1.0f /* FIXME ZOOM EFFECTED? */))  * scaleFactor,
+        std::min(size.height(),  Style::evaluate<LayoutUnit>(slices.values.top(),    size.height())) * scaleFactor,
+        std::min(size.width(),   Style::evaluate<LayoutUnit>(slices.values.right(),  size.width()))  * scaleFactor,
+        std::min(size.height(),  Style::evaluate<LayoutUnit>(slices.values.bottom(), size.height())) * scaleFactor,
+        std::min(size.width(),   Style::evaluate<LayoutUnit>(slices.values.left(),   size.width()))  * scaleFactor,
     };
 }
 
@@ -230,7 +230,7 @@ static void paintNinePieceImage(const T& ninePieceImage, GraphicsContext& graphi
     ASSERT(styleImage->isLoaded(renderer));
 
     auto sourceSlices      = computeSlices(source, ninePieceImage.slice(), styleImage->imageScaleFactor());
-    auto destinationSlices = computeSlices(destination.size(), ninePieceImage.width(), Style::evaluate(style.borderWidth(), 1.0f /* FIXME ZOOM EFFECTED? */), sourceSlices);
+    auto destinationSlices = computeSlices(destination.size(), ninePieceImage.width(), Style::evaluate<LayoutBoxExtent>(style.borderWidth(), Style::ZoomNeeded { }), sourceSlices, style.usedZoomForLength());
 
     scaleSlicesIfNeeded(destination.size(), destinationSlices, deviceScaleFactor);
 
@@ -239,7 +239,7 @@ static void paintNinePieceImage(const T& ninePieceImage, GraphicsContext& graphi
 
     auto tileScales = computeTileScales(destinationRects, sourceRects, ninePieceImage.repeat().horizontalRule(), ninePieceImage.repeat().verticalRule());
 
-    RefPtr image = styleImage->image(renderer, source);
+    RefPtr image = styleImage->image(renderer, source, graphicsContext);
     if (!image)
         return;
 

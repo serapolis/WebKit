@@ -58,8 +58,8 @@ public:
 #if USE(GBM)
         BackedByDMABuf = 1 << 2,
         ForceLinearBuffer = 1 << 3,
+        ForceVivanteSuperTiledBuffer = 1 << 4,
 #endif
-        UseNearestTextureFilter = 1 << 4
     };
 
     static Ref<BitmapTexture> create(const IntSize& size, OptionSet<Flags> flags = { })
@@ -105,6 +105,9 @@ public:
 
 #if USE(GBM)
     MemoryMappedGPUBuffer* memoryMappedGPUBuffer() const { return m_memoryMappedGPUBuffer.get(); }
+    IntSize allocatedSize() const;
+#else
+    IntSize allocatedSize() const { return m_size; }
 #endif
 
 private:

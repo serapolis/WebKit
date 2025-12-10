@@ -115,6 +115,7 @@ public:
     bool isAccessibilityNodeObject() const override { return false; }
     bool isAccessibilityRenderObject() const override { return false; }
     virtual bool isAccessibilityScrollbar() const { return false; }
+    bool isAXLocalFrame() const override { return false; }
     bool isAXRemoteFrame() const override { return false; }
     virtual bool isAccessibilityScrollViewInstance() const { return false; }
     virtual bool isAccessibilitySVGRoot() const { return false; }
@@ -236,7 +237,7 @@ public:
     bool isVisited() const final;
     bool isRequired() const override { return false; }
     bool isExpanded() const final;
-    bool isVisible() const override;
+    inline bool isVisible() const override;
     virtual bool isCollapsed() const { return false; }
     void setIsExpanded(bool) override { }
     FloatRect unobscuredContentRect() const;
@@ -272,7 +273,7 @@ public:
     Element* element() const final;
     Node* node() const override { return nullptr; }
     RenderObject* renderer() const override { return nullptr; }
-    RenderObject* rendererOrNearestAncestor() const;
+    CheckedPtr<RenderObject> rendererOrNearestAncestor() const;
     // Resolves the computed style if necessary (and safe to do so).
     const RenderStyle* style() const;
 
@@ -346,6 +347,7 @@ public:
     virtual AccessibilityObject* elementAccessibilityHitTest(const IntPoint&) const;
 
     AccessibilityObject* focusedUIElement() const final;
+    AccessibilityObject* focusedUIElementInAnyLocalFrame() const final;
 
     virtual AccessibilityObject* firstChild() const { return nullptr; }
     virtual AccessibilityObject* lastChild() const { return nullptr; }
@@ -359,6 +361,11 @@ public:
     static AccessibilityObject* firstAccessibleObjectFromNode(const Node*);
     AccessibilityChildrenVector findMatchingObjects(AccessibilitySearchCriteria&&) final;
     virtual bool isDescendantOfBarrenParent() const { return false; }
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    AccessibilityObject* crossFrameParentObject() const override { return nullptr; }
+    AccessibilityObject* crossFrameChildObject() const override { return nullptr; }
+#endif
 
     bool isDescendantOfRole(AccessibilityRole) const final;
 
@@ -401,6 +408,7 @@ public:
 
     // Methods for determining accessibility text.
     bool isARIAStaticText() const { return ariaRoleAttribute() == AccessibilityRole::StaticText; }
+    virtual Vector<AXStitchGroup> stitchGroups() const { return { }; }
     // Whether this object should cache a string value when an isolated object is created for it.
     bool shouldCacheStringValue() const;
     String stringValue() const override { return { }; }
@@ -747,7 +755,7 @@ public:
 
     // Visibility.
     bool isAXHidden() const;
-    inline bool isRenderHidden() const;
+    bool isRenderHidden() const;
     inline bool isHidden() const;
     bool isOnScreen() const final;
 
@@ -774,7 +782,7 @@ public:
 #if PLATFORM(COCOA)
     bool preventKeyboardDOMEventDispatch() const final;
     void setPreventKeyboardDOMEventDispatch(bool) final;
-    OptionSet<SpeakAs> speakAs() const final;
+    Style::SpeakAs speakAs() const final;
     bool hasApplePDFAnnotationAttribute() const final { return hasAttribute(HTMLNames::x_apple_pdf_annotationAttr); }
 #endif
 
@@ -787,7 +795,9 @@ public:
 #endif // PLATFORM(MAC)
 
     bool hasClickHandler() const override { return false; }
-    bool hasCursorPointer() const override { return false; };
+    bool hasCursorPointer() const override { return false; }
+    bool hasPointerEventsNone() const override { return false; }
+    bool showsCursorOnHover() const override { return false; }
     AccessibilityObject* clickableSelfOrAncestor(ClickHandlerFilter filter = ClickHandlerFilter::ExcludeBody) const final { return Accessibility::clickableSelfOrAncestor(*this, filter); };
     AccessibilityObject* focusableAncestor() final { return Accessibility::focusableAncestor(*this); }
     AccessibilityObject* editableAncestor() const final { return Accessibility::editableAncestor(*this); };
@@ -809,8 +819,8 @@ public:
     String innerHTML() const final;
     String outerHTML() const final;
 
-#if PLATFORM(COCOA) && ENABLE(MODEL_ELEMENT)
-    Vector<RetainPtr<id>> modelElementChildren() final;
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+    ModelPlayerAccessibilityChildren modelElementChildren() final;
 #endif
 
 #if PLATFORM(IOS_FAMILY)

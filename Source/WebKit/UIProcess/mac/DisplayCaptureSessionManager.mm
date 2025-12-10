@@ -64,7 +64,7 @@ void DisplayCaptureSessionManager::alertForGetDisplayMedia(WebPageProxy& page, c
     if (!visibleOrigin)
         visibleOrigin = applicationVisibleName();
 
-    RetainPtr alertTitle = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to observe one of your windows or screens?", "Message for window and screen sharing prompt"), visibleOrigin.get()]);
+    SUPPRESS_UNRETAINED_ARG RetainPtr alertTitle = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to observe one of your windows or screens?", "Message for window and screen sharing prompt"), visibleOrigin.get()]);
     RetainPtr<NSString> allowWindowButtonString = WEB_UI_NSSTRING(@"Allow to Share Window", "Allow window button title in window and screen sharing prompt");
     RetainPtr<NSString> allowScreenButtonString = WEB_UI_NSSTRING(@"Allow to Share Screen", "Allow screen button title in window and screen sharing prompt");
     RetainPtr<NSString> doNotAllowButtonString = WEB_UI_NSSTRING_KEY(@"Don’t Allow", @"Don’t Allow (window and screen sharing)", "Disallow button title in window and screen sharing prompt");
@@ -81,7 +81,7 @@ void DisplayCaptureSessionManager::alertForGetDisplayMedia(WebPageProxy& page, c
     button = [alert addButtonWithTitle:doNotAllowButtonString.get()];
     button.get().keyEquivalent = @"\E";
 
-    [alert beginSheetModalForWindow:[webView window] completionHandler:[completionBlock = makeBlockPtr(WTFMove(completionHandler))](NSModalResponse returnCode) {
+    [alert beginSheetModalForWindow:retainPtr([webView window]).get() completionHandler:[completionBlock = makeBlockPtr(WTFMove(completionHandler))](NSModalResponse returnCode) {
         DisplayCaptureSessionManager::CaptureSessionType result = DisplayCaptureSessionManager::CaptureSessionType::None;
         switch (returnCode) {
         case NSAlertFirstButtonReturn:

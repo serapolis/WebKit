@@ -69,6 +69,8 @@ public:
     bool isExposableTable() const final { return boolAttributeValue(AXProperty::IsExposableTable); }
     bool hasClickHandler() const final { return boolAttributeValue(AXProperty::HasClickHandler); }
     bool hasCursorPointer() const final { return boolAttributeValue(AXProperty::HasCursorPointer);  }
+    bool hasPointerEventsNone() const final { return boolAttributeValue(AXProperty::HasPointerEventsNone);  }
+    bool showsCursorOnHover() const final { return boolAttributeValue(AXProperty::ShowsCursorOnHover); }
     FloatRect relativeFrame() const final;
 
     bool hasAttachmentTag() const final { return elementName() == ElementName::HTML_attachment; }
@@ -91,6 +93,12 @@ public:
     AttributedStringStyle stylesForAttributedString() const final;
     Color textColor() const final { return colorAttributeValue(AXProperty::TextColor); }
 
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    // Returns the child or parent object that crosses a local frame boundary.
+    AXIsolatedObject* crossFrameParentObject() const final;
+    AXIsolatedObject* crossFrameChildObject() const final;
+#endif
+
 #if ENABLE(AX_THREAD_TEXT_APIS)
     const AXTextRuns* textRuns() const;
     bool hasTextRuns() final
@@ -103,6 +111,8 @@ public:
     String listMarkerText() const final { return stringAttributeValue(AXProperty::ListMarkerText); }
     FontOrientation fontOrientation() const final { return propertyValue<FontOrientation>(AXProperty::FontOrientation); }
 #endif // ENABLE(AX_THREAD_TEXT_APIS)
+
+    String description() const final { return stringAttributeValue(AXProperty::Description); }
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     bool isIgnored() const final { return boolAttributeValue(AXProperty::IsIgnored); }
@@ -176,10 +186,10 @@ private:
     URL urlAttributeValue(AXProperty) const;
     uint64_t uint64AttributeValue(AXProperty) const;
     Path pathAttributeValue(AXProperty) const;
+    Style::SpeakAs speakAsAttributeValue(AXProperty) const;
     std::pair<unsigned, unsigned> indexRangePairAttributeValue(AXProperty) const;
     template<typename T> T rectAttributeValue(AXProperty) const;
     template<typename T> Vector<T> vectorAttributeValue(AXProperty) const;
-    template<typename T> OptionSet<T> optionSetAttributeValue(AXProperty) const;
     template<typename T> std::optional<T> optionalAttributeValue(AXProperty) const;
     template<typename T> T propertyValue(AXProperty) const;
 
@@ -202,8 +212,8 @@ private:
     void insertMathPairs(Vector<std::pair<Markable<AXID>, Markable<AXID>>>&, AccessibilityMathMultiscriptPairs&);
     template<typename U> void performFunctionOnMainThreadAndWait(U&& lambda) const
     {
-        Accessibility::performFunctionOnMainThreadAndWait([&lambda, this] {
-            if (RefPtr object = associatedAXObject())
+        Accessibility::performFunctionOnMainThreadAndWait([&lambda, context = mainThreadContext()] {
+            if (RefPtr object = context.axObjectOnMainThread())
                 lambda(object.get());
         });
     }
@@ -329,7 +339,14 @@ private:
     bool isHiddenUntilFoundContainer() const final { return boolAttributeValue(AXProperty::IsHiddenUntilFoundContainer); }
     Vector<String> determineDropEffects() const final;
     AXIsolatedObject* accessibilityHitTest(const IntPoint&) const final;
-    AXIsolatedObject* focusedUIElement() const final;
+    AXIsolatedObject* focusedUIElement() const final
+    {
+        return tree()->focusedNode().unsafeGet();
+    }
+    AXIsolatedObject* focusedUIElementInAnyLocalFrame() const final
+    {
+        return tree()->focusedNode().unsafeGet();
+    }
     AXIsolatedObject* internalLinkElement() const final { return objectAttributeValue(AXProperty::InternalLinkElement); }
     AccessibilityChildrenVector radioButtonGroup() const final { return tree()->objectsForIDs(vectorAttributeValue<AXID>(AXProperty::RadioButtonGroupMembers)); }
     AXIsolatedObject* scrollBar(AccessibilityOrientation) final;
@@ -383,7 +400,7 @@ private:
     void mathPrescripts(AccessibilityMathMultiscriptPairs&) final;
     void mathPostscripts(AccessibilityMathMultiscriptPairs&) final;
 #if PLATFORM(COCOA)
-    OptionSet<SpeakAs> speakAs() const final { return optionSetAttributeValue<SpeakAs>(AXProperty::SpeakAs); }
+    Style::SpeakAs speakAs() const final { return speakAsAttributeValue(AXProperty::SpeakAs); }
 #endif
 #if PLATFORM(MAC)
     bool caretBrowsingEnabled() const final { return boolAttributeValue(AXProperty::CaretBrowsingEnabled); }
@@ -502,6 +519,7 @@ private:
     // Functions that should never be called on an isolated tree object. ASSERT that these are not reached;
     bool isAccessibilityRenderObject() const final;
     bool isAccessibilityNodeObject() const final;
+    bool isAXLocalFrame() const final { return false; }
     bool isAXRemoteFrame() const final { return false; }
     bool isNativeTextControl() const final;
     bool isMockObject() const final;
@@ -540,9 +558,11 @@ private:
     String textContentPrefixFromListMarker() const final;
     String webAreaTitle() const final { return stringAttributeValue(AXProperty::WebAreaTitle); }
     String titleAttribute() const final { return stringAttributeValue(AXProperty::TitleAttribute); }
-    String description() const final { return stringAttributeValue(AXProperty::Description); }
 
     std::optional<String> textContent() const final;
+    bool isBlockFlow() const final { return boolAttributeValue(AXProperty::IsBlockFlow); }
+    std::optional<AXStitchGroup> stitchGroup(IncludeGroupMembers = IncludeGroupMembers::Yes) const final;
+    const Vector<AXStitchGroup>* stitchGroupsView() const;
 
     String text() const final;
     unsigned textLength() const final;
@@ -585,8 +605,8 @@ private:
 #endif
     bool hasRemoteFrameChild() const final { return boolAttributeValue(AXProperty::HasRemoteFrameChild); }
 
-#if PLATFORM(COCOA) && ENABLE(MODEL_ELEMENT)
-    Vector<RetainPtr<id>> modelElementChildren() final;
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+    ModelPlayerAccessibilityChildren modelElementChildren() final;
 #endif
 
     void updateBackingStore() final;
@@ -597,6 +617,34 @@ private:
 #ifndef NDEBUG
     void verifyChildrenIndexInParent() const final { return AXCoreObject::verifyChildrenIndexInParent(m_children); }
 #endif
+
+    class MainThreadContext {
+    // Contains context necessary to get an AXIsolatedObject's main-thread equivalent AccessibilityObject.
+
+    public:
+        MainThreadContext() = delete;
+
+        explicit MainThreadContext(Ref<AXIsolatedTree> tree, AXID axID)
+            : m_tree(WTFMove(tree))
+            , m_axID(axID)
+        { }
+
+        RefPtr<AccessibilityObject> axObjectOnMainThread() const
+        {
+            ASSERT(isMainThread());
+
+            auto* cache = m_tree->axObjectCache();
+            return cache ? cache->objectForID(m_axID) : nullptr;
+        }
+
+    private:
+        // Ref'ing AXIsolatedTree is OK because AXIsolatedTree is ThreadSafeRefCounted.
+        Ref<AXIsolatedTree> m_tree;
+        // The object ID to hydrate into an AccessibilityObject on the main-thread.
+        AXID m_axID;
+    }; // class MainThreadContext
+
+    MainThreadContext mainThreadContext() const { return MainThreadContext { *tree(), objectID() }; }
 
     // IDs that haven't been resolved into actual objects in m_children.
     FixedVector<AXID> m_unresolvedChildrenIDs;

@@ -47,6 +47,7 @@
 #include "JSInternalPromise.h"
 #include "JSInternalPromiseConstructor.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
 #include "JSWebAssemblyInstance.h"
 #include "MathCommon.h"
 #include "NumberConstructor.h"
@@ -1663,6 +1664,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case MapStorage:
+        setTypeForNode(node, SpecCellOther | SpecEmpty);
+        break;
+
     case MapStorageOrSentinel:
     case MapIterationNext:
         setTypeForNode(node, SpecCellOther);
@@ -3077,7 +3081,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case PutByValDirect:
     case PutByVal:
-    case PutByValAlias:
+    case PutByValDirectResolved:
     case PutByValMegamorphic: {
         switch (node->arrayMode().modeForPut().type()) {
         case Array::ForceExit:
@@ -3623,7 +3627,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         }
 
         clobberWorld();
-        makeHeapTopForNode(node);
+        setTypeForNode(node, SpecObject);
         break;
     }
 
@@ -3721,9 +3725,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case MaterializeNewArrayWithButterfly: {
+#if ASSERT_ENABLED
         SpeculatedType validTypes = [&]() {
             switch (node->indexingType()) {
-            case ALL_INT32_INDEXING_TYPES: return SpecInt32Only;
+            // We can get JSValue() (aka SpecEmpty) when the property hasn't been initialized yet and is still a hole.
+            case ALL_INT32_INDEXING_TYPES: return SpecInt32Only | SpecEmpty;
             case ALL_DOUBLE_INDEXING_TYPES: return SpecBytecodeNumber;
             case ALL_CONTIGUOUS_INDEXING_TYPES: return SpecBytecodeTop;
             default: break;
@@ -3731,8 +3737,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             RELEASE_ASSERT_NOT_REACHED();
         }();
         for (unsigned i = 2; i < node->numChildren(); ++i)
-            RELEASE_ASSERT(isSubtypeSpeculation(forNode(m_graph.varArgChild(node, i)).m_type, validTypes));
-
+            ASSERT(isSubtypeSpeculation(forNode(m_graph.varArgChild(node, i)).m_type, validTypes));
+#endif
         [[fallthrough]];
     }
     case NewArrayWithButterfly: {
@@ -4350,6 +4356,24 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
                     if (attemptToFold(m_vm.propertyNames->replaceSymbol.impl(), globalObject->regExpProtoSymbolReplaceFunction()))
                         break;
+                }
+                if (structure->typeInfo().type() == JSPromiseType
+                    && !structure->hasPolyProto()
+                    && structure->storedPrototype() == globalObject->promisePrototype()
+                    && !structure->isDictionary()
+                    && structure->propertyAccessesAreCacheable()
+                    && structure->propertyAccessesAreCacheableForAbsence()
+                    && m_graph.isWatchingPromiseThenWatchpoint(node)) {
+                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
+                    if (uid == m_vm.propertyNames->then.impl()) {
+                        unsigned attributes;
+                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
+                        if (!isValidOffset(offset)) {
+                            didFoldClobberWorld();
+                            setConstant(node, *m_graph.freeze(globalObject->promiseProtoThenFunction()));
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -5721,7 +5745,99 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case DataViewSet: {
         break;
     }
-        
+
+    case ResolvePromiseFirstResolving:
+    case RejectPromiseFirstResolving:
+    case FulfillPromiseFirstResolving: {
+        clobberWorld();
+        break;
+    }
+
+    case PromiseResolve: {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+        if (JSValue constructor = forNode(node->child1()).m_value) {
+            if (constructor == globalObject->promiseConstructor()) {
+                auto& argument = forNode(node->child2());
+                if (argument.isType(~SpecObject)) {
+                    didFoldClobberWorld();
+                    setForNode(node, globalObject->promiseStructure());
+                    break;
+                }
+
+                if (argument.isType(SpecPromiseObject)) {
+                    if (m_graph.isWatchingPromiseSpeciesWatchpoint(node)) {
+                        didFoldClobberWorld();
+                        forNode(node) = argument;
+                        break;
+                    }
+                }
+
+                if (argument.isType(~SpecPromiseObject)) {
+                    // SpecObject | something.
+                    // Only for types having structures, we check "then" existence.
+                    auto& structureSet = argument.m_structure;
+                    if (structureSet.isFinite() && structureSet.size() == 1) {
+                        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+                        auto conditionSet = m_graph.tryEnsureAbsence(globalObject, structureSet.toStructureSet(), CacheableIdentifier::createFromImmortalIdentifier(m_graph.m_vm.propertyNames->then.impl()));
+                        if (conditionSet.isValid()) {
+                            if (m_graph.watchConditions(conditionSet)) {
+                                didFoldClobberWorld();
+                                setForNode(node, globalObject->promiseStructure());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                clobberWorld();
+                setTypeForNode(node, SpecPromiseObject);
+                break;
+            }
+        }
+
+        clobberWorld();
+        setTypeForNode(node, SpecObject);
+        break;
+    }
+
+    case PromiseReject: {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+        if (JSValue constructor = forNode(node->child1()).m_value) {
+            if (constructor == globalObject->promiseConstructor()) {
+                clobberWorld();
+                setForNode(node, globalObject->promiseStructure());
+                break;
+            }
+        }
+
+        clobberWorld();
+        setTypeForNode(node, SpecObject);
+        break;
+    }
+
+    case PromiseThen: {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+        auto& promise = forNode(node->child1());
+        if (promise.isType(SpecPromiseObject)) {
+            auto& structureSet = promise.m_structure;
+            if (structureSet.isFinite()) {
+                if (auto structure = structureSet.onlyStructure()) {
+                    if (structure.get() == globalObject->promiseStructure()) {
+                        if (m_graph.isWatchingPromiseSpeciesWatchpoint(node)) {
+                            clobberWorld();
+                            setForNode(node, globalObject->promiseStructure());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        clobberWorld();
+        setTypeForNode(node, SpecObject);
+        break;
+    }
+
     case Unreachable:
         // It may be that during a previous run of AI we proved that something was unreachable, but
         // during this run of AI we forget that it's unreachable. AI's proofs don't have to get

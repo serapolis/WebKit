@@ -24,7 +24,8 @@
 
 #pragma once
 
-#include <WebCore/Length.h>
+#include <WebCore/StyleCalculationValue.h>
+#include <WebCore/StyleZoomPrimitives.h>
 
 namespace WebCore {
 namespace Style {
@@ -47,11 +48,7 @@ enum class LengthWrapperDataEvaluationKind : uint8_t {
 struct LengthWrapperData {
     LengthWrapperData(uint8_t opaqueType);
     LengthWrapperData(uint8_t opaqueType, float value, bool hasQuirk = false);
-    WEBCORE_EXPORT explicit LengthWrapperData(uint8_t opaqueType, Ref<CalculationValue>&&);
-
-    // Special constructor for use by LengthWrapperBase when constructing a calculation value from a WebCore::Length.
-    struct LengthCalculation { WebCore::Length length; };
-    WEBCORE_EXPORT explicit LengthWrapperData(uint8_t opaqueType, LengthCalculation&&);
+    WEBCORE_EXPORT explicit LengthWrapperData(uint8_t opaqueType, Ref<Calculation::Value>&&);
 
     explicit LengthWrapperData(WTF::HashTableEmptyValueType);
     explicit LengthWrapperData(WTF::HashTableDeletedValueType);
@@ -69,8 +66,8 @@ struct LengthWrapperData {
     bool hasQuirk() const { return m_hasQuirk; }
 
     float value() const { ASSERT(m_kind != LengthWrapperDataKind::Calculation); return m_floatValue; }
-    CalculationValue& calculationValue() const;
-    Ref<CalculationValue> protectedCalculationValue() const;
+    Calculation::Value& calculationValue() const;
+    Ref<Calculation::Value> protectedCalculationValue() const;
 
     struct IPCData {
         float value;
@@ -80,17 +77,27 @@ struct LengthWrapperData {
     WEBCORE_EXPORT LengthWrapperData(IPCData&&);
     WEBCORE_EXPORT IPCData ipcData() const;
 
-    bool isZero() const;
-    bool isPositive() const;
-    bool isNegative() const;
+    bool isKnownZero(LengthWrapperDataEvaluationKind) const;
+    bool isKnownPositive(LengthWrapperDataEvaluationKind) const;
+    bool isKnownNegative(LengthWrapperDataEvaluationKind) const;
+
+    bool isPossiblyZero(LengthWrapperDataEvaluationKind) const;
+    bool isPossiblyPositive(LengthWrapperDataEvaluationKind) const;
+    bool isPossiblyNegative(LengthWrapperDataEvaluationKind) const;
 
     template<typename ReturnType, typename MaximumType>
-    ReturnType minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, float zoom) const;
+    ReturnType minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomNeeded) const;
     template<typename ReturnType, typename MaximumType>
-    ReturnType valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, float zoom) const;
+    ReturnType minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomFactor) const;
+
+    template<typename ReturnType, typename MaximumType>
+    ReturnType valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomNeeded) const;
+    template<typename ReturnType, typename MaximumType>
+    ReturnType valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomFactor) const;
 
 private:
-    WEBCORE_EXPORT float nonNanCalculatedValue(float maxValue) const;
+    WEBCORE_EXPORT float nonNanCalculatedValue(float maxValue, const ZoomFactor& usedZoom) const;
+    WEBCORE_EXPORT float nonNanCalculatedValue(float maxValue, const ZoomNeeded&) const;
     bool isCalculatedEqual(const LengthWrapperData&) const;
 
     void initialize(const LengthWrapperData&);
@@ -224,40 +231,61 @@ inline bool LengthWrapperData::operator==(const LengthWrapperData& other) const
     return value() == other.value();
 }
 
-inline bool LengthWrapperData::isPositive() const
+inline bool LengthWrapperData::isKnownZero(LengthWrapperDataEvaluationKind evaluationKind) const
 {
-    if (m_kind == LengthWrapperDataKind::Calculation)
-        return true;
-    return m_floatValue > 0;
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return !m_floatValue;
+    return false;
 }
 
-inline bool LengthWrapperData::isNegative() const
+inline bool LengthWrapperData::isKnownPositive(LengthWrapperDataEvaluationKind evaluationKind) const
 {
-    if (m_kind == LengthWrapperDataKind::Calculation)
-        return false;
-    return m_floatValue < 0;
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return m_floatValue > 0;
+    return false;
 }
 
-inline bool LengthWrapperData::isZero() const
+inline bool LengthWrapperData::isKnownNegative(LengthWrapperDataEvaluationKind evaluationKind) const
 {
-    if (m_kind == LengthWrapperDataKind::Calculation)
-        return false;
-    return !m_floatValue;
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return m_floatValue < 0;
+    return false;
+}
+
+inline bool LengthWrapperData::isPossiblyZero(LengthWrapperDataEvaluationKind evaluationKind) const
+{
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return !m_floatValue;
+    return true;
+}
+
+inline bool LengthWrapperData::isPossiblyPositive(LengthWrapperDataEvaluationKind evaluationKind) const
+{
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return m_floatValue > 0;
+    return true;
+}
+
+inline bool LengthWrapperData::isPossiblyNegative(LengthWrapperDataEvaluationKind evaluationKind) const
+{
+    if (evaluationKind == LengthWrapperDataEvaluationKind::Fixed || evaluationKind == LengthWrapperDataEvaluationKind::Percentage)
+        return m_floatValue < 0;
+    return true;
 }
 
 template<typename ReturnType, typename MaximumType>
-ReturnType LengthWrapperData::minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, float zoom) const
+ReturnType LengthWrapperData::minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomNeeded token) const
 {
     switch (evaluationKind) {
     case LengthWrapperDataEvaluationKind::Fixed:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
-        return ReturnType(m_floatValue * zoom);
+        return ReturnType(m_floatValue);
     case LengthWrapperDataEvaluationKind::Percentage:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
         return ReturnType(static_cast<float>(lazyMaximumValueFunctor() * m_floatValue / 100.0f));
     case LengthWrapperDataEvaluationKind::Calculation:
         ASSERT(m_kind == LengthWrapperDataKind::Calculation);
-        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor()));
+        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor(), token));
     case LengthWrapperDataEvaluationKind::Flag:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
         return ReturnType(0);
@@ -267,18 +295,60 @@ ReturnType LengthWrapperData::minimumValueForLengthWrapperDataWithLazyMaximum(Le
 }
 
 template<typename ReturnType, typename MaximumType>
-ReturnType LengthWrapperData::valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, float zoom) const
+ReturnType LengthWrapperData::minimumValueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomFactor zoom) const
 {
     switch (evaluationKind) {
     case LengthWrapperDataEvaluationKind::Fixed:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
-        return ReturnType(m_floatValue * zoom);
+        return ReturnType(m_floatValue * zoom.value);
     case LengthWrapperDataEvaluationKind::Percentage:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
         return ReturnType(static_cast<float>(lazyMaximumValueFunctor() * m_floatValue / 100.0f));
     case LengthWrapperDataEvaluationKind::Calculation:
         ASSERT(m_kind == LengthWrapperDataKind::Calculation);
-        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor()));
+        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor(), zoom));
+    case LengthWrapperDataEvaluationKind::Flag:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(0);
+    }
+    ASSERT_NOT_REACHED();
+    return ReturnType(0);
+}
+
+template<typename ReturnType, typename MaximumType>
+ReturnType LengthWrapperData::valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomNeeded token) const
+{
+    switch (evaluationKind) {
+    case LengthWrapperDataEvaluationKind::Fixed:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(m_floatValue);
+    case LengthWrapperDataEvaluationKind::Percentage:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(static_cast<float>(lazyMaximumValueFunctor() * m_floatValue / 100.0f));
+    case LengthWrapperDataEvaluationKind::Calculation:
+        ASSERT(m_kind == LengthWrapperDataKind::Calculation);
+        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor(), token));
+    case LengthWrapperDataEvaluationKind::Flag:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(lazyMaximumValueFunctor());
+    }
+    ASSERT_NOT_REACHED();
+    return ReturnType(0);
+}
+
+template<typename ReturnType, typename MaximumType>
+ReturnType LengthWrapperData::valueForLengthWrapperDataWithLazyMaximum(LengthWrapperDataEvaluationKind evaluationKind, NOESCAPE const Invocable<MaximumType()> auto& lazyMaximumValueFunctor, ZoomFactor zoom) const
+{
+    switch (evaluationKind) {
+    case LengthWrapperDataEvaluationKind::Fixed:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(m_floatValue * zoom.value);
+    case LengthWrapperDataEvaluationKind::Percentage:
+        ASSERT(m_kind == LengthWrapperDataKind::Default);
+        return ReturnType(static_cast<float>(lazyMaximumValueFunctor() * m_floatValue / 100.0f));
+    case LengthWrapperDataEvaluationKind::Calculation:
+        ASSERT(m_kind == LengthWrapperDataKind::Calculation);
+        return ReturnType(nonNanCalculatedValue(lazyMaximumValueFunctor(), zoom));
     case LengthWrapperDataEvaluationKind::Flag:
         ASSERT(m_kind == LengthWrapperDataKind::Default);
         return ReturnType(lazyMaximumValueFunctor());

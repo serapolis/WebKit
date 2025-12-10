@@ -30,6 +30,8 @@
 #include "RenderGrid.h"
 #include "RenderStyleInlines.h"
 #include "StyleGridPositionsResolver.h"
+#include "StyleItemTolerance.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "WritingMode.h"
 
 namespace WebCore {
@@ -71,7 +73,8 @@ void GridMasonryLayout::resizeAndResetRunningPositions()
 
 void GridMasonryLayout::placeMasonryItems(const GridTrackSizingAlgorithm& algorithm, GridMasonryLayout::MasonryLayoutPhase layoutPhase)
 {
-    ASSERT(m_gridAxisTracksCount);
+    if (!m_gridAxisTracksCount)
+        return;
 
     auto& grid = m_renderGrid->currentGrid();
     for (CheckedPtr gridItem = grid.orderIterator().first(); gridItem; gridItem = grid.orderIterator().next()) {
@@ -179,7 +182,7 @@ void GridMasonryLayout::updateRunningPositions(const RenderBox& gridItem, const 
     m_gridContentSize = std::max(m_gridContentSize, newRunningPosition - m_masonryAxisGridGap);
 
     for (auto span : gridAxisSpan)
-        m_runningPositions[span] = std::max(m_runningPositions[span], newRunningPosition);
+        m_runningPositions[span] = newRunningPosition;
 
     updateItemOffset(gridItem, previousRunningPosition);
 }
@@ -190,21 +193,83 @@ void GridMasonryLayout::updateItemOffset(const RenderBox& gridItem, LayoutUnit o
     m_itemOffsets.set(gridItem, offset);
 }
 
+LayoutUnit GridMasonryLayout::maxRunningPositionForSpan(unsigned startLine, unsigned spanLength) const
+{
+    LayoutUnit maxPosition;
+    for (unsigned lineOffset = 0; lineOffset < spanLength; lineOffset++)
+        maxPosition = std::max(maxPosition, m_runningPositions[startLine + lineOffset]);
+    return maxPosition;
+}
+
 GridArea GridMasonryLayout::gridAreaForIndefiniteGridAxisItem(const RenderBox& item)
 {
     auto itemSpanLength = Style::GridPositionsResolver::spanSizeForAutoPlacedItem(item, gridAxisDirection());
-    auto smallestMaxPos = LayoutUnit::max();
-    unsigned smallestMaxPosLine = 0;
     auto gridAxisLines = m_gridAxisTracksCount + 1;
-    for (unsigned startingLine = 0; startingLine < gridAxisLines - itemSpanLength; startingLine++) {
-        LayoutUnit maxPosForCurrentStartingLine;
-        for (unsigned lineOffset = 0; lineOffset < itemSpanLength; lineOffset++)
-            maxPosForCurrentStartingLine = std::max(maxPosForCurrentStartingLine, m_runningPositions[startingLine + lineOffset]);
-        if (maxPosForCurrentStartingLine < smallestMaxPos) {
-            smallestMaxPos = maxPosForCurrentStartingLine;
-            smallestMaxPosLine = startingLine;
-        } 
+
+    // Get item-tolerance from the masonry container's style
+    const auto& tolerance = m_renderGrid->style().itemTolerance();
+
+    if (tolerance.isInfinite()) {
+        // Infinite tolerance: place items strictly in order without considering track lengths
+        // Use round-robin placement starting from the cursor position
+        auto startingLine = m_autoFlowNextCursor;
+
+        // If the item doesn't fit at the cursor position, wrap to the beginning
+        if (startingLine + itemSpanLength > m_gridAxisTracksCount)
+            startingLine = 0;
+
+        auto gridAxisPosition = GridSpan::translatedDefiniteGridSpan(startingLine, startingLine + itemSpanLength);
+        return masonryGridAreaFromGridAxisSpan(gridAxisPosition);
     }
+
+    // For normal and length-percentage tolerances, find positions within tolerance of the shortest track
+    // Calculate tolerance value
+    auto contentBoxSize = gridAxisDirection() == Style::GridTrackSizingDirection::Columns
+        ? m_renderGrid->contentBoxLogicalHeight()
+        : m_renderGrid->contentBoxLogicalWidth();
+
+    LayoutUnit toleranceValue = tolerance.switchOn(
+        [&](const CSS::Keyword::Normal&) -> LayoutUnit {
+            // Normal resolves to 1em
+            return LayoutUnit { m_renderGrid->checkedStyle()->computedFontSize() };
+        },
+        [&](const typename Style::ItemTolerance::Fixed& fixed) -> LayoutUnit {
+            return LayoutUnit { fixed.resolveZoom(m_renderGrid->style().usedZoomForLength()) };
+        },
+        [&](const typename Style::ItemTolerance::Percentage& percentage) -> LayoutUnit {
+            return Style::evaluate<LayoutUnit>(percentage, contentBoxSize);
+        },
+        [&](const typename Style::ItemTolerance::Calc& calc) -> LayoutUnit {
+            return Style::evaluate<LayoutUnit>(calc, contentBoxSize, m_renderGrid->style().usedZoomForLength());
+        },
+        [](const CSS::Keyword::Infinite&) -> LayoutUnit {
+            // This case shouldn't be reached due to the outer if check
+            ASSERT_NOT_REACHED();
+            return LayoutUnit { };
+        }
+    );
+
+    // Step 1: Find the absolute shortest position across all tracks
+    auto maxStartingLine = gridAxisLines - itemSpanLength;
+    LayoutUnit absoluteShortest = LayoutUnit::max();
+    for (unsigned i = 0; i < maxStartingLine; i++)
+        absoluteShortest = std::min(absoluteShortest, maxRunningPositionForSpan(i, itemSpanLength));
+
+    // Step 2: Find first position within tolerance of shortest, starting from the cursor position.
+    unsigned smallestMaxPosLine = 0;
+    auto autoFlowNextCursorShift = (m_autoFlowNextCursor > maxStartingLine) ? 0 : m_autoFlowNextCursor;
+    for (unsigned i = 0; i < maxStartingLine; i++) {
+        auto startingLine = (autoFlowNextCursorShift + i) % maxStartingLine;
+
+        auto maxPosForCurrentStartingLine = maxRunningPositionForSpan(startingLine, itemSpanLength);
+
+        // Accept first position within tolerance of the absolute shortest
+        if (maxPosForCurrentStartingLine <= absoluteShortest + toleranceValue) {
+            smallestMaxPosLine = startingLine;
+            break;
+        }
+    }
+
     auto gridAxisPosition = GridSpan::translatedDefiniteGridSpan(smallestMaxPosLine, smallestMaxPosLine + itemSpanLength);
     return masonryGridAreaFromGridAxisSpan(gridAxisPosition);
 }
@@ -239,11 +304,5 @@ GridArea GridMasonryLayout::masonryGridAreaFromGridAxisSpan(const GridSpan& grid
     return m_masonryAxisDirection == Style::GridTrackSizingDirection::Rows
         ? GridArea { m_masonryAxisSpan, gridAxisSpan }
         : GridArea { gridAxisSpan, m_masonryAxisSpan };
-}
-
-bool GridMasonryLayout::hasEnoughSpaceAtPosition(unsigned startingPosition, unsigned spanLength) const
-{
-    ASSERT(startingPosition < m_gridAxisTracksCount);
-    return (startingPosition + spanLength) <= m_gridAxisTracksCount;
 }
 } // end namespace WebCore

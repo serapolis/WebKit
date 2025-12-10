@@ -74,8 +74,9 @@
 #include "JSMapIterator.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
-#include "JSPromiseAllContext.h"
 #include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
+#include "JSPromiseReaction.h"
 #include "JSSetIterator.h"
 #include "JSWrapForValidIterator.h"
 #include "MapConstructor.h"
@@ -2558,9 +2559,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::Inlined;
             }
 
-            if (!MacroAssembler::supportsFloatingPointAbs())
-                return CallOptimizationResult::DidNothing;
-
             insertChecks();
             Node* node = addToGraph(ArithAbs, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Overflow))
@@ -2893,7 +2891,27 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             }
         }
-            
+
+        case ArrayConstructorOfIntrinsic: {
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+
+            JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+
+            insertChecks();
+
+            FrozenValue* arrayConstructor = m_graph.freeze(globalObject->arrayConstructor());
+            Node* thisValue = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            addToGraph(CheckIsConstant, OpInfo(arrayConstructor), Edge(thisValue, CellUse));
+
+            for (int i = 1; i < argumentCountIncludingThis; ++i)
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
+            Node* arrayConstructorOf = addToGraph(Node::VarArg, NewArray, OpInfo(ArrayWithUndecided), OpInfo(argumentCountIncludingThis - 1));
+            setResult(arrayConstructorOf);
+
+            return CallOptimizationResult::Inlined;
+        }
+
         case AtomicsAddIntrinsic:
         case AtomicsAndIntrinsic:
         case AtomicsCompareExchangeIntrinsic:
@@ -3111,6 +3129,43 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case StringPrototypeConcatIntrinsic: {
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* thisNode = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            addToGraph(Check, Edge(thisNode, NotOtherUse));
+
+            unsigned numArguments = argumentCountIncludingThis - 1;
+
+            if (!numArguments) {
+                setResult(addToGraph(ToString, thisNode));
+                return CallOptimizationResult::Inlined;
+            }
+
+            constexpr unsigned maxStrCatArguments = 3;
+            Node* operands[AdjacencyList::Size] = { };
+            unsigned indexInOperands = 0;
+
+            operands[indexInOperands++] = thisNode;
+
+            for (unsigned i = 0; i < numArguments; ++i) {
+                if (indexInOperands == maxStrCatArguments) {
+                    operands[0] = addToGraph(StrCat, operands[0], operands[1], operands[2]);
+                    for (unsigned j = 1; j < AdjacencyList::Size; ++j)
+                        operands[j] = nullptr;
+                    indexInOperands = 1;
+                }
+                ASSERT(indexInOperands < AdjacencyList::Size);
+                ASSERT(indexInOperands < maxStrCatArguments);
+                operands[indexInOperands++] = get(virtualRegisterForArgumentIncludingThis(i + 1, registerOffset));
+            }
+
+            setResult(addToGraph(StrCat, operands[0], operands[1], operands[2]));
+            return CallOptimizationResult::Inlined;
+        }
+
         case Clz32Intrinsic: {
             insertChecks();
             if (argumentCountIncludingThis == 1)
@@ -3214,7 +3269,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             auto isRegExpPropertySame = [&] (JSValue primordialProperty, UniquedStringImpl* propertyUID) {
                 JSValue currentProperty;
-                if (!m_graph.getRegExpPrototypeProperty(regExpStructure->storedPrototypeObject(), regExpPrototypeStructure, propertyUID, currentProperty))
+                if (!m_graph.getPrototypeProperty(regExpStructure->storedPrototypeObject(), regExpPrototypeStructure, propertyUID, currentProperty))
                     return false;
 
                 return currentProperty == primordialProperty;
@@ -3223,6 +3278,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             // Check that RegExp.exec is still the primordial RegExp.prototype.exec
             if (!isRegExpPropertySame(globalObject->regExpProtoExecFunction(), m_vm->propertyNames->exec.impl()))
                 return CallOptimizationResult::DidNothing;
+
+            insertChecks();
 
             // Check that regExpObject is actually a RegExp object.
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -3235,8 +3292,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
             FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
             addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
-
-            insertChecks();
             Node* regExpExec = addToGraph(RegExpTest, OpInfo(0), OpInfo(prediction), addToGraph(GetGlobalObject, callee), regExpObject, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             setResult(regExpExec);
 
@@ -3268,7 +3323,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             auto isRegExpPropertySame = [&] (JSValue primordialProperty, UniquedStringImpl* propertyUID) {
                 JSValue currentProperty;
-                if (!m_graph.getRegExpPrototypeProperty(regExpStructure->storedPrototypeObject(), regExpPrototypeStructure, propertyUID, currentProperty))
+                if (!m_graph.getPrototypeProperty(regExpStructure->storedPrototypeObject(), regExpPrototypeStructure, propertyUID, currentProperty))
                     return false;
 
                 return currentProperty == primordialProperty;
@@ -3277,6 +3332,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             // Check that RegExp.exec is still the primordial RegExp.prototype.exec
             if (!isRegExpPropertySame(globalObject->regExpProtoExecFunction(), m_vm->propertyNames->exec.impl()))
                 return CallOptimizationResult::DidNothing;
+
+            insertChecks();
 
             // Check that regExpObject is actually a RegExp object.
             Node* regExpObject = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -3289,8 +3346,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(regExpObject, CellUse));
             FrozenValue* regExpPrototypeExec = m_graph.freeze(globalObject->regExpProtoExecFunction());
             addToGraph(CheckIsConstant, OpInfo(regExpPrototypeExec), Edge(actualProperty, CellUse));
-
-            insertChecks();
             Node* regExpExec = addToGraph(RegExpSearch, OpInfo(0), OpInfo(prediction), addToGraph(GetGlobalObject, callee), regExpObject, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
             setResult(regExpExec);
             
@@ -3678,6 +3733,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case JSMapValuesIntrinsic:
         case JSSetEntriesIntrinsic:
         case JSSetValuesIntrinsic: {
+            if (!is64Bit()) // JSEmpty must be nullptr.
+                return CallOptimizationResult::DidNothing;
+
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
@@ -3713,10 +3771,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             addToGraph(Check, Edge(base, useKind));
+
             Node* storage = addToGraph(MapStorage, Edge(base, useKind));
-
             Node* kindNode = jsConstant(jsNumber(static_cast<uint32_t>(kind)));
-
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             Node* iterator = nullptr;
             if (useKind == MapObjectUse) {
@@ -4190,8 +4247,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case ObjectHasOwnIntrinsic:
         case HasOwnPropertyIntrinsic: {
-            if (argumentCountIncludingThis < 2)
+            bool isObjectHasOwn = intrinsic == ObjectHasOwnIntrinsic;
+
+            if (argumentCountIncludingThis < (isObjectHasOwn ? 3 : 2))
                 return CallOptimizationResult::DidNothing;
 
             // This can be racy, that's fine. We know that once we observe that this is created,
@@ -4203,8 +4263,8 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
-            Node* object = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
-            Node* key = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* object = get(virtualRegisterForArgumentIncludingThis(isObjectHasOwn ? 1 : 0, registerOffset));
+            Node* key = get(virtualRegisterForArgumentIncludingThis(isObjectHasOwn ? 2 : 1, registerOffset));
             Node* resultNode = addToGraph(HasOwnProperty, object, key);
             setResult(resultNode);
             return CallOptimizationResult::Inlined;
@@ -4519,22 +4579,195 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-        case PromiseAllContextCreateIntrinsic: {
-            if (argumentCountIncludingThis < 5)
+        case ResolvePromiseWithFirstResolvingFunctionCallCheckIntrinsic: {
+            if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             Node* promise = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
-            Node* values = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
-            Node* remainingElementsCount = get(virtualRegisterForArgumentIncludingThis(3, registerOffset));
-            Node* index = get(virtualRegisterForArgumentIncludingThis(4, registerOffset));
-            Node* promiseAllContext = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->promiseAllContextStructure())));
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSPromiseAllContext::Field::Promise)), promiseAllContext, promise);
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSPromiseAllContext::Field::Values)), promiseAllContext, values);
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSPromiseAllContext::Field::RemainingElementsCount)), promiseAllContext, remainingElementsCount);
-            addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSPromiseAllContext::Field::Index)), promiseAllContext, index);
-            setResult(promiseAllContext);
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            addToGraph(ResolvePromiseFirstResolving, Edge(promise, KnownCellUse), Edge(argument));
+            setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case RejectPromiseWithFirstResolvingFunctionCallCheckIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* promise = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            addToGraph(RejectPromiseFirstResolving, Edge(promise, KnownCellUse), Edge(argument));
+            setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case FulfillPromiseWithFirstResolvingFunctionCallCheckIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* promise = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            addToGraph(FulfillPromiseFirstResolving, Edge(promise, KnownCellUse), Edge(argument));
+            setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromiseConstructorResolveIntrinsic: {
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* constructor = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            setResult(addToGraph(PromiseResolve, Edge(constructor, ObjectUse), Edge(argument)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromiseResolveIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* constructor = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            setResult(addToGraph(PromiseResolve, Edge(constructor, ObjectUse), Edge(argument)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromiseConstructorRejectIntrinsic: {
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* constructor = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            setResult(addToGraph(PromiseReject, Edge(constructor, ObjectUse), Edge(argument)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromiseRejectIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* constructor = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* argument = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            setResult(addToGraph(PromiseReject, Edge(constructor, ObjectUse), Edge(argument)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromisePrototypeThenIntrinsic: {
+            if (argumentCountIncludingThis < 1)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            Node* promise = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            Node* onFulfilled = nullptr;
+            if (argumentCountIncludingThis < 2)
+                onFulfilled = addToGraph(JSConstant, OpInfo(m_constantUndefined));
+            else
+                onFulfilled = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+
+            Node* onRejected = nullptr;
+            if (argumentCountIncludingThis < 3)
+                onRejected = addToGraph(JSConstant, OpInfo(m_constantUndefined));
+            else
+                onRejected = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+
+            setResult(addToGraph(PromiseThen, Edge(promise, PromiseObjectUse), Edge(onFulfilled), Edge(onRejected)));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case PromisePrototypeCatchIntrinsic: {
+            if (argumentCountIncludingThis < 1)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
+                return CallOptimizationResult::DidNothing;
+
+            JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
+
+            if (!globalObject->promiseThenWatchpointSet().isStillValid())
+                return CallOptimizationResult::DidNothing;
+
+            Structure* promiseStructure = globalObject->promiseStructure();
+            m_graph.registerStructure(promiseStructure);
+            ASSERT(promiseStructure->storedPrototype().isObject());
+            ASSERT(promiseStructure->storedPrototype().asCell()->classInfo() == JSPromisePrototype::info());
+
+            FrozenValue* promisePrototypeObjectValue = m_graph.freeze(promiseStructure->storedPrototype());
+            Structure* promisePrototypeStructure = promisePrototypeObjectValue->structure();
+
+            auto isPromisePropertySame = [&] (JSValue primordialProperty, UniquedStringImpl* propertyUID) {
+                JSValue currentProperty;
+                if (!m_graph.getPrototypeProperty(promiseStructure->storedPrototypeObject(), promisePrototypeStructure, propertyUID, currentProperty))
+                    return false;
+                return currentProperty == primordialProperty;
+            };
+
+            if (!isPromisePropertySame(globalObject->promiseProtoThenFunction(), m_vm->propertyNames->then.impl()))
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+
+            Node* promise = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            addToGraph(Check, Edge(promise, PromiseObjectUse));
+
+            UniquedStringImpl* thenPropertyID = m_vm->propertyNames->then.impl();
+            m_graph.identifiers().ensure(thenPropertyID);
+            auto* data = m_graph.m_getByIdData.add(GetByIdData { CacheableIdentifier::createFromImmortalIdentifier(thenPropertyID), CacheType::GetByIdPrototype });
+            Node* actualProperty = addToGraph(TryGetById, OpInfo(data), OpInfo(SpecFunction), Edge(promise, CellUse));
+
+            FrozenValue* promiseProtoThen = m_graph.freeze(globalObject->promiseProtoThenFunction());
+            addToGraph(CheckIsConstant, OpInfo(promiseProtoThen), Edge(actualProperty, CellUse));
+
+            Node* onFulfilled = addToGraph(JSConstant, OpInfo(m_constantUndefined));
+
+            Node* onRejected = nullptr;
+            if (argumentCountIncludingThis < 2)
+                onRejected = addToGraph(JSConstant, OpInfo(m_constantUndefined));
+            else
+                onRejected = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+
+            setResult(addToGraph(PromiseThen, Edge(promise, PromiseObjectUse), Edge(onFulfilled), Edge(onRejected)));
             return CallOptimizationResult::Inlined;
         }
 
@@ -6651,9 +6884,9 @@ void ByteCodeParser::parseGetById(const JSInstruction* currentInstruction, unsig
     Node* base = get(bytecode.m_base);
     
     AccessType type = AccessType::GetById;
-    if (Op::opcodeID == op_try_get_by_id)
+    if constexpr (Op::opcodeID == op_try_get_by_id)
         type = AccessType::TryGetById;
-    else if (Op::opcodeID == op_get_by_id_direct)
+    else if constexpr (Op::opcodeID == op_get_by_id_direct)
         type = AccessType::GetByIdDirect;
     
     GetByStatus getByStatus = GetByStatus::computeFor(
@@ -9464,8 +9697,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 resolveType = getPutInfo.resolveType();
                 if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
                     watchpoints = metadata.m_watchpointSet;
-                else if (resolveType != UnresolvedProperty && resolveType != UnresolvedPropertyWithVarInjectionChecks)
-                    structure = metadata.m_structure.get();
+                else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
+                    structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
             }
 
@@ -9652,8 +9885,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 resolveType = getPutInfo.resolveType();
                 if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks || resolveType == ResolvedClosureVar || resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
                     watchpoints = metadata.m_watchpointSet;
-                else if (resolveType != UnresolvedProperty && resolveType != UnresolvedPropertyWithVarInjectionChecks)
-                    structure = metadata.m_structure.get();
+                else if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks)
+                    structure = metadata.m_structureID.get();
                 operand = metadata.m_operand;
             }
 

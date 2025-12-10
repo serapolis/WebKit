@@ -36,6 +36,7 @@
 #include "ElementInlines.h"
 #include "ElementTraversal.h"
 #include "ExceptionCode.h"
+#include "FrameDestructionObserverInlines.h"
 #include "GetHTMLOptions.h"
 #include "HTMLSlotElement.h"
 #if ENABLE(PICTURE_IN_PICTURE_API)
@@ -43,6 +44,7 @@
 #endif
 #include "RenderElement.h"
 #include "SerializedNode.h"
+#include "Settings.h"
 #include "SlotAssignment.h"
 #include "StyleResolver.h"
 #include "StyleScope.h"
@@ -236,12 +238,16 @@ ExceptionOr<void> ShadowRoot::replaceChildrenWithMarkup(const String& markup, Op
     auto fragment = createFragmentForInnerOuterHTML(*protectedHost(), markup, policy, customElementRegistry());
     if (fragment.hasException())
         return fragment.releaseException();
-    return replaceChildrenWithFragment(*this, fragment.releaseReturnValue());
+    bool usedFastPath = fragment.returnValue()->hasWasParsedWithFastPath();
+    auto result = replaceChildrenWithFragment(*this, fragment.releaseReturnValue());
+    if (!result.hasException() && usedFastPath)
+        document().updateCachedSetInnerHTML(markup, *this, *protectedHost());
+    return result;
 }
 
 ExceptionOr<void> ShadowRoot::setHTMLUnsafe(Variant<RefPtr<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(html), "ShadowRoot setHTMLUnsafe"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(html), "ShadowRoot setHTMLUnsafe"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -261,7 +267,7 @@ String ShadowRoot::innerHTML() const
 
 ExceptionOr<void> ShadowRoot::setInnerHTML(Variant<RefPtr<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(html), "ShadowRoot innerHTML"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(html), "ShadowRoot innerHTML"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -484,14 +490,6 @@ Vector<Ref<ShadowRoot>> assignedShadowRootsIfSlotted(const Node& node)
     }
     return result;
 }
-
-#if ENABLE(PICTURE_IN_PICTURE_API)
-Element* ShadowRoot::pictureInPictureElement() const
-{
-    notImplemented();
-    return nullptr;
-}
-#endif
 
 Vector<RefPtr<WebAnimation>> ShadowRoot::getAnimations()
 {

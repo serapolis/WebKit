@@ -86,6 +86,8 @@ struct MaskBorder {
     bool operator==(const MaskBorder&) const = default;
 
 private:
+    friend class WebCore::RenderStyleProperties;
+
     struct Data : RefCounted<Data> {
         static Ref<Data> create();
         static Ref<Data> create(MaskBorderSource&&, MaskBorderSlice&&, MaskBorderWidth&&, MaskBorderOutset&&, MaskBorderRepeat&&);

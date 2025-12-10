@@ -28,31 +28,22 @@ dom/CollectionIndexCache.h
 dom/Node.cpp
 dom/Node.h
 dom/TreeScope.h
-editing/cocoa/NodeHTMLConverter.mm
 html/FormListedElement.cpp
-html/parser/HTMLTreeBuilder.h
 html/track/TrackBase.h
-inspector/DOMPatchSupport.cpp
-inspector/InspectorFrontendHost.cpp
-inspector/InspectorFrontendHost.h
+[ Mac ] inspector/InspectorFrontendHost.cpp
+[ Mac ] inspector/InspectorFrontendHost.h
 inspector/InspectorShaderProgram.h
-inspector/InspectorStyleSheet.cpp
 inspector/InspectorStyleSheet.h
 inspector/InspectorWebAgentBase.h
 layout/formattingContexts/inline/InlineItemsBuilder.h
 page/FrameSnapshotting.cpp
-page/PerformanceLogging.h
-page/PointerLockController.h
-page/RenderingUpdateScheduler.h
-page/UndoManager.h
 page/WheelEventTestMonitor.h
-page/scrolling/ScrollLatchingController.h
+[ iOS ] page/ios/ContentChangeObserver.h
 page/scrolling/ScrollingCoordinator.h
 page/scrolling/ScrollingTreeGestureState.h
 platform/PODInterval.h
-platform/encryptedmedia/CDMProxy.h
+[ iOS ] platform/audio/ios/AudioSessionIOS.mm
 platform/graphics/GraphicsLayer.h
-platform/graphics/avfoundation/AudioSourceProviderAVFObjC.mm
 platform/graphics/avfoundation/objc/MediaSourcePrivateAVFObjC.h
 platform/graphics/avfoundation/objc/WebCoreAVFResourceLoader.mm
 platform/graphics/ca/TileController.h
@@ -61,14 +52,12 @@ platform/graphics/filters/software/FEConvolveMatrixSoftwareApplier.h
 platform/graphics/filters/software/FELightingSoftwareApplier.h
 platform/graphics/filters/software/FEMorphologySoftwareApplier.h
 platform/graphics/filters/software/FETurbulenceSoftwareApplier.h
-platform/mac/VideoPresentationInterfaceMac.mm
+[ iOS ] platform/graphics/ios/DisplayRefreshMonitorIOS.mm
+[ iOS ] platform/ios/wak/WAKWindow.h
 platform/mediarecorder/MediaRecorderPrivate.h
 platform/mediastream/AudioMediaStreamTrackRenderer.h
-platform/mediastream/mac/CoreAudioCaptureSource.h
 platform/mock/ScrollbarsControllerMock.h
 platform/network/mac/WebCoreResourceHandleAsOperationQueueDelegate.h
-plugins/PluginData.h
-rendering/TextBoxPainter.h
 rendering/style/StyleGeneratedImage.cpp
 rendering/updating/RenderTreeUpdater.h
 style/ClassChangeInvalidation.cpp
@@ -83,7 +72,5 @@ style/StyleScopeRuleSets.h
 style/Styleable.h
 svg/properties/SVGPropertyOwnerRegistry.h
 workers/WorkerMessagingProxy.h
-workers/WorkerOrWorkletGlobalScope.h
-workers/service/background-fetch/ServiceWorkerRegistrationBackgroundFetchAPI.h
 xml/XPathGrammar.cpp
 xml/XPathGrammar.h

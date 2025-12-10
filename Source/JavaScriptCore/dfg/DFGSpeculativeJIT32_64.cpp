@@ -2727,7 +2727,7 @@ void SpeculativeJIT::compile(Node* node)
 
     case PutByValDirect:
     case PutByVal:
-    case PutByValAlias: {
+    case PutByValDirectResolved: {
         compilePutByVal(node);
         break;
     }
@@ -3922,10 +3922,6 @@ void SpeculativeJIT::compile(Node* node)
         compileIsEmptyStorage(node);
         break;
 
-    case MapStorage:
-        compileMapStorage(node);
-        break;
-
     case MapStorageOrSentinel:
         compileMapStorageOrSentinel(node);
         break;
@@ -4344,6 +4340,30 @@ void SpeculativeJIT::compile(Node* node)
         compileCheckJSCast(node);
         break;
 
+    case ResolvePromiseFirstResolving:
+        compileResolvePromiseFirstResolving(node);
+        break;
+
+    case RejectPromiseFirstResolving:
+        compileRejectPromiseFirstResolving(node);
+        break;
+
+    case FulfillPromiseFirstResolving:
+        compileFulfillPromiseFirstResolving(node);
+        break;
+
+    case PromiseResolve:
+        compilePromiseResolve(node);
+        break;
+
+    case PromiseReject:
+        compilePromiseReject(node);
+        break;
+
+    case PromiseThen:
+        compilePromiseThen(node);
+        break;
+
     case Unreachable:
         unreachable(node);
         break;
@@ -4460,6 +4480,7 @@ void SpeculativeJIT::compile(Node* node)
     case InByValMegamorphic:
     case MultiGetByVal:
     case MultiPutByVal:
+    case MapStorage:
         DFG_CRASH(m_graph, node, "unexpected node in DFG backend");
         break;
     }
@@ -4985,7 +5006,7 @@ void SpeculativeJIT::compilePutByVal(Node* node)
         JSValueRegs valueRegs = value.jsValueRegs();
         GPRReg storageReg = storage.gpr();
 
-        if (node->op() == PutByValAlias) {
+        if (node->op() == PutByValDirectResolved) {
             // Store the value to the array.
             GPRReg propertyReg = property.gpr();
             storeValue(valueRegs, BaseIndex(storageReg, propertyReg, TimesEight, ArrayStorage::vectorOffset()));
@@ -5445,6 +5466,25 @@ void SpeculativeJIT::cachedPutById(Node* node, CodeOrigin codeOrigin, GPRReg bas
 void SpeculativeJIT::speculateInt32(Edge edge, JSValueRegs regs)
 {
     speculationCheck(BadType, regs, edge, branchIfNotInt32(regs.tagGPR()));
+}
+
+void SpeculativeJIT::compileMapIteratorNext(Node* node)
+{
+    SpeculateCellOperand mapIterator(this, node->child1());
+    GPRReg mapIteratorGPR = mapIterator.gpr();
+
+    if (node->child1().useKind() == MapIteratorObjectUse)
+        speculateMapIteratorObject(node->child1(), mapIteratorGPR);
+    else if (node->child1().useKind() == SetIteratorObjectUse)
+        speculateSetIteratorObject(node->child1(), mapIteratorGPR);
+    else
+        RELEASE_ASSERT_NOT_REACHED();
+
+    flushRegisters();
+    JSValueRegsFlushedCallResult result(this);
+    JSValueRegs resultRegs = result.regs();
+    callOperationWithoutExceptionCheck(node->child1().useKind() == MapIteratorObjectUse ? operationMapIteratorNext : operationSetIteratorNext, resultRegs, TrustedImmPtr(&vm()), mapIteratorGPR);
+    jsValueResult(resultRegs, node);
 }
 
 #endif

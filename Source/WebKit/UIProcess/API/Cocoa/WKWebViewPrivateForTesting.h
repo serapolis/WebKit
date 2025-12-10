@@ -54,6 +54,9 @@ struct WKAppPrivacyReportTestingData {
 
 @property (nonatomic, readonly) NSString *_caLayerTreeAsText;
 
+- (NSString *)_caLayerTreeAsTextForLayerWithID:(unsigned long long)layerID;
+- (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer;
+
 - (NSDictionary<NSString *, id> *)_propertiesOfLayerWithID:(unsigned long long)layerID;
 - (NSString*)_scrollbarStateForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID isVertical:(bool)isVertical;
 
@@ -83,6 +86,7 @@ struct WKAppPrivacyReportTestingData {
 - (BOOL)_beginBackSwipeForTesting;
 - (BOOL)_completeBackSwipeForTesting;
 - (void)_resetNavigationGestureStateForTesting;
+@property (nonatomic, readonly) BOOL _didCallEndSwipeGestureForTesting;
 
 - (void)_setShareSheetCompletesImmediatelyWithResolutionForTesting:(BOOL)resolved;
 
@@ -173,8 +177,16 @@ struct WKAppPrivacyReportTestingData {
 - (void)_cancelFixedColorExtensionFadeAnimationsForTesting;
 
 - (unsigned)_forwardedLogsCountForTesting;
+- (bool)_receivedLogsDuringLaunchForTesting;
 
 - (void)_modelProcessModelPlayerCountForTesting:(void(^)(NSUInteger))completionHandler;
+
+- (NSString *)_webContentProcessVariantForFrame:(nullable _WKFrameHandle *)frameHandle;
+
+#if defined(ENABLE_THREADED_ANIMATIONS) && ENABLE_THREADED_ANIMATIONS
+- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID;
+- (NSString *)_progressBasedTimelinesForScrollingNodeID:(uint64_t)scrollingNodeID processID:(uint64_t)processID;
+#endif
 
 @end
 

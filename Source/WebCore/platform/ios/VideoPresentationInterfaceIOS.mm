@@ -249,19 +249,22 @@ void VideoPresentationInterfaceIOS::setPlayerIdentifier(std::optional<MediaPlaye
     m_playbackSessionInterface->setPlayerIdentifier(WTFMove(identifier));
 }
 
-void VideoPresentationInterfaceIOS::audioSessionCategoryChanged(WebCore::AudioSessionCategory, WebCore::AudioSessionMode, WebCore::RouteSharingPolicy)
+void VideoPresentationInterfaceIOS::audioSessionCategoryChanged(WebCore::AudioSessionCategory, WebCore::AudioSessionMode, WebCore::RouteSharingPolicy routeSharingPolicy)
 {
-    auto model = videoPresentationModel();
-    if (!model)
+    if (routeSharingPolicy == m_routeSharingPolicy)
         return;
 
-    // Re-request the routeContextUUID in case it also changed when the category did.
-    model->requestRouteSharingPolicyAndContextUID([this, protectedThis = Ref { *this }] (RouteSharingPolicy policy, String contextUID) {
-        m_routeSharingPolicy = policy;
-        m_routingContextUID = contextUID;
+    m_routeSharingPolicy = routeSharingPolicy;
+    updateRouteSharingPolicy();
+}
 
-        updateRouteSharingPolicy();
-    });
+void VideoPresentationInterfaceIOS::routingContextUIDChanged(const String& routingContextUID)
+{
+    if (routingContextUID == m_routingContextUID)
+        return;
+
+    m_routingContextUID = routingContextUID;
+    updateRouteSharingPolicy();
 }
 
 void VideoPresentationInterfaceIOS::requestHideAndExitFullscreen()
@@ -501,7 +504,7 @@ void VideoPresentationInterfaceIOS::enterFullscreenHandler(BOOL success, NSError
 
     LOG(Fullscreen, "VideoPresentationInterfaceIOS::enterFullscreenStandard - lambda(%p)", this);
     if (!m_standby)
-        setMode(HTMLMediaElementEnums::VideoFullscreenModeStandard, !nextActions.contains(NextAction::NeedsEnterFullScreen));
+        setMode(HTMLMediaElementEnums::VideoFullscreenModeStandard, nextActions.contains(NextAction::NeedsEnterFullScreen) ? VideoPresentationModel::ShouldNotifyMediaElement::No : VideoPresentationModel::ShouldNotifyMediaElement::Yes);
 
     // NOTE: During a "returnToStandby" operation, this will cause the AVKit controls
     // to be visible if the user taps on the fullscreen presentation before the Element
@@ -590,7 +593,7 @@ void VideoPresentationInterfaceIOS::exitFullscreenHandler(BOOL success, NSError*
 
     LOG(Fullscreen, "VideoPresentationInterfaceIOS::didExitFullscreen(%p) - %d", this, success);
 
-    clearMode(HTMLMediaElementEnums::VideoFullscreenModeStandard, false);
+    clearMode(HTMLMediaElementEnums::VideoFullscreenModeStandard, VideoPresentationModel::ShouldNotifyMediaElement::No);
 
     if (hasMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture)) {
         [m_window setHidden:YES];
@@ -732,7 +735,7 @@ void VideoPresentationInterfaceIOS::willStartPictureInPicture()
 void VideoPresentationInterfaceIOS::didStartPictureInPicture()
 {
     LOG(Fullscreen, "VideoPresentationInterfaceIOS::didStartPictureInPicture(%p)", this);
-    setMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, !m_enterFullscreenNeedsEnterPictureInPicture);
+    setMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, m_enterFullscreenNeedsEnterPictureInPicture ? VideoPresentationModel::ShouldNotifyMediaElement::No : VideoPresentationModel::ShouldNotifyMediaElement::Yes);
     setShowsPlaybackControls(true);
     [m_viewController _setIgnoreAppSupportedOrientations:NO];
 
@@ -766,7 +769,7 @@ void VideoPresentationInterfaceIOS::failedToStartPictureInPicture()
     if (auto model = videoPresentationModel()) {
         model->failedToEnterPictureInPicture();
         model->requestFullscreenMode(HTMLMediaElementEnums::VideoFullscreenModeNone);
-        model->fullscreenModeChanged(HTMLMediaElementEnums::VideoFullscreenModeNone);
+        model->fullscreenModeChanged(HTMLMediaElementEnums::VideoFullscreenModeNone, VideoPresentationModel::ShouldNotifyMediaElement::Yes);
         model->failedToEnterFullscreen();
     }
     m_changingStandbyOnly = false;
@@ -805,7 +808,7 @@ void VideoPresentationInterfaceIOS::didStopPictureInPicture()
     }
 
     if (m_currentMode.hasFullscreen()) {
-        clearMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, !m_exitFullscreenNeedsExitPictureInPicture);
+        clearMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, m_exitFullscreenNeedsExitPictureInPicture ? VideoPresentationModel::ShouldNotifyMediaElement::No : VideoPresentationModel::ShouldNotifyMediaElement::Yes);
         [m_window makeKeyWindow];
         setShowsPlaybackControls(true);
 
@@ -822,7 +825,7 @@ void VideoPresentationInterfaceIOS::didStopPictureInPicture()
         return;
     }
 
-    clearMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, !m_exitFullscreenNeedsExitPictureInPicture);
+    clearMode(HTMLMediaElementEnums::VideoFullscreenModePictureInPicture, m_exitFullscreenNeedsExitPictureInPicture ? VideoPresentationModel::ShouldNotifyMediaElement::No : VideoPresentationModel::ShouldNotifyMediaElement::Yes);
 
     [playerLayerView() setBackgroundColor:clearUIColor()];
     playerViewController().view.backgroundColor = clearUIColor();
@@ -982,7 +985,7 @@ void VideoPresentationInterfaceIOS::returnVideoView()
         model->returnVideoView();
 }
 
-void VideoPresentationInterfaceIOS::setMode(HTMLMediaElementEnums::VideoFullscreenMode mode, bool shouldNotifyModel)
+void VideoPresentationInterfaceIOS::setMode(HTMLMediaElementEnums::VideoFullscreenMode mode, VideoPresentationModel::ShouldNotifyMediaElement shouldNotifyMediaElement)
 {
     if ((m_currentMode.mode() & mode) == mode)
         return;
@@ -995,12 +998,10 @@ void VideoPresentationInterfaceIOS::setMode(HTMLMediaElementEnums::VideoFullscre
         return;
 
     model->setRequiresTextTrackRepresentation(m_currentMode.hasVideo());
-
-    if (shouldNotifyModel)
-        model->fullscreenModeChanged(mode);
+    model->fullscreenModeChanged(mode, shouldNotifyMediaElement);
 }
 
-void VideoPresentationInterfaceIOS::clearMode(HTMLMediaElementEnums::VideoFullscreenMode mode, bool shouldNotifyModel)
+void VideoPresentationInterfaceIOS::clearMode(HTMLMediaElementEnums::VideoFullscreenMode mode, VideoPresentationModel::ShouldNotifyMediaElement shouldNotifyMediaElement)
 {
     if ((~m_currentMode.mode() & mode) == mode)
         return;
@@ -1011,9 +1012,7 @@ void VideoPresentationInterfaceIOS::clearMode(HTMLMediaElementEnums::VideoFullsc
         return;
 
     model->setRequiresTextTrackRepresentation(m_currentMode.hasVideo());
-
-    if (shouldNotifyModel)
-        model->fullscreenModeChanged(m_currentMode.mode());
+    model->fullscreenModeChanged(m_currentMode.mode(), shouldNotifyMediaElement);
 }
 
 #if !RELEASE_LOG_DISABLED

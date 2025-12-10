@@ -57,7 +57,7 @@ Inspector::Protocol::Network::FrameId WorkerNetworkAgent::frameIdentifier(Docume
     return { };
 }
 
-Vector<WebSocket*> WorkerNetworkAgent::activeWebSockets()
+Vector<Ref<WebSocket>> WorkerNetworkAgent::activeWebSockets()
 {
     // FIXME: <https://webkit.org/b/168475> Web Inspector: Correctly display worker's WebSockets
     return { };
@@ -65,7 +65,7 @@ Vector<WebSocket*> WorkerNetworkAgent::activeWebSockets()
 
 void WorkerNetworkAgent::setResourceCachingDisabledInternal(bool disabled)
 {
-    if (auto* workerDebuggerProxy = m_globalScope->workerOrWorkletThread()->workerDebuggerProxy())
+    if (auto* workerDebuggerProxy = Ref { m_globalScope.get() }->workerOrWorkletThread()->workerDebuggerProxy())
         workerDebuggerProxy->setResourceCachingDisabledByWebInspector(disabled);
 }
 

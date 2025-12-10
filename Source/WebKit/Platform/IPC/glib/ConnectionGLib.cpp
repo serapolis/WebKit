@@ -198,6 +198,7 @@ std::unique_ptr<Decoder> Connection::createMessageDecoder()
     return Decoder::create(messageBody->mutableSpan().first(messageInfo.bodySize()), WTFMove(attachments));
 }
 
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage")
 static ssize_t readBytesFromSocket(GSocket* socket, Vector<uint8_t>& buffer, Vector<UnixFileDescriptor>& fileDescriptors, GCancellable* cancellable, GError** error)
 {
     GUniqueOutPtr<GSocketControlMessage*> messages;
@@ -234,6 +235,7 @@ static ssize_t readBytesFromSocket(GSocket* socket, Vector<uint8_t>& buffer, Vec
 
     return bytesRead;
 }
+IGNORE_CLANG_WARNINGS_END
 
 void Connection::readyReadHandler()
 {
@@ -350,6 +352,7 @@ bool Connection::sendOutgoingMessage(UniqueRef<Encoder>&& encoder)
     return sendOutputMessage(WTFMove(outputMessage));
 }
 
+IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage")
 bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
 {
 #if OS(ANDROID)
@@ -365,8 +368,9 @@ bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
 
     outputVector[outputVectorLength++] = { reinterpret_cast<void*>(&messageInfo), sizeof(messageInfo) };
     GRefPtr<GSocketControlMessage> controlMessage;
+    Vector<AttachmentInfo> attachmentInfo;
     if (!attachments.isEmpty()) {
-        Vector<AttachmentInfo> attachmentInfo(attachments.size());
+        attachmentInfo.resize(attachments.size());
         Vector<int> fds;
         fds.reserveInitialCapacity(attachments.size());
         for (size_t i = 0; i < attachments.size(); ++i) {
@@ -455,6 +459,7 @@ bool Connection::sendOutputMessage(UnixMessage&& outputMessage)
         RELEASE_LOG_ERROR(IPC, "Error sending IPC message on socket %d in process %d: %s", g_socket_get_fd(m_socket.get()), getpid(), error->message);
     return false;
 }
+IGNORE_CLANG_WARNINGS_END
 
 std::optional<Connection::ConnectionIdentifierPair> Connection::createConnectionIdentifierPair()
 {
@@ -472,7 +477,7 @@ void Connection::sendCredentials() const
         if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED) || g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
             return;
 
-        g_error("Connection: Failed to send crendentials: %s", error->message);
+        g_error("Connection: Failed to send credentials: %s", error->message);
     }
     g_socket_set_blocking(m_socket.get(), FALSE);
 }

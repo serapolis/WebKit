@@ -28,10 +28,14 @@
 
 #include "BuiltinNames.h"
 #include "JSCInlines.h"
+#include "JSInternalPromise.h"
+#include "JSPromise.h"
 
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromisePrototype);
+
+static JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncCatch);
 
 }
 
@@ -43,7 +47,6 @@ const ClassInfo JSPromisePrototype::s_info = { "Promise"_s, &Base::s_info, &prom
 
 /* Source for JSPromisePrototype.lut.h
 @begin promisePrototypeTable
-  catch        JSBuiltin            DontEnum|Function 1
   finally      JSBuiltin            DontEnum|Function 1
 @end
 */
@@ -70,12 +73,81 @@ void JSPromisePrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().thenPublicName(), globalObject->promiseProtoThenFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->catchKeyword, promiseProtoFuncCatch, static_cast<unsigned>(PropertyAttribute::DontEnum), 1, ImplementationVisibility::Public, PromisePrototypeCatchIntrinsic);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 void JSPromisePrototype::addOwnInternalSlots(VM& vm, JSGlobalObject* globalObject)
 {
     putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().thenPrivateName(), globalObject->promiseProtoThenFunction(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+}
+
+bool promiseSpeciesWatchpointIsValid(VM& vm, JSPromise* thisObject)
+{
+    auto* structure = thisObject->structure();
+    JSGlobalObject* globalObject = structure->globalObject();
+    if (globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]] {
+        if (structure->classInfoForCells() == JSInternalPromise::info())
+            return true;
+        return false;
+    }
+
+    if (structure == globalObject->promiseStructure())
+        return true;
+
+    if (structure->classInfoForCells() == JSInternalPromise::info())
+        return true;
+
+    ASSERT(globalObject->promiseSpeciesWatchpointSet().state() != ClearWatchpoint);
+    auto* promisePrototype = globalObject->promisePrototype();
+    if (promisePrototype != structure->storedPrototype(thisObject))
+        return false;
+
+    if (!thisObject->hasCustomProperties())
+        return true;
+
+    return thisObject->getDirectOffset(vm, vm.propertyNames->constructor) == invalidOffset;
+}
+
+JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncThen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+
+    JSValue onFulfilled = callFrame->argument(0);
+    JSValue onRejected = callFrame->argument(1);
+
+    auto* promise = jsDynamicCast<JSPromise*>(thisValue);
+    if (!promise) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "|this| is not a Promise");
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(promise->then(globalObject, onFulfilled, onRejected)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncCatch, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+    JSValue onRejected = callFrame->argument(0);
+
+    if (auto* promise = jsDynamicCast<JSPromise*>(thisValue); promise && promise->isThenFastAndNonObservable()) [[likely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(promise->then(globalObject, jsUndefined(), onRejected)));
+
+    JSValue then = thisValue.get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    auto thenCallData = getCallDataInline(then);
+    if (thenCallData.type == CallData::Type::None) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "|this|.then is not a function"_s);
+    MarkedArgumentBuffer thenArguments;
+    thenArguments.append(jsUndefined());
+    thenArguments.append(onRejected);
+    ASSERT(!thenArguments.hasOverflowed());
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, then, thenCallData, thisValue, thenArguments)));
 }
 
 } // namespace JSC

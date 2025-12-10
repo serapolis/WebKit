@@ -90,7 +90,7 @@ IntrinsicWidthHandler::IntrinsicWidthHandler(InlineFormattingContext& inlineForm
 {
     auto initializeRangeAndTextOnlyBuilderEligibility = [&] {
         m_inlineItemRange = { 0, inlineItems.content().size() };
-        m_mayUseSimplifiedTextOnlyInlineLayoutInRange = TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(formattingContextRoot().style());
+        m_mayUseSimplifiedTextOnlyInlineLayoutInRange = TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(formattingContextRoot());
         if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
             return;
 
@@ -114,7 +114,7 @@ IntrinsicWidthHandler::IntrinsicWidthHandler(InlineFormattingContext& inlineForm
         for (size_t index = 0; index < inlineBoxCount; ++index) {
             auto& inlineItem = inlineItemList[index];
             auto isNestingInlineBox = inlineItem.isInlineBoxStart() && inlineItemList[inlineItems.size() - 1 - index].isInlineBoxEnd();
-            m_mayUseSimplifiedTextOnlyInlineLayoutInRange = isNestingInlineBox && !formattingContext().geometryForBox(inlineItem.layoutBox()).horizontalMarginBorderAndPadding() && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineItem.style());
+            m_mayUseSimplifiedTextOnlyInlineLayoutInRange = isNestingInlineBox && !formattingContext().geometryForBox(inlineItem.layoutBox()).horizontalMarginBorderAndPadding() && TextOnlySimpleLineBuilder::isEligibleForSimplifiedInlineLayoutByStyle(inlineItem.layoutBox());
             if (!m_mayUseSimplifiedTextOnlyInlineLayoutInRange)
                 return;
         }
@@ -168,13 +168,11 @@ InlineLayoutUnit IntrinsicWidthHandler::maximumContentSize()
 
 InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(IntrinsicWidthMode intrinsicWidthMode, AbstractLineBuilder& lineBuilder, MayCacheLayoutResult mayCacheLayoutResult)
 {
-    auto horizontalConstraints = HorizontalConstraints { };
-    if (intrinsicWidthMode == IntrinsicWidthMode::Maximum)
-        horizontalConstraints.logicalWidth = maxInlineLayoutUnit();
     auto layoutRange = m_inlineItemRange;
     if (layoutRange.isEmpty())
         return { };
 
+    auto availableWidth = intrinsicWidthMode == IntrinsicWidthMode::Maximum ? maxInlineLayoutUnit() : 0.f;
     auto maximumContentWidth = InlineLayoutUnit { };
     struct ContentWidthBetweenLineBreaks {
         InlineLayoutUnit maximum { };
@@ -188,17 +186,17 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
     lineBuilder.setIntrinsicWidthMode(intrinsicWidthMode);
 
     while (true) {
-        auto lineLayoutResult = lineBuilder.layoutInlineContent({ layoutRange, { 0.f, 0.f, horizontalConstraints.logicalWidth, 0.f } }, previousLine, isFirstFormattedLineCandidate);
+        auto lineLayoutResult = lineBuilder.layoutInlineContent({ layoutRange, { 0.f, 0.f, availableWidth, 0.f } }, previousLine, isFirstFormattedLineCandidate);
         auto floatContentWidth = [&] {
-            auto leftWidth = LayoutUnit { };
-            auto rightWidth = LayoutUnit { };
+            auto leftWidth = InlineLayoutUnit { };
+            auto rightWidth = InlineLayoutUnit { };
             for (auto& floatItem : lineLayoutResult.floatContent.placedFloats) {
                 mayCacheLayoutResult = MayCacheLayoutResult::No;
                 auto marginBoxRect = BoxGeometry::marginBoxRect(floatItem.boxGeometry());
                 if (floatItem.isStartPositioned())
-                    leftWidth = std::max(leftWidth, marginBoxRect.right());
+                    leftWidth = std::max<InlineLayoutUnit>(leftWidth, marginBoxRect.right());
                 else
-                    rightWidth = std::max(rightWidth, horizontalConstraints.logicalWidth - marginBoxRect.left());
+                    rightWidth = std::max<InlineLayoutUnit>(rightWidth, availableWidth - marginBoxRect.left());
             }
             return InlineLayoutUnit { leftWidth + rightWidth };
         };
@@ -225,7 +223,7 @@ InlineLayoutUnit IntrinsicWidthHandler::computedIntrinsicWidthForConstraint(Intr
         mayCacheLayoutResult = MayCacheLayoutResult::No;
         previousLineEnd = layoutRange.start;
         previousLine = PreviousLine { lineIndex++, lineLayoutResult.contentGeometry.trailingOverflowingContentWidth, lineLayoutResult.endsWithLineBreak(), { }, WTFMove(lineLayoutResult.floatContent.suspendedFloats) };
-        isFirstFormattedLineCandidate &= !lineLayoutResult.hasInlineContent();
+        isFirstFormattedLineCandidate &= !lineLayoutResult.hasContentfulInFlowContent();
     }
     m_maximumContentWidthBetweenLineBreaks = std::max(contentWidthBetweenLineBreaks.current, contentWidthBetweenLineBreaks.maximum);
     return maximumContentWidth;

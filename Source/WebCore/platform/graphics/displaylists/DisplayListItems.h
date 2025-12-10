@@ -40,6 +40,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TextFlags.h>
+#include <wtf/Box.h>
 #include <wtf/TypeCasts.h>
 
 namespace WTF {
@@ -494,7 +495,7 @@ class DrawGlyphs {
 public:
     static constexpr char name[] = "draw-glyphs";
 
-    DrawGlyphs(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor,  FontSmoothingMode smoothingMode)
+    DrawGlyphs(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
         : m_font(WTFMove(font))
         , m_glyphs(WTFMove(glyphs))
         , m_advances(WTFMove(advances))
@@ -506,6 +507,7 @@ public:
     Ref<const Font> font() const { return m_font; }
     const Vector<GlyphBufferGlyph>& glyphs() const { return m_glyphs; }
     const Vector<GlyphBufferAdvance>& advances() const { return m_advances; }
+    size_t length() const { return m_glyphs.size(); }
 
     FloatPoint localAnchor() const { return m_localAnchor; }
     FontSmoothingMode fontSmoothingMode() const { return m_fontSmoothingMode; }
@@ -521,6 +523,48 @@ private:
     FontSmoothingMode m_fontSmoothingMode;
 };
 
+#if USE(SKIA)
+class DrawTextBlob {
+public:
+    static constexpr char name[] = "draw-text-blob";
+
+    DrawTextBlob(Ref<const Font>&& font, Vector<GlyphBufferGlyph>&& glyphs, Vector<GlyphBufferAdvance>&& advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+        : m_textBlob(font->buildTextBlob(glyphs, advances, smoothingMode))
+        , m_enableAntialiasing(font->enableAntialiasing(smoothingMode))
+        , m_isVertical(font->platformData().orientation() == FontOrientation::Vertical)
+        , m_localAnchor(localAnchor)
+        , m_fontSmoothingMode(smoothingMode)
+    {
+    }
+
+    size_t length() const
+    {
+        if (!m_textBlob)
+            return 0;
+
+        size_t glyphsCount = 0;
+        auto iter = SkTextBlob::Iter(*m_textBlob);
+        SkTextBlob::Iter::Run run;
+        while (iter.next(&run))
+            glyphsCount += run.fGlyphCount;
+        return glyphsCount;
+    }
+
+    FloatPoint localAnchor() const { return m_localAnchor; }
+    FontSmoothingMode fontSmoothingMode() const { return m_fontSmoothingMode; }
+
+    WEBCORE_EXPORT void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    sk_sp<SkTextBlob> m_textBlob;
+    bool m_enableAntialiasing { false };
+    bool m_isVertical { false };
+    FloatPoint m_localAnchor;
+    FontSmoothingMode m_fontSmoothingMode;
+};
+#endif // USE(SKIA)
+
 class DrawDisplayList {
 public:
     static constexpr char name[] = "draw-display-list";
@@ -535,6 +579,21 @@ public:
 
 private:
     Ref<const DisplayList> m_displayList;
+};
+
+class DrawPlaceholder {
+public:
+    static constexpr char name[] = "draw-placeholder";
+
+    DrawPlaceholder(Function<void(GraphicsContext&)>&&);
+    ~DrawPlaceholder();
+
+    void apply(GraphicsContext&) const;
+    void dump(TextStream&, OptionSet<AsTextFlag>) const;
+
+private:
+    using FunctionHolder = Box<Function<void(GraphicsContext&)>>;
+    FunctionHolder m_function;
 };
 
 class DrawImageBuffer {

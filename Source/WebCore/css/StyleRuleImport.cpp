@@ -24,14 +24,12 @@
 
 #include "CSSStyleSheet.h"
 #include "CachedCSSStyleSheet.h"
-#include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "CachedResourceRequestInitiatorTypes.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "DocumentResourceLoader.h"
 #include "MediaList.h"
 #include "MediaQueryParserContext.h"
-#include "Page.h"
 #include "SecurityOrigin.h"
 #include "StyleSheetContents.h"
 #include <wtf/StdLibExtras.h>
@@ -46,7 +44,7 @@ Ref<StyleRuleImport> StyleRuleImport::create(const String& href, MQ::MediaQueryL
 
 StyleRuleImport::StyleRuleImport(const String& href, MQ::MediaQueryList&& mediaQueries, std::optional<CascadeLayerName>&& cascadeLayerName, SupportsCondition&& supportsCondition)
     : StyleRuleBase(StyleRuleType::Import)
-    , m_styleSheetClient(this)
+    , m_styleSheetClient(*this)
     , m_strHref(href)
     , m_mediaQueries(WTFMove(mediaQueries))
     , m_cascadeLayerName(WTFMove(cascadeLayerName))

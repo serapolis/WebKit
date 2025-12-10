@@ -42,6 +42,7 @@
 #import <wtf/CallbackAggregator.h>
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/URL.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/MakeString.h>
@@ -67,7 +68,7 @@ void NetworkStorageSession::setCookie(const Cookie& cookie)
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies) || m_isInMemoryCookieStore);
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    [nsCookieStorage() setCookie:(NSHTTPCookie *)cookie];
+    [nsCookieStorage() setCookie:cookie.createNSHTTPCookie().get()];
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
@@ -81,7 +82,7 @@ void NetworkStorageSession::setCookies(const Vector<Cookie>& cookies, const URL&
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies) || m_isInMemoryCookieStore);
 
     auto nsCookies = createNSArray(cookies, [] (auto& cookie) -> NSHTTPCookie * {
-        return cookie;
+        return cookie.createNSHTTPCookie().autorelease();
     });
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
@@ -93,7 +94,7 @@ void NetworkStorageSession::deleteCookie(const Cookie& cookie, CompletionHandler
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies) || m_isInMemoryCookieStore);
 
-    auto work = [completionHandler = WTFMove(completionHandler), cookieStorage = RetainPtr { nsCookieStorage() }, cookie = RetainPtr { (NSHTTPCookie *)cookie }] () mutable {
+    auto work = [completionHandler = WTFMove(completionHandler), cookieStorage = RetainPtr { nsCookieStorage() }, cookie = cookie.createNSHTTPCookie()] () mutable {
         [cookieStorage deleteCookie:cookie.get()];
         ensureOnMainThread(WTFMove(completionHandler));
     };
@@ -121,13 +122,13 @@ static Vector<Cookie> nsCookiesToCookieVector(NSArray<NSHTTPCookie *> *nsCookies
 Vector<Cookie> NetworkStorageSession::getAllCookies()
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies));
-    return nsCookiesToCookieVector([nsCookieStorage() cookies]);
+    return nsCookiesToCookieVector(retainPtr([nsCookieStorage() cookies]).get());
 }
 
 Vector<Cookie> NetworkStorageSession::getCookies(const URL& url)
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies));
-    return nsCookiesToCookieVector([nsCookieStorage() cookiesForURL:url.createNSURL().get()]);
+    return nsCookiesToCookieVector(retainPtr([nsCookieStorage() cookiesForURL:url.createNSURL().get()]).get());
 }
 
 void NetworkStorageSession::hasCookies(const RegistrableDomain& domain, CompletionHandler<void(bool)>&& completionHandler) const
@@ -192,6 +193,11 @@ CookieStorageObserver& NetworkStorageSession::cookieStorageObserver() const
         m_cookieStorageObserver = makeUnique<CookieStorageObserver>(nsCookieStorage().get());
 
     return *m_cookieStorageObserver;
+}
+
+CheckedRef<CookieStorageObserver> NetworkStorageSession::checkedCookieStorageObserver() const
+{
+    return cookieStorageObserver();
 }
 
 RetainPtr<CFURLStorageSessionRef> createPrivateStorageSession(CFStringRef identifier, std::optional<HTTPCookieAcceptPolicy> cookieAcceptPolicy, NetworkStorageSession::ShouldDisableCFURLCache shouldDisableCFURLCache)
@@ -515,7 +521,7 @@ static RetainPtr<NSHTTPCookie> parseDOMCookie(String cookieString, NSURL* cookie
     // cookiesWithResponseHeaderFields doesn't parse cookies without a value
     cookieString = cookieString.contains('=') ? cookieString : makeString(cookieString, '=');
 
-    return adjustScriptWrittenCookie([NSHTTPCookie _cookieForSetCookieString:cookieString.createNSString().get() forURL:cookieURL partition:nsStringNilIfEmpty(partition)], cappedLifetime);
+    return adjustScriptWrittenCookie([NSHTTPCookie _cookieForSetCookieString:cookieString.createNSString().get() forURL:cookieURL partition:nsStringNilIfEmpty(partition).get()], cappedLifetime);
 }
 
 void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameSiteInfo& sameSiteInfo, const URL& url, std::optional<FrameIdentifier> frameID, std::optional<PageIdentifier> pageID, ApplyTrackingPrevention applyTrackingPrevention, RequiresScriptTrackingPrivacy requiresScriptTrackingPrivacy, const String& cookieString, ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker isKnownCrossSiteTracker) const
@@ -542,7 +548,7 @@ void NetworkStorageSession::setCookiesFromDOM(const URL& firstParty, const SameS
     if (!cookie)
         return;
 
-    setHTTPCookiesForURL(cookieStorage().get(), @[cookie.get()], cookieURL.get(), firstParty.createNSURL().get(), nsStringNilIfEmpty(partitionKey), sameSiteInfo, thirdPartyCookieBlockingDecision);
+    setHTTPCookiesForURL(cookieStorage().get(), @[cookie.get()], cookieURL.get(), firstParty.createNSURL().get(), nsStringNilIfEmpty(partitionKey).get(), sameSiteInfo, thirdPartyCookieBlockingDecision);
 
     END_BLOCK_OBJC_EXCEPTIONS
 }
@@ -558,17 +564,17 @@ bool NetworkStorageSession::setCookieFromDOM(const URL& firstParty, const SameSi
         return false;
 
     auto expiryCap = clientSideCookieCap(RegistrableDomain { firstParty }, requiresScriptTrackingPrivacy, pageID);
-    RetainPtr nshttpCookie = adjustScriptWrittenCookie((NSHTTPCookie *)cookie, expiryCap);
+    RetainPtr nshttpCookie = adjustScriptWrittenCookie(cookie.createNSHTTPCookie().get(), expiryCap);
     if (!nshttpCookie)
         return false;
 
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
-    NSString *partition = isOptInCookiePartitioningEnabled() ? nsStringNilIfEmpty(cookiePartitionIdentifier(firstParty)) : nil;
+    RetainPtr partition = isOptInCookiePartitioningEnabled() ? nsStringNilIfEmpty(cookiePartitionIdentifier(firstParty)) : nil;
 #else
-    NSString *partition = nil;
+    RetainPtr<NSString> partition;
 #endif
 
-    setHTTPCookiesForURL(cookieStorage().get(), @[ nshttpCookie.get() ], url.createNSURL().get(), firstParty.createNSURL().get(), partition, sameSiteInfo, thirdPartyCookieBlockingDecision);
+    setHTTPCookiesForURL(cookieStorage().get(), @[ nshttpCookie.get() ], url.createNSURL().get(), firstParty.createNSURL().get(), partition.get(), sameSiteInfo, thirdPartyCookieBlockingDecision);
     return true;
 
     END_BLOCK_OBJC_EXCEPTIONS
@@ -602,7 +608,7 @@ bool NetworkStorageSession::getRawCookies(const URL& firstParty, const SameSiteI
     RetainPtr<NSArray> cookies = cookiesForURL(firstParty, sameSiteInfo, url, frameID, pageID, applyTrackingPrevention, shouldRelaxThirdPartyCookieBlocking, IsKnownCrossSiteTracker::No);
     NSUInteger count = [cookies count];
     rawCookies = Vector<Cookie>(count, [cookies](size_t i) {
-        return Cookie { (NSHTTPCookie *)[cookies objectAtIndex:i] };
+        return Cookie { checked_objc_cast<NSHTTPCookie>([cookies objectAtIndex:i]) };
     });
 
     END_BLOCK_OBJC_EXCEPTIONS
@@ -720,7 +726,7 @@ void NetworkStorageSession::deleteCookiesForHostnames(const Vector<String>& host
         if (!cookie.domain || (includeHttpOnlyCookies == IncludeHttpOnlyCookies::No && cookie.isHTTPOnly))
             return false;
 #if ENABLE(JS_COOKIE_CHECKING)
-        bool setInJS = [[cookie properties] valueForKey:@"SetInJavaScript"];
+        bool setInJS = [retainPtr([cookie properties]) valueForKey:@"SetInJavaScript"];
         if (scriptWrittenCookiesOnly == ScriptWrittenCookiesOnly::Yes && !setInJS)
             return false;
 #else
@@ -816,12 +822,13 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
 
     m_didRegisterCookieListeners = true;
 
-    [nsCookieStorage() _setCookiesChangedHandler:makeBlockPtr([this, weakThis = WeakPtr { *this }](NSArray<NSHTTPCookie *> *addedCookies, NSString *domainForChangedCookie) {
-        if (!weakThis)
+    [nsCookieStorage() _setCookiesChangedHandler:makeBlockPtr([weakThis = WeakPtr { *this }](NSArray<NSHTTPCookie *> *addedCookies, NSString *domainForChangedCookie) {
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
             return;
         String host = domainForChangedCookie;
-        auto it = m_cookieChangeObservers.find(host);
-        if (it == m_cookieChangeObservers.end())
+        auto it = checkedThis->m_cookieChangeObservers.find(host);
+        if (it == checkedThis->m_cookieChangeObservers.end())
             return;
         auto cookies = nsCookiesToCookieVector(addedCookies, [](NSHTTPCookie *cookie) { return !cookie.HTTPOnly; });
         if (cookies.isEmpty())
@@ -830,11 +837,12 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
             observer->cookiesAdded(host, cookies);
     }).get() onQueue:mainDispatchQueueSingleton()];
 
-    [nsCookieStorage() _setCookiesRemovedHandler:makeBlockPtr([this, weakThis = WeakPtr { *this }](NSArray<NSHTTPCookie *> *removedCookies, NSString *domainForRemovedCookies, bool removeAllCookies) {
-        if (!weakThis)
+    [nsCookieStorage() _setCookiesRemovedHandler:makeBlockPtr([weakThis = WeakPtr { *this }](NSArray<NSHTTPCookie *> *removedCookies, NSString *domainForRemovedCookies, bool removeAllCookies) {
+        CheckedPtr checkedThis = weakThis.get();
+        if (!checkedThis)
             return;
         if (removeAllCookies) {
-            for (auto& observers : m_cookieChangeObservers.values()) {
+            for (auto& observers : checkedThis->m_cookieChangeObservers.values()) {
                 for (Ref observer : observers)
                     observer->allCookiesDeleted();
             }
@@ -842,8 +850,8 @@ void NetworkStorageSession::registerCookieChangeListenersIfNecessary()
         }
 
         String host = domainForRemovedCookies;
-        auto it = m_cookieChangeObservers.find(host);
-        if (it == m_cookieChangeObservers.end())
+        auto it = checkedThis->m_cookieChangeObservers.find(host);
+        if (it == checkedThis->m_cookieChangeObservers.end())
             return;
 
         auto cookies = nsCookiesToCookieVector(removedCookies, [](NSHTTPCookie *cookie) { return !cookie.HTTPOnly; });

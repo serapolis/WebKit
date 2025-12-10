@@ -28,6 +28,8 @@ import os
 import re
 import sys
 
+from webkit.opaque_ipc_types import is_opaque_type, opaque_ipc_types
+
 # Supported type attributes:
 #
 # AdditionalEncoder - generate serializers for StreamConnectionEncoder in addition to IPC::Encoder.
@@ -110,22 +112,24 @@ class SerializedType(object):
                     key, value = attribute.split('=')
                     if key == 'AdditionalEncoder':
                         self.encoders.append(value)
-                    if key == 'ConstructSubclass':
+                    elif key == 'ConstructSubclass':
                         self.construct_subclass = value
-                    if key == 'CreateUsing':
+                    elif key == 'CreateUsing':
                         self.create_using = value
-                    if key == 'Alias':
+                    elif key == 'Alias':
                         self.alias = value
-                    if key == 'ToCFMethod':
+                    elif key == 'ToCFMethod':
                         self.to_cf_method = value
-                    if key == 'FromCFMethod':
+                    elif key == 'FromCFMethod':
                         self.from_cf_method = value
-                    if key == 'ForwardDeclaration':
+                    elif key == 'ForwardDeclaration':
                         self.forward_declaration = value
-                    if key == 'WebKitSecureCodingClass':
+                    elif key == 'WebKitSecureCodingClass':
                         self.custom_secure_coding_class = value
-                    if key == 'Wrapper':
+                    elif key == 'Wrapper':
                         self.generic_wrapper = value
+                    else:
+                        raise Exception(f'Invalid attribute ({key}={value}) found on struct: {self.namespace}::{self.name}')
                 else:
                     if attribute == 'Nested':
                         self.nested = True
@@ -145,6 +149,10 @@ class SerializedType(object):
                         self.support_wkkeyedcoder = True
                     elif attribute == 'DebugDecodingFailure':
                         self.debug_decoding_failure = True
+                    elif attribute in ['CustomHeader']:
+                        pass
+                    else:
+                        raise Exception(f'Invalid attribute ({attribute}) found on struct: {self.namespace}::{self.name}')
         self.templates = templates
         if other_metadata:
             if other_metadata == 'subclasses':
@@ -248,6 +256,13 @@ class SerializedType(object):
         copied_type.name = self.cpp_struct_or_class_name()
         copied_type.dictionary_members = None
         return copied_type
+
+    def enforce_opaque_ipc_types_usage(self):
+        for member in self.members:
+            if is_opaque_type(member.type):
+                namespace_and_name = self.namespace_and_name()
+                if not opaque_ipc_types.structure_param_tracked(namespace_and_name, member.name, member.type):
+                    raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] StructureParam {namespace_and_name}.{member.name} {member.type}")
 
 
 class SerializedEnum(object):
@@ -459,6 +474,21 @@ class UsingStatement(object):
         self.alias_lines = alias_lines
         self.condition = condition
 
+    def enforce_opaque_ipc_types_usage(self):
+        for alias_line in self.alias_lines:
+            if alias_line.strip().startswith('#'):
+                continue
+
+            cleaned_line = alias_line.strip().rstrip(',;')
+
+            # Support multi-line using statements
+            if not cleaned_line or cleaned_line in ['Variant<', '>']:
+                continue
+
+            if is_opaque_type(cleaned_line):
+                if not opaque_ipc_types.alias_param_tracked(self.name, cleaned_line):
+                    raise Exception(f"Justification needed in opaque_ipc_types.tracking.in: [] AliasParam {self.name} {cleaned_line}")
+
 
 class ObjCWrappedType(object):
     def __init__(self, ns_type, wrapper, condition):
@@ -508,10 +538,7 @@ def one_argument_coder_declaration_cf(type):
     result.append('};')
     result.append(f'template<> struct ArgumentCoder<RetainPtr<{name_with_template}>> {{')
     for encoder in type.encoders:
-        result.append(f'    static void encode({encoder}& encoder, const RetainPtr<{name_with_template}>& retainPtr)')
-        result.append('    {')
-        result.append(f'        ArgumentCoder<{name_with_template}>::encode(encoder, retainPtr.get());')
-        result.append('    }')
+        result.append(f'    static void encode({encoder}&, const RetainPtr<{name_with_template}>&);')
     result.append(f'    static std::optional<RetainPtr<{name_with_template}>> decode(Decoder&);')
     result.append('};')
     if type.condition is not None:
@@ -826,6 +853,8 @@ def encode_type(type):
             result.append(f'    if (instance.{bits_variable_name} & {member.optional_tuple_bit()})')
             result.append(f'        encoder << instance.{member.name};')
         else:
+            if not opaque_ipc_types.structure_webcontent_dispatchable(type.namespace_and_name(), member.name, member.type):
+                result.append('    ASSERT(!isInWebProcess());')
             if type.rvalue and '()' not in member.name:
                 if 'EncodeRequestBody' in member.attributes:
                     result.append(f'    RefPtr {member.name}Body = instance.{member.name}.httpBody();')
@@ -846,6 +875,11 @@ def encode_type(type):
 
 def decode_cf_type(type):
     result = []
+    result.append('    auto isEngaged = decoder.template decode<bool>();')
+    result.append('    if (!isEngaged)')
+    result.append('        return std::nullopt;')
+    result.append('    if (!*isEngaged)')
+    result.append('        return { nullptr };')
     result.append(f'    auto result = decoder.decode<{type.cf_wrapper_type()}>();')
     result.append('    if (!decoder.isValid()) [[unlikely]]')
     result.append('        return std::nullopt;')
@@ -904,7 +938,7 @@ def decode_type(type, serialized_types):
                 else:
                     condition = re.search(r'Precondition', attribute)
                     assert not condition
-            result.append(f'    auto {sanitized_variable_name} = decoder.decodeWithAllowedClasses<{match.groups()[0]}>({{ {decodable_classes[0]} }});')
+            result.append(f'    auto {sanitized_variable_name} = decoder.decodeWithAllowedClasses<{member.type}>({{ {decodable_classes[0]} }});')
         elif member.is_subclass:
             result.append(f'    if (type == {type.subclass_enum_name()}::{member.name}) {{')
             typename = f'{member.namespace}::{member.name}'
@@ -960,8 +994,12 @@ def decode_type(type, serialized_types):
                 result.append('    if (!decoder.isValid()) [[unlikely]]')
                 result.append('        return std::nullopt;')
                 result.append('')
-                result.append(f'    if (!({validator}))')
+                result.append(f'    if (!({validator})) {{')
+                result.append('#if ENABLE(IPC_TESTING_API)')
+                result.append(f'        decoder.setErrorString("Validation failed: {validator}"_s);')
+                result.append('#endif')
                 result.append('        return std::nullopt;')
+                result.append(f'    }}')
                 continue
             else:
                 match = re.search(r'Validator', attribute)
@@ -1066,6 +1104,18 @@ def generate_one_impl(type, template_argument, serialized_types):
         if type.members_are_subclasses:
             result.append('IGNORE_WARNINGS_END')
         result.append('')
+    if type.cf_type is not None:
+        for encoder in type.encoders:
+            result.append(f'void ArgumentCoder<RetainPtr<{name_with_template}>>::encode({encoder}& encoder, const RetainPtr<{name_with_template}>& retainPtr)')
+            result.append('{')
+            result.append('    if (!retainPtr) {')
+            result.append('        encoder << false;')
+            result.append('        return;')
+            result.append('    }')
+            result.append('    encoder << true;')
+            result.append(f'    ArgumentCoder<{name_with_template}>::encode(encoder, retainPtr.get());')
+            result.append('}')
+            result.append('')
     if type.cf_type is not None:
         result.append(f'std::optional<RetainPtr<{name_with_template}>> ArgumentCoder<RetainPtr<{name_with_template}>>::decode(Decoder& decoder)')
     elif type.return_ref:
@@ -1823,7 +1873,8 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
     result.append('        return { };')
     result.append('    Vector<RetainPtr<T>> result;')
     result.append('    for (id element in array) {')
-    result.append('        if ([element isKindOfClass:IPC::getClass<T>()])')
+    # FIXME: isKindOfClass call can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
+    result.append('        SUPPRESS_UNRETAINED_ARG if ([element isKindOfClass:retainPtr(IPC::getClass<T>()).get()])')
     result.append('            result.append((T *)element);')
     result.append('    }')
     result.append('    return result;')
@@ -1864,17 +1915,18 @@ def generate_webkit_secure_coding_impl(serialized_types, headers):
             if member.has_container_contents():
                 if member.value_is_optional():
                     if member.dictionary_contents() is not None:
-                        result.append(f'    m_{member.type} = optionalVectorFromDictionary<{member.dictionary_contents()}>(({member.ns_type_pointer()})[dictionary objectForKey:@"{member.type}"]);')
+                        result.append(f'    m_{member.type} = optionalVectorFromDictionary<{member.dictionary_contents()}>(({member.ns_type_pointer()})retainPtr([dictionary objectForKey:@"{member.type}"]).get());')
                     if member.array_contents() is not None:
-                        result.append(f'    m_{member.type} = optionalVectorFromArray<{member.array_contents()}>(({member.ns_type_pointer()})[dictionary objectForKey:@"{member.type}"]);')
+                        result.append(f'    m_{member.type} = optionalVectorFromArray<{member.array_contents()}>(({member.ns_type_pointer()})retainPtr([dictionary objectForKey:@"{member.type}"]).get());')
                 else:
                     if member.dictionary_contents() is not None:
-                        result.append(f'    m_{member.type} = vectorFromDictionary<{member.dictionary_contents()}>(({member.ns_type_pointer()})[dictionary objectForKey:@"{member.type}"]);')
+                        result.append(f'    m_{member.type} = vectorFromDictionary<{member.dictionary_contents()}>(({member.ns_type_pointer()})retainPtr([dictionary objectForKey:@"{member.type}"]).get());')
                     if member.array_contents() is not None:
-                        result.append(f'    m_{member.type} = vectorFromArray<{member.array_contents()}>(({member.ns_type_pointer()})[dictionary objectForKey:@"{member.type}"]);')
+                        result.append(f'    m_{member.type} = vectorFromArray<{member.array_contents()}>(({member.ns_type_pointer()})retainPtr([dictionary objectForKey:@"{member.type}"]).get());')
             else:
                 result.append(f'    m_{member.type} = ({member.ns_type_pointer()})[dictionary objectForKey:@"{member.type}"];')
-                result.append(f'    if (!{member.type_check()})')
+                # FIXME: isKindOfClass call from type_check() can cause a static analysis false positive (https://github.com/llvm/llvm-project/issues/162979).
+                result.append(f'    SUPPRESS_UNRETAINED_ARG if (!{member.type_check()})')
                 result.append(f'        m_{member.type} = nullptr;')
                 # FIXME: We ought to be able to ASSERT_NOT_REACHED() here once all the question marks are in the right places.
                 result.append('')
@@ -1957,7 +2009,7 @@ def generate_webkit_secure_coding_header(serialized_types):
         result.append('    RetainPtr<id> toID() const;')
         result.append('')
         result.append('private:')
-        result.append(f'    friend struct IPC::ArgumentCoder<{type.cpp_struct_or_class_name()}, void>;')
+        result.append(f'    friend struct IPC::ArgumentCoder<{type.cpp_struct_or_class_name()}>;')
         result.append('')
         result.append(f'    {type.cpp_struct_or_class_name()}(')
         for i in range(len(type.dictionary_members)):
@@ -1992,10 +2044,12 @@ def main(argv):
         with open(argv[i]) as file:
             new_types, new_enums, new_headers, new_using_statements, new_additional_forward_declarations, new_objc_wrapped_types = parse_serialized_types(file)
             for type in new_types:
+                type.enforce_opaque_ipc_types_usage()
                 serialized_types.append(type)
             for enum in new_enums:
                 serialized_enums.append(enum)
             for using_statement in new_using_statements:
+                using_statement.enforce_opaque_ipc_types_usage()
                 using_statements.append(using_statement)
             for header in new_headers:
                 header_set.add(header)

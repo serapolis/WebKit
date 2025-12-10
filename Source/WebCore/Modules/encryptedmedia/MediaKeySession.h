@@ -65,11 +65,12 @@ template<typename IDLType> class DOMPromiseProxy;
 class MediaKeySession final : public RefCounted<MediaKeySession>, public EventTarget, public ActiveDOMObject, public CDMInstanceSessionClient {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(MediaKeySession, WEBCORE_EXPORT);
 public:
-    void ref() const final { RefCounted::ref(); }
-    void deref() const final { RefCounted::deref(); }
-
     static Ref<MediaKeySession> create(Document&, WeakPtr<MediaKeys>&&, MediaKeySessionType, bool useDistinctiveIdentifier, Ref<CDM>&&, Ref<CDMInstanceSession>&&);
     WEBCORE_EXPORT virtual ~MediaKeySession();
+
+    // ActiveDOMObject, CDMInstanceSessionClient.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     USING_CAN_MAKE_WEAKPTR(CDMInstanceSessionClient);
 
@@ -148,7 +149,7 @@ private:
     Vector<std::pair<Ref<SharedBuffer>, MediaKeyStatus>> m_statuses;
 
     using DisplayChangedObserver = Observer<void(PlatformDisplayID)>;
-    DisplayChangedObserver m_displayChangedObserver;
+    const Ref<DisplayChangedObserver> m_displayChangedObserver;
 };
 
 } // namespace WebCore

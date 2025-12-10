@@ -41,6 +41,7 @@
 #include "Register.h"
 #include "WasmBaselineData.h"
 #include "WasmConstExprGenerator.h"
+#include "WasmDebugServer.h"
 #include "WasmModuleInformation.h"
 #include "WasmTag.h"
 #include "WasmTypeDefinitionInlines.h"
@@ -54,7 +55,22 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-using namespace Wasm;
+using Wasm::CalleeGroup;
+using Wasm::CompilationMode;
+using Wasm::CreationMode;
+using Wasm::Element;
+using Wasm::Global;
+using Wasm::GlobalInformation;
+using Wasm::Memory;
+using Wasm::ModuleInformation;
+using Wasm::RTTKind;
+using Wasm::Table;
+using Wasm::Tag;
+using Wasm::Type;
+using Wasm::TypeIndex;
+using Wasm::TypeInformation;
+using Wasm::FunctionSpaceIndex;
+using Wasm::isRefType;
 
 const ClassInfo JSWebAssemblyInstance::s_info = { "WebAssembly.Instance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebAssemblyInstance) };
 
@@ -142,6 +158,9 @@ void JSWebAssemblyInstance::finishCreation(VM& vm)
 
     // Now, JSWebAssemblyInstance is fully initialized. Expose it to the concurrent compiler.
     m_anchor = m_module->registerAnchor(this);
+
+    if (Options::enableWasmDebugger()) [[unlikely]]
+        Wasm::DebugServer::singleton().trackInstance(this);
 }
 
 JSWebAssemblyInstance::~JSWebAssemblyInstance()
@@ -253,7 +272,7 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
             // the import is a Wasm function or a builtin
             auto calleeBits = info->boxedCallee;
             if (calleeBits.isNativeCallee()) {
-                auto* callee = std::bit_cast<Callee*>(calleeBits.asNativeCallee());
+                auto* callee = uncheckedDowncast<Wasm::Callee>(calleeBits.asNativeCallee());
                 // if the callee is a builtin, info->importFunctionStub has already been set
                 if (callee->compilationMode() != CompilationMode::WasmBuiltinMode)
                     info->importFunctionStub = wasmCalleeGroup->wasmToWasmExitStub(functionSpaceIndex);
@@ -358,8 +377,8 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
         // Make sure we have a dummy memory, so that wasm -> wasm thunks avoid checking for a nullptr Memory when trying to set pinned registers.
         // When there is a memory import, this will be replaced later in the module record import initialization.
         auto* jsMemory = JSWebAssemblyMemory::create(vm, globalObject->webAssemblyMemoryStructure());
-        jsMemory->adopt(Memory::create(vm));
-        jsInstance->setMemory(vm, jsMemory);
+        jsMemory->adopt(Memory::create());
+        jsInstance->setDummyMemory(vm, jsMemory);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
     }
     
@@ -455,7 +474,7 @@ void JSWebAssemblyInstance::elemDrop(uint32_t elementIndex)
     m_passiveElements.quickClear(elementIndex);
 }
 
-bool JSWebAssemblyInstance::memoryInit(uint32_t dstAddress, uint32_t srcAddress, uint32_t length, uint32_t dataSegmentIndex)
+bool JSWebAssemblyInstance::memoryInit(uint64_t dstAddress, uint32_t srcAddress, uint32_t length, uint32_t dataSegmentIndex)
 {
     RELEASE_ASSERT(dataSegmentIndex < module().moduleInformation().dataSegmentsCount());
 
@@ -514,7 +533,7 @@ void JSWebAssemblyInstance::initElementSegment(uint32_t tableIndex, const Elemen
             auto functionIndex = Wasm::FunctionSpaceIndex(initialBitsOrIndex);
             TypeIndex typeIndex = m_module->typeIndexFromFunctionIndexSpace(functionIndex);
             if (isImportFunction(functionIndex)) {
-                JSObject* functionImport = importFunction(functionIndex).get();
+                JSObject* functionImport = getImportFunctionObject(functionIndex, globalObject);
                 if (isWebAssemblyHostFunction(functionImport)) {
                     // If we ever import a WebAssemblyWrapperFunction, we set the import as the unwrapped value.
                     // Because a WebAssemblyWrapperFunction can never wrap another WebAssemblyWrapperFunction,
@@ -736,6 +755,21 @@ Wasm::BaselineData& JSWebAssemblyInstance::ensureBaselineData(Wasm::FunctionCode
         slot = WTFMove(result);
     }
     return *slot;
+}
+
+JSObject* JSWebAssemblyInstance::getImportFunctionObject(unsigned importFunctionIndex, JSGlobalObject* globalObject)
+{
+    JSObject* fun = importFunction(importFunctionIndex).get();
+    if (!fun) [[unlikely]] {
+        // No fun means the import is a Wasm builtin, and we should use its jsWrapper().
+        // The boxed callee in callLinkInfo is a WasmBuiltinCallee with a pointer to the builtin.
+        auto* callLinkInfo = importFunctionInfo(importFunctionIndex);
+        auto* callee = uncheckedDowncast<Wasm::WasmBuiltinCallee>(uncheckedDowncast<Wasm::Callee>(callLinkInfo->boxedCallee.asNativeCallee()));
+        ASSERT(callee->compilationMode() == Wasm::CompilationMode::WasmBuiltinMode);
+        const WebAssemblyBuiltin* builtin = callee->builtin();
+        fun = builtin->jsWrapper(globalObject);
+    }
+    return fun;
 }
 
 } // namespace JSC

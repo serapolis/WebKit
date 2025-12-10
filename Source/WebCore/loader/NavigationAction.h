@@ -60,6 +60,7 @@ class NavigationAction : public FrameLoadRequestBase {
 public:
     NavigationAction();
     WEBCORE_EXPORT NavigationAction(Document&, const ResourceRequest&, InitiatedByMainFrame, bool, NavigationType = NavigationType::Other, ShouldOpenExternalURLsPolicy = ShouldOpenExternalURLsPolicy::ShouldNotAllow, Event* = nullptr, const AtomString& downloadAttribute = nullAtom(), Element* sourceElement = nullptr);
+    WEBCORE_EXPORT NavigationAction(const NavigationRequester&, const ResourceRequest&, InitiatedByMainFrame, bool, FrameLoadType, bool isFormSubmission, Event* = nullptr, ShouldOpenExternalURLsPolicy = ShouldOpenExternalURLsPolicy::ShouldNotAllow, const AtomString& downloadAttribute = nullAtom(), Element* sourceElement = nullptr);
     NavigationAction(Document&, const ResourceRequest&, InitiatedByMainFrame, bool, FrameLoadType, bool isFormSubmission, Event* = nullptr, ShouldOpenExternalURLsPolicy = ShouldOpenExternalURLsPolicy::ShouldNotAllow, const AtomString& downloadAttribute = nullAtom(), Element* sourceElement = nullptr);
     WEBCORE_EXPORT NavigationAction(FrameLoadRequest&, NavigationType = NavigationType::Other, Event* = nullptr);
 
@@ -128,6 +129,8 @@ public:
     std::optional<NavigationNavigationType> navigationAPIType() const { return m_navigationAPIType; }
     void setNavigationAPIType(NavigationNavigationType navigationAPIType) { m_navigationAPIType = navigationAPIType; }
 
+    void setPendingDispatchNavigateEvent(std::function<bool()>&& function) { m_pendingDispatchNavigateEvent = WTFMove(function); }
+    std::function<bool()> takePendingDispatchNavigateEvent() { return std::exchange(m_pendingDispatchNavigateEvent, nullptr); }
 
 private:
     // Do not add a strong reference to the originating document or a subobject that holds the
@@ -140,6 +143,7 @@ private:
     std::optional<BackForwardItemIdentifier> m_targetBackForwardItemIdentifier;
     std::optional<BackForwardItemIdentifier> m_sourceBackForwardItemIdentifier;
     std::optional<PrivateClickMeasurement> m_privateClickMeasurement;
+    std::function<bool()> m_pendingDispatchNavigateEvent;
 
     NavigationType m_type;
     std::optional<NavigationNavigationType> m_navigationAPIType;

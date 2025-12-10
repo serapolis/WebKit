@@ -52,6 +52,9 @@ public:
         uint64_t m_primitive;
         WriteBarrierBase<Unknown> m_externref;
         Value* m_pointer;
+
+        static constexpr ptrdiff_t offsetOfValue() { return 0; }
+        static constexpr ptrdiff_t offsetOfOwner() { return Global::offsetOfOwner() - Global::offsetOfValue(); }
     };
     static_assert(sizeof(Value) == 16, "Update IPInt if this changes");
 
@@ -94,6 +97,7 @@ public:
 private:
     Global(Wasm::Type type, Wasm::Mutability mutability, uint64_t initialValue)
         : m_type(type)
+        , m_typeDefinition(TypeInformation::getRef(type.index))
         , m_mutability(mutability)
     {
         ASSERT(m_type != Types::V128);
@@ -102,6 +106,7 @@ private:
 
     Global(Wasm::Type type, Wasm::Mutability mutability, v128_t initialValue)
         : m_type(type)
+        , m_typeDefinition(TypeInformation::getRef(type.index))
         , m_mutability(mutability)
     {
         ASSERT(m_type == Types::V128);
@@ -109,6 +114,8 @@ private:
     }
 
     Wasm::Type m_type;
+    // If m_type came from a TypeDefinition, the following retains the definition to prevent a dangling m_type.
+    RefPtr<const Wasm::TypeDefinition> m_typeDefinition;
     Wasm::Mutability m_mutability;
     JSWebAssemblyGlobal* m_owner { nullptr };
     Value m_value;

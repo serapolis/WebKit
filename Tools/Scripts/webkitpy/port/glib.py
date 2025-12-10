@@ -55,7 +55,7 @@ class GLibPort(Port):
                 self.set_option_default('wrapper', ' '.join(self._jhbuild_wrapper))
 
     def default_timeout_ms(self):
-        default_timeout = 15000
+        default_timeout = super().default_timeout_ms()
         # Starting an application under Valgrind takes a lot longer than normal
         # so increase the timeout (empirically 10x is enough to avoid timeouts).
         multiplier = 10 if self.get_option("leaks") else 1
@@ -95,6 +95,7 @@ class GLibPort(Port):
 
         # Copy all GStreamer related env vars
         self._copy_values_from_environ_with_prefix(environment, 'GST_')
+        self._copy_value_from_environ_if_set(environment, 'WEBKIT_GST_DISABLE_WEBRTC_NETWORK_SANDBOX')
 
         gst_feature_rank_override = os.environ.get('GST_PLUGIN_FEATURE_RANK')
         # Disable hardware-accelerated device providers, encoders and decoders. Depending on the underlying platform
@@ -129,6 +130,9 @@ class GLibPort(Port):
         # Disable SIMD optimization in GStreamer's ORC. Some bots (WPE release) crash in ORC's optimizations.
         environment['ORC_CODE'] = 'backup'
 
+        # Workaround for bots not using latest SDK version.
+        environment['RICE_LOG'] = 'none'
+
         if self.get_option("leaks"):
             # Turn off GLib memory optimisations https://wiki.gnome.org/Valgrind.
             environment['G_SLICE'] = 'always-malloc'
@@ -154,6 +158,9 @@ class GLibPort(Port):
                 "--xml=yes " \
                 "--xml-file=%s " \
                 "--suppressions=%s" % (xmlfile, suppressionsfile)
+
+        # WTF_DateMath.calculateLocalTimeOffset test only pass in Pacific Time Zone
+        environment['TZ'] = 'PST8PDT'
 
         return environment
 
@@ -197,3 +204,14 @@ class GLibPort(Port):
         if self._should_use_jhbuild():
             command = self._jhbuild_wrapper + command
         return self._executive.run_command(command + args, cwd=self.webkit_base(), stdout=None, return_stderr=False, decode_output=False, env=env)
+
+    API_TEST_BINARY_NAMES = ['TestWTF', 'TestJavaScriptCore', 'TestWebCore', 'TestWebKit']
+
+    def path_to_api_test(self, program_name):
+        return self._built_executables_path('TestWebKitAPI', program_name)
+
+    def environment_for_api_tests(self):
+        environment = super(GLibPort, self).environment_for_api_tests()
+        environment['TEST_WEBKIT_API_WEBKIT2_RESOURCES_PATH'] = self.path_from_webkit_base('Tools', 'TestWebKitAPI', 'Tests', 'WebKit')
+        environment['TEST_WEBKIT_API_WEBKIT2_INJECTED_BUNDLE_PATH'] = self._build_path('lib')
+        return environment

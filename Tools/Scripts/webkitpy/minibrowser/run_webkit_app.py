@@ -19,6 +19,8 @@
 import argparse
 import sys
 import traceback
+import os
+from urllib.parse import urlparse
 
 from webkitpy.common.host import Host
 from webkitpy.port import configuration_options, platform_options, factory
@@ -58,15 +60,38 @@ def main(argv):
     # URL. convert_arg_line_to_args() returns a list containing a single
     # string, so it needs to be split again.
     browser_args = [decode(s, "utf-8") for s in option_parser.convert_arg_line_to_args(' '.join(args))[0].split()]
+    if options.url:
+        # Check if this "URL" is actually the value for -WebCoreLogging
+        url_index = argv.index(options.url)
+        skip_normalization = url_index > 0 and argv[url_index - 1] == '-WebCoreLogging'
+
+        if not skip_normalization:
+            # Normalize URL by adding scheme if missing.
+            url = options.url
+            parsed = urlparse(url)
+
+            # Only normalize if it actually looks like a URL (to not accidentally normalize a logging stream):
+            # - starts with a file path (/, ./, ../, ~/)
+            # - starts with localhost
+            # - looks like an IP address
+            # - contains a dot (likely a domain)
+            if not parsed.scheme:
+                if url.startswith(('/', './', '../', '~/')):
+                    abs_path = os.path.abspath(os.path.expanduser(url))
+                    url = f'file://{abs_path}'
+                elif url.startswith('localhost') or url.split(':')[0].replace('.', '').isdigit():
+                    url = f'http://{url}'
+                elif '.' in url:
+                    url = f'https://{url}'
+            browser_args.append(url)
+        else:
+            # It's the logging channel for -WebCoreLogging, pass through unchanged
+            browser_args.append(options.url)
     if options.platform == "mac" and options.site_isolation is not None:
         browser_args.append('--force-site-isolation')
         browser_args.append('YES' if options.site_isolation else 'NO')
     if options.web_inspector:
         browser_args.append('--web-inspector')
-    if options.url:
-        if options.platform == "mac":
-            browser_args.append('--url')
-        browser_args.append(options.url)
 
     try:
         port = factory.PortFactory(Host()).get(options.platform, options=options)

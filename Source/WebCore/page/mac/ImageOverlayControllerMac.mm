@@ -34,7 +34,9 @@
 #import "DataDetection.h"
 #import "DataDetectionResultsStorage.h"
 #import "DataDetectorElementInfo.h"
+#import "DocumentView.h"
 #import "ElementInlines.h"
+#import "FrameDestructionObserverInlines.h"
 #import "GraphicsLayer.h"
 #import "GraphicsLayerClient.h"
 #import "HTMLElement.h"
@@ -42,6 +44,7 @@
 #import "ImageOverlay.h"
 #import "ImageOverlayDataDetectionResultIdentifier.h"
 #import "IntRect.h"
+#import "LocalFrameInlines.h"
 #import "LocalFrameView.h"
 #import "Page.h"
 #import "PlatformMouseEvent.h"
@@ -142,9 +145,6 @@ bool ImageOverlayController::platformHandleMouseEvent(const PlatformMouseEvent& 
 
 bool ImageOverlayController::handleDataDetectorAction(const HTMLElement& element, const IntPoint& locationInContents)
 {
-    if (!m_page)
-        return false;
-
     RefPtr frame = element.document().frame();
     if (!frame)
         return false;
@@ -246,25 +246,16 @@ void ImageOverlayController::elementUnderMouseDidChange(LocalFrame& frame, Eleme
 
 void ImageOverlayController::scheduleRenderingUpdate(OptionSet<RenderingUpdateStep> requestedSteps)
 {
-    if (!m_page)
-        return;
-
     protectedPage()->scheduleRenderingUpdate(requestedSteps);
 }
 
 float ImageOverlayController::deviceScaleFactor() const
 {
-    if (!m_page)
-        return 1;
-
     return protectedPage()->deviceScaleFactor();
 }
 
 RefPtr<GraphicsLayer> ImageOverlayController::createGraphicsLayer(GraphicsLayerClient& client)
 {
-    if (!m_page)
-        return nullptr;
-
     return GraphicsLayer::create(protectedPage()->chrome().client().graphicsLayerFactory(), client);
 }
 

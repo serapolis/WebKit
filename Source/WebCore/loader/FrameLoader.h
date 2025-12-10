@@ -36,6 +36,7 @@
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/LoaderMalloc.h>
+#include <WebCore/NavigationRequester.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ReferrerPolicy.h>
@@ -88,6 +89,7 @@ class ResourceRequest;
 class ResourceResponse;
 class SerializedScriptValue;
 class SubstituteData;
+class DocumentPrefetcher;
 
 enum class CachePolicy : uint8_t;
 enum class NewLoadInProgress : bool;
@@ -132,12 +134,12 @@ public:
     SubframeLoader& subframeLoader() { return m_subframeLoader; }
     const SubframeLoader& subframeLoader() const { return m_subframeLoader; }
 
-    void setupForReplace();
+    void setupForMultipartReplace();
 
     // FIXME: These are all functions which start loads. We have too many.
-    WEBCORE_EXPORT void loadFrameRequest(FrameLoadRequest&&, Event*, RefPtr<FormState>&&, std::optional<PrivateClickMeasurement>&& = std::nullopt); // Called by submitForm, calls loadPostRequest and loadURL.
+    WEBCORE_EXPORT void loadFrameRequest(FrameLoadRequest&&, Event*, RefPtr<const FormSubmission>&&, std::optional<PrivateClickMeasurement>&& = std::nullopt); // Called by submitForm, calls loadPostRequest and loadURL.
 
-    WEBCORE_EXPORT void load(FrameLoadRequest&&);
+    WEBCORE_EXPORT void load(FrameLoadRequest&&, std::optional<NavigationRequester>&& crossSiteRequester = std::nullopt);
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
     WEBCORE_EXPORT void loadArchive(Ref<Archive>&&);
@@ -174,7 +176,6 @@ public:
 
     WEBCORE_EXPORT int numPendingOrLoadingRequests(bool recurse) const;
 
-    ReferrerPolicy effectiveReferrerPolicy() const;
     String referrer() const;
     WEBCORE_EXPORT String outgoingReferrer() const;
     WEBCORE_EXPORT URL outgoingReferrerURL();
@@ -208,8 +209,8 @@ public:
     static ResourceError blockedByContentFilterError(const ResourceRequest&);
 #endif
 
-    bool isReplacing() const;
-    void setReplacing();
+    bool isMultipartReplacing() const;
+    void setMultipartReplacing();
     bool subframeIsLoading() const;
     void willChangeTitle(DocumentLoader*);
     void didChangeTitle(DocumentLoader*);
@@ -364,6 +365,9 @@ public:
 
     WEBCORE_EXPORT void prefetchDNSIfNeeded(const URL&);
 
+    void prefetch(const URL&, const Vector<String>&, std::optional<ReferrerPolicy>, bool lowPriority = false);
+    DocumentPrefetcher& documentPrefetcher() { return m_documentPrefetcher.get(); }
+
 private:
     enum FormSubmissionCacheLoadPolicy {
         MayAttemptCacheOnlyLoadForFormSubmissionItem,
@@ -399,8 +403,8 @@ private:
     bool dispatchBeforeUnloadEvent(Chrome&, FrameLoader* frameLoaderBeingNavigated);
     void dispatchUnloadEvents(UnloadEventPolicy);
 
-    void continueLoadAfterNavigationPolicy(const ResourceRequest&, FormState*, NavigationPolicyDecision, AllowNavigationToInvalidURL);
-    void continueLoadAfterNewWindowPolicy(ResourceRequest&&, FormState*, const AtomString& frameName, const NavigationAction&, ShouldContinuePolicyCheck, AllowNavigationToInvalidURL, NewFrameOpenerPolicy);
+    void continueLoadAfterNavigationPolicy(const ResourceRequest&, const FormSubmission*, NavigationPolicyDecision, AllowNavigationToInvalidURL);
+    void continueLoadAfterNewWindowPolicy(ResourceRequest&&, RefPtr<const FormSubmission>&&, const AtomString& frameName, const NavigationAction&, ShouldContinuePolicyCheck, AllowNavigationToInvalidURL, NewFrameOpenerPolicy);
     void continueFragmentScrollAfterNavigationPolicy(const ResourceRequest&, const SecurityOrigin* requesterOrigin, bool shouldContinue, NavigationHistoryBehavior);
 
     bool shouldPerformFragmentNavigation(bool isFormSubmission, const String& httpMethod, FrameLoadType, const URL&);
@@ -423,13 +427,13 @@ private:
 
     void dispatchDidCommitLoad(std::optional<HasInsecureContent> initialHasInsecureContent, std::optional<UsedLegacyTLS> initialUsedLegacyTLS, std::optional<WasPrivateRelayed> initialWasPrivateRelayed);
 
-    void loadWithDocumentLoader(DocumentLoader*, FrameLoadType, RefPtr<FormState>&&, AllowNavigationToInvalidURL, CompletionHandler<void()>&& = [] { }); // Calls continueLoadAfterNavigationPolicy
+    void loadWithDocumentLoader(DocumentLoader*, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, CompletionHandler<void()>&& = [] { }); // Calls continueLoadAfterNavigationPolicy
     void load(DocumentLoader&, const SecurityOrigin* requesterOrigin); // Calls loadWithDocumentLoader
 
-    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<FormState>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
+    void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
 
-    void loadPostRequest(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<FormState>&&, CompletionHandler<void()>&&);
-    void loadURL(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<FormState>&&, std::optional<PrivateClickMeasurement>&&, CompletionHandler<void()>&&);
+    void loadPostRequest(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, CompletionHandler<void()>&&);
+    void loadURL(FrameLoadRequest&&, const String& referrer, FrameLoadType, Event*, RefPtr<const FormSubmission>&&, std::optional<PrivateClickMeasurement>&&, CompletionHandler<void()>&&);
 
     bool shouldReload(const URL& currentURL, const URL& destinationURL);
 
@@ -552,6 +556,10 @@ private:
     bool m_doNotAbortNavigationAPI { false };
     RefPtr<HistoryItem> m_pendingNavigationAPIItem;
     uint64_t m_requiredCookiesVersion { 0 };
+
+    const Ref<DocumentPrefetcher> m_documentPrefetcher;
+
+    Function<bool()> m_pendingDispatchNavigateEvent;
 };
 
 // This function is called by createWindow() in JSDOMWindowBase.cpp, for example, for

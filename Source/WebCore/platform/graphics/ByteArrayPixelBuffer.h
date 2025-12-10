@@ -41,7 +41,6 @@ public:
     JSC::Uint8ClampedArray& data() const LIFETIME_BOUND { return m_data.get(); }
     Ref<JSC::Uint8ClampedArray> protectedData() const { return m_data; }
     Ref<JSC::Uint8ClampedArray>&& takeData() { return WTFMove(m_data); }
-    WEBCORE_EXPORT std::span<const uint8_t> span() const LIFETIME_BOUND;
 
     Type type() const override { return Type::ByteArray; }
     RefPtr<PixelBuffer> createScratchPixelBuffer(const IntSize&) const override;

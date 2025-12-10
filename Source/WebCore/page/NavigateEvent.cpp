@@ -28,6 +28,7 @@
 
 #include "AbortController.h"
 #include "CommonVM.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "FrameDestructionObserverInlines.h"
 #include "ExceptionCode.h"
@@ -125,9 +126,13 @@ void NavigateEvent::processScrollBehavior(Document& document)
     ASSERT(m_interceptionState == InterceptionState::Committed);
     m_interceptionState = InterceptionState::Scrolled;
 
-    if (m_navigationType == NavigationNavigationType::Traverse || m_navigationType == NavigationNavigationType::Reload)
+    if (m_navigationType == NavigationNavigationType::Traverse || m_navigationType == NavigationNavigationType::Reload) {
+        if (m_navigationType == NavigationNavigationType::Reload && document.url().hasFragmentIdentifier()) {
+            if (document.frame()->view()->scrollToFragment(document.url()))
+                return;
+        }
         document.frame()->loader().history().restoreScrollPositionAndViewState();
-    else if (!document.frame()->view()->scrollToFragment(document.url())) {
+    } else if (!document.frame()->view()->scrollToFragment(document.url())) {
         if (!document.url().hasFragmentIdentifier())
             document.frame()->view()->scrollTo({ 0, 0 });
     }
@@ -183,6 +188,11 @@ void NavigateEvent::finish(Document& document, InterceptionHandlersDidFulfill di
         potentiallyProcessScrollBehavior(document);
 
     m_interceptionState = InterceptionState::Finished;
+}
+
+WebCoreOpaqueRoot root(NavigateEvent* event)
+{
+    return WebCoreOpaqueRoot { event };
 }
 
 } // namespace WebCore

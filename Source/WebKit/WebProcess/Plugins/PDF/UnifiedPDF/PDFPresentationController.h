@@ -30,7 +30,6 @@
 #include "PDFDocumentLayout.h"
 #include "PDFPageCoverage.h"
 #include "UnifiedPDFPlugin.h"
-#include <WebCore/GraphicsLayer.h>
 #include <WebCore/PlatformLayerIdentifier.h>
 #include <wtf/OptionSet.h>
 #include <wtf/RefPtr.h>
@@ -41,7 +40,9 @@
 OBJC_CLASS PDFDocument;
 
 namespace WebCore {
+enum class GraphicsLayerType : uint8_t;
 enum class TiledBackingScrollability : uint8_t;
+class GraphicsLayer;
 class GraphicsLayerClient;
 };
 
@@ -92,7 +93,7 @@ public:
     void setNeedsRepaintForPageCoverage(RepaintRequirements, const PDFPageCoverage&);
 
     virtual std::optional<PDFLayoutRow> visibleRow() const { return { }; }
-    virtual std::optional<PDFLayoutRow> rowForLayer(const WebCore::GraphicsLayer*) const { return { }; }
+    virtual std::optional<PDFLayoutRow> rowForLayer(const WebCore::GraphicsLayer&) const { return { }; }
 
     enum class AnchorPoint : uint8_t { TopLeft, Center };
     std::optional<VisiblePDFPosition> pdfPositionForCurrentView(AnchorPoint, bool preservePosition = true) const;
@@ -123,7 +124,7 @@ public:
     virtual void setSelectionLayerEnabled(bool) { }
 
 protected:
-    RefPtr<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayer::Type);
+    RefPtr<WebCore::GraphicsLayer> createGraphicsLayer(const String&, WebCore::GraphicsLayerType);
     RefPtr<WebCore::GraphicsLayer> makePageContainerLayer(PDFDocumentLayout::PageIndex);
     struct LayerCoverage {
         Ref<WebCore::GraphicsLayer> layer;

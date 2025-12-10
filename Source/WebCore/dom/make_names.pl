@@ -155,7 +155,7 @@ END
 
     print F "\n";
     for my $name (sort keys %parameters) {
-        print F "    ${name}.construct(&${name}Data);\n";
+        print F "    ${name}.construct(${name}Data);\n";
     }
 
     print F "\n";
@@ -510,7 +510,13 @@ END
     my $settingsConditional = $allElements{$elementKey}{settingsConditional};
     my $deprecatedGlobalSettingsConditional = $allElements{$elementKey}{deprecatedGlobalSettingsConditional};
     if ($settingsConditional) {
-        $runtimeCondition = "document.settings().${settingsConditional}()";
+        if ($settingsConditional =~ /&/) {
+            my @conditions = split(/&/, $settingsConditional);
+            my @runtime_parts = map { "document.settings().$_()" } @conditions;
+            $runtimeCondition = join(' && ', @runtime_parts);
+        } else {
+            $runtimeCondition = "document.settings().${settingsConditional}()";
+        }
     } elsif ($deprecatedGlobalSettingsConditional) {
         $runtimeCondition = "DeprecatedGlobalSettings::${deprecatedGlobalSettingsConditional}Enabled()";
     }
@@ -1025,7 +1031,7 @@ sub printTagNameCppFile
     print F "        *(tagNamesEntry++) = reinterpret_cast<LazyNeverDestroyed<QualifiedName>*>(qualifiedName)->get().localName();\n";
     print F "    for (auto& string : unadjustedTagNames) {\n";
     print F "        reinterpret_cast<const StringImpl&>(string).assertHashIsCorrect();\n";
-    print F "        *(tagNamesEntry++) = AtomString(&string);\n";
+    print F "        *(tagNamesEntry++) = AtomString(string);\n";
     print F "    }\n";
     print F "    ASSERT(tagNamesEntry == tagNameStrings->end());\n";
     print F "}\n";
@@ -1688,7 +1694,7 @@ sub printDefinitions
     print F "    };\n";
     print F "\n";
     print F "    for (auto& entry : ${type}Table)\n";
-    print F "        entry.targetAddress->construct(nullAtom(), AtomString(&entry.name), $namespaceURI, Namespace::$namespaceEnumValue, entry.nodeName);\n";
+    print F "        entry.targetAddress->construct(nullAtom(), AtomString(entry.name), $namespaceURI, Namespace::$namespaceEnumValue, entry.nodeName);\n";
 }
 
 ## ElementFactory routines

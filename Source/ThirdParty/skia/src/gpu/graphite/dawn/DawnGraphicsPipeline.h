@@ -58,7 +58,6 @@ public:
     inline static constexpr unsigned int kNumVertexBuffers = 2;
 
     static sk_sp<DawnGraphicsPipeline> Make(const DawnSharedContext* sharedContext,
-                                            DawnResourceProvider* resourceProvider,
                                             const RuntimeEffectDictionary* runtimeDict,
                                             const UniqueKey& pipelineKey,
                                             const GraphicsPipelineDesc& pipelineDesc,
@@ -88,6 +87,7 @@ private:
 
     DawnGraphicsPipeline(const skgpu::graphite::SharedContext* sharedContext,
                          const PipelineInfo& pipelineInfo,
+                         std::string_view pipelineLabel,
                          std::unique_ptr<AsyncPipelineCreation> pipelineCreationInfo,
                          BindGroupLayouts groupLayouts,
                          PrimitiveType primitiveType,

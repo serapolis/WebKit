@@ -160,6 +160,7 @@ public:
     void updatePrevalentDomainsToBlockCookiesFor(PAL::SessionID, const Vector<RegistrableDomain>&, CompletionHandler<void()>&&);
     void hasHadUserInteraction(PAL::SessionID, const RegistrableDomain&, CompletionHandler<void(bool)>&&);
     void isRelationshipOnlyInDatabaseOnce(PAL::SessionID, const RegistrableDomain& subDomain, const RegistrableDomain& topDomain, CompletionHandler<void(bool)>&&);
+    void hasLocalStorageOrCookies(PAL::SessionID, const RegistrableDomain&, CompletionHandler<void(bool)>&&);
     void hasLocalStorage(PAL::SessionID, const RegistrableDomain&, CompletionHandler<void(bool)>&&);
     void isGrandfathered(PAL::SessionID, const RegistrableDomain&, CompletionHandler<void(bool)>&&);
     void isPrevalentResource(PAL::SessionID, const RegistrableDomain&, CompletionHandler<void(bool)>&&);
@@ -287,11 +288,14 @@ public:
 
 #if ENABLE(APPLE_PAY_REMOTE_UI_USES_SCENE)
     void getWindowSceneAndBundleIdentifierForPaymentPresentation(WebPageProxyIdentifier, CompletionHandler<void(const String&, const String&)>&&);
+    void notifyWillPresentPaymentUI(WebPageProxyIdentifier);
 #endif
 
 #if ENABLE(APPLE_PAY_REMOTE_UI)
     void getPaymentCoordinatorEmbeddingUserAgent(WebPageProxyIdentifier, CompletionHandler<void(const String&)>&&);
 #endif
+
+    void isStorageSuspendedForTesting(PAL::SessionID, CompletionHandler<void(bool)>&&);
 
     // ProcessThrottlerClient
     void sendPrepareToSuspend(IsSuspensionImminent, double remainingRunTime, CompletionHandler<void()>&&) final;
@@ -469,12 +473,12 @@ private:
     public:
         XPCEventHandler(const NetworkProcessProxy&);
 
-        bool handleXPCEvent(xpc_object_t) const override;
+        bool handleXPCEvent(xpc_object_t) override;
 
     private:
         WeakPtr<NetworkProcessProxy> m_networkProcess;
     };
-    OSObjectPtr<xpc_object_t> m_endpointMessage;
+    XPCObjectPtr<xpc_object_t> m_endpointMessage;
 #endif
 
     WeakHashSet<WebsiteDataStore> m_websiteDataStores;

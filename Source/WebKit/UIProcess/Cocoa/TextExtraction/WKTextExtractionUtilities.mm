@@ -28,9 +28,10 @@
 
 #if USE(APPLE_INTERNAL_SDK) || (!PLATFORM(WATCHOS) && !PLATFORM(APPLETV))
 
-#import "TextExtractionFilter.h"
+#import "WKWebViewInternal.h"
 #import "_WKTextExtractionInternal.h"
 #import <WebCore/TextExtraction.h>
+#import <wtf/Box.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
@@ -61,6 +62,10 @@ inline static WKTextExtractionContainer containerType(TextExtraction::ContainerT
         return WKTextExtractionContainerButton;
     case TextExtraction::ContainerType::Canvas:
         return WKTextExtractionContainerCanvas;
+    case TextExtraction::ContainerType::Subscript:
+        return WKTextExtractionContainerSubscript;
+    case TextExtraction::ContainerType::Superscript:
+        return WKTextExtractionContainerSuperscript;
     case TextExtraction::ContainerType::Generic:
         return WKTextExtractionContainerGeneric;
     }
@@ -159,8 +164,9 @@ inline static RetainPtr<WKTextExtractionItem> createItemWithChildren(const TextE
                 accessibilityRole:accessibilityRole.get()
                 nodeIdentifier:nodeIdentifier.get()]);
         }, [&](const TextExtraction::ImageItemData& data) -> RetainPtr<WKTextExtractionItem> {
+            RetainPtr name = [data.completedSource.createNSURL() lastPathComponent] ?: @"";
             return adoptNS([[WKTextExtractionImageItem alloc]
-                initWithName:data.name.createNSString().get()
+                initWithName:name.get()
                 altText:data.altText.createNSString().get()
                 rectInWebView:rectInWebView
                 children:children
@@ -237,31 +243,47 @@ RetainPtr<WKTextExtractionItem> createItem(const TextExtraction::Item& item, Roo
     return createItemRecursive(item, WTFMove(converter));
 }
 
-#if ENABLE(TEXT_EXTRACTION_FILTER)
-
-static void filterTextRecursive(WKTextExtractionItem *item, MainRunLoopCallbackAggregator& aggregator)
+std::optional<double> computeSimilarity(NSString *stringA, NSString *stringB, unsigned minimumLength)
 {
-    if (RetainPtr textItem = dynamic_objc_cast<WKTextExtractionTextItem>(item)) {
-        TextExtractionFilter::singleton().shouldFilter([textItem content], [textItem, aggregator = Ref { aggregator }](bool shouldFilter) mutable {
-            if (!shouldFilter)
-                return;
+    if (stringA == stringB || [stringA isEqualToString:stringB])
+        return 1;
 
-            [textItem setContent:@""];
-            [textItem setSelectedRange:NSMakeRange(NSNotFound, 0)];
-        });
+    if (!stringA || !stringB)
+        return 0;
+
+    auto lengthA = [stringA length];
+    auto lengthB = [stringB length];
+    if (lengthA < minimumLength && lengthB < minimumLength)
+        return std::nullopt;
+
+    double maxLength = std::max(lengthA, lengthB);
+    if (!lengthA || !lengthB)
+        return 0;
+
+    Vector<Vector<size_t>> matrix(lengthA + 1, Vector<size_t>(lengthB + 1, 0));
+
+    for (size_t i = 0; i <= lengthA; i++)
+        matrix[i][0] = i;
+
+    for (size_t j = 0; j <= lengthB; j++)
+        matrix[0][j] = j;
+
+    for (size_t i = 1; i <= lengthA; i++) {
+        auto characterA = [stringA characterAtIndex:i - 1];
+        for (size_t j = 1; j <= lengthB; j++) {
+            auto characterB = [stringB characterAtIndex:j - 1];
+
+            auto cost = (characterA == characterB) ? 0 : 1;
+            auto deletion = matrix[i - 1][j] + 1;
+            auto insertion = matrix[i][j - 1] + 1;
+            auto substitution = matrix[i - 1][j - 1] + cost;
+
+            matrix[i][j] = std::min({ deletion, insertion, substitution });
+        }
     }
 
-    for (WKTextExtractionItem *child in item.children)
-        filterTextRecursive(child, aggregator);
+    return 1.0 - (matrix[lengthA][lengthB] / maxLength);
 }
-
-void filterText(WKTextExtractionItem *item, CompletionHandler<void()>&& completion)
-{
-    Ref aggregator = MainRunLoopCallbackAggregator::create(WTFMove(completion));
-    filterTextRecursive(item, aggregator.get());
-}
-
-#endif // ENABLE(TEXT_EXTRACTION_FILTER)
 
 } // namespace WebKit
 

@@ -238,6 +238,9 @@ static SDKAlignedBehaviors computeSDKAlignedBehaviors()
     if (linkedBefore(dyld_2024_SU_F_os_versions, DYLD_IOS_VERSION_18_5, DYLD_MACOSX_VERSION_15_5))
         disableBehavior(SDKAlignedBehavior::NavigationActionSourceFrameNonNull);
 
+    if (linkedBefore(dyld_2025_SU_B_os_versions, DYLD_IOS_VERSION_26_1, DYLD_MACOSX_VERSION_26_1))
+        disableBehavior(SDKAlignedBehavior::GetBoundingClientRectZoomed);
+
     disableAdditionalSDKAlignedBehaviors(behaviors);
 
     return behaviors;
@@ -392,26 +395,22 @@ bool CocoaApplication::isDumpRenderTree()
 
 bool CocoaApplication::shouldOSFaultLogForAppleApplicationUsingWebKit1()
 {
-    static bool bundleIdentifierShouldLog;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        bundleIdentifierShouldLog = []() -> bool {
-            if (!isAppleApplication())
-                return false;
+    static bool bundleIdentifierShouldLog = [] {
+        if (!isAppleApplication())
+            return false;
 
-            String bundleIdentifier = applicationBundleIdentifier();
-            if (bundleIdentifier.startsWith("com.apple.InstallerRemotePluginService."_s))
-                return false;
-            if (applicationBundleIsEqualTo("com.apple.WebKit.TestWebKitAPI"_s))
-                return false;
-            if (applicationBundleIsEqualTo("com.apple.ibtool"_s))
-                return false;
-            if (CocoaApplication::isDumpRenderTree())
-                return false;
+        String bundleIdentifier = applicationBundleIdentifier();
+        if (bundleIdentifier.startsWith("com.apple.InstallerRemotePluginService."_s))
+            return false;
+        if (applicationBundleIsEqualTo("com.apple.WebKit.TestWebKitAPI"_s))
+            return false;
+        if (applicationBundleIsEqualTo("com.apple.ibtool"_s))
+            return false;
+        if (CocoaApplication::isDumpRenderTree())
+            return false;
 
-            return true;
-        }();
-    });
+        return true;
+    }();
 
     return bundleIdentifierShouldLog && !((rand() * 1000) % 1000);
 }
@@ -421,8 +420,14 @@ bool CocoaApplication::shouldOSFaultLogForAppleApplicationUsingWebKit1()
 bool MacApplication::isSafari()
 {
     static bool isSafari = applicationBundleIsEqualTo("com.apple.Safari"_s)
-        || applicationBundleIsEqualTo("com.apple.SafariTechnologyPreview"_s)
+        || isSafariTechnologyPreview()
         || applicationBundleIdentifier().startsWith("com.apple.Safari."_s);
+    return isSafari;
+}
+
+bool MacApplication::isSafariTechnologyPreview()
+{
+    static bool isSafari = applicationBundleIsEqualTo("com.apple.SafariTechnologyPreview"_s);
     return isSafari;
 }
 

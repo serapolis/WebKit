@@ -109,6 +109,7 @@ WTF_EXPORT_PRIVATE std::optional<int32_t> getFileDeviceId(const String&);
 WTF_EXPORT_PRIVATE bool createSymbolicLink(const String& targetPath, const String& symbolicLinkPath);
 WTF_EXPORT_PRIVATE String createTemporaryZipArchive(const String& directory);
 WTF_EXPORT_PRIVATE String extractTemporaryZipArchive(const String& filePath);
+WTF_EXPORT_PRIVATE FileHandle createDumpFile(StringView filename, StringView path = StringView());
 
 enum class FileType { Regular, Directory, SymbolicLink };
 WTF_EXPORT_PRIVATE std::optional<FileType> fileType(const String&);
@@ -160,6 +161,7 @@ WTF_EXPORT_PRIVATE CString currentExecutablePath();
 WTF_EXPORT_PRIVATE CString currentExecutableName();
 WTF_EXPORT_PRIVATE String userCacheDirectory();
 WTF_EXPORT_PRIVATE String userDataDirectory();
+WTF_EXPORT_PRIVATE String createTemporaryDirectory(const String& directoryPrefix = nullString());
 #if ENABLE(DEVELOPER_MODE)
 WTF_EXPORT_PRIVATE CString webkitTopLevelDirectory();
 #endif
@@ -182,7 +184,7 @@ WTF_EXPORT_PRIVATE std::optional<bool> allowsMaterializingDatalessFiles(PolicySc
 #endif
 
 // Impl for systems that do not already have createTemporaryDirectory
-#if !OS(WINDOWS) && !PLATFORM(COCOA) && !PLATFORM(PLAYSTATION)
+#if !OS(WINDOWS) && !PLATFORM(COCOA) && !PLATFORM(PLAYSTATION) && !PLATFORM(GLIB)
 WTF_EXPORT_PRIVATE String createTemporaryDirectory();
 #endif
 

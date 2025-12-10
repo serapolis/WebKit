@@ -107,11 +107,11 @@ protected:
 
     bool requestObject(const String& url, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues);
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    bool isReplaced(const RenderStyle&) const final;
+    bool isReplaced(const RenderStyle* = nullptr) const final;
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
     // This will load the plugin if necessary.
-    virtual RenderWidget* renderWidgetLoadingPlugin() const;
+    virtual CheckedPtr<RenderWidget> renderWidgetLoadingPlugin() const;
 
     bool isImageType();
     HTMLImageLoader* imageLoader() { return m_imageLoader.get(); }
@@ -153,7 +153,7 @@ private:
 
     RefPtr<JSC::Bindings::Instance> m_instance;
     Timer m_swapRendererTimer;
-    RefPtr<PluginReplacement> m_pluginReplacement;
+    const RefPtr<PluginReplacement> m_pluginReplacement;
     bool m_isCapturingMouseEvents { false };
     DisplayState m_displayState { DisplayState::Playing };
 

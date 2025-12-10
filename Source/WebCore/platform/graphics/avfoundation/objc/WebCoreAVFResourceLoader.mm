@@ -55,11 +55,15 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebCoreAVFResourceLoader);
 
-class CachedResourceMediaLoader final : CachedRawResourceClient {
+class CachedResourceMediaLoader final : public RefCounted<CachedResourceMediaLoader>, CachedRawResourceClient {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(CachedResourceMediaLoader);
 public:
-    static std::unique_ptr<CachedResourceMediaLoader> create(WebCoreAVFResourceLoader&, CachedResourceLoader&, ResourceRequest&&);
+    static RefPtr<CachedResourceMediaLoader> create(WebCoreAVFResourceLoader&, CachedResourceLoader&, ResourceRequest&&);
     ~CachedResourceMediaLoader() { stop(); }
+
+    // CachedResourceClient.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
 private:
     CachedResourceMediaLoader(WebCoreAVFResourceLoader&, CachedResourceHandle<CachedRawResource>&&);
@@ -77,7 +81,7 @@ private:
     CachedResourceHandle<CachedRawResource> m_resource;
 };
 
-std::unique_ptr<CachedResourceMediaLoader> CachedResourceMediaLoader::create(WebCoreAVFResourceLoader& parent, CachedResourceLoader& loader, ResourceRequest&& resourceRequest)
+RefPtr<CachedResourceMediaLoader> CachedResourceMediaLoader::create(WebCoreAVFResourceLoader& parent, CachedResourceLoader& loader, ResourceRequest&& resourceRequest)
 {
     // FIXME: Skip Content Security Policy check if the element that inititated this request
     // is in a user-agent shadow tree. See <https://bugs.webkit.org/show_bug.cgi?id=173498>.
@@ -101,7 +105,7 @@ std::unique_ptr<CachedResourceMediaLoader> CachedResourceMediaLoader::create(Web
     auto resource = loader.requestMedia(WTFMove(request)).value_or(nullptr);
     if (!resource)
         return nullptr;
-    return std::unique_ptr<CachedResourceMediaLoader>(new CachedResourceMediaLoader { parent, WTFMove(resource) });
+    return adoptRef(*new CachedResourceMediaLoader { parent, WTFMove(resource) });
 }
 
 CachedResourceMediaLoader::CachedResourceMediaLoader(WebCoreAVFResourceLoader& parent, CachedResourceHandle<CachedRawResource>&& resource)
@@ -229,7 +233,7 @@ void PlatformResourceMediaLoader::dataReceived(PlatformMediaResource&, const Sha
     assertIsCurrent(m_targetDispatcher.get());
 
     m_buffer.append(buffer);
-    m_parent.newDataStoredInSharedBuffer(*m_buffer.get());
+    m_parent.newDataStoredInSharedBuffer(*m_buffer.buffer());
 }
 
 class DataURLResourceMediaLoader {
@@ -301,18 +305,18 @@ void WebCoreAVFResourceLoader::startLoading()
     if (m_dataURLMediaLoader || m_resourceMediaLoader || m_platformMediaLoader || !parent)
         return;
 
-    NSURLRequest *nsRequest = [m_avRequest request];
+    RetainPtr<NSURLRequest> nsRequest = [m_avRequest request];
 
-    ResourceRequest request(nsRequest);
+    ResourceRequest request(nsRequest.get());
     request.setPriority(ResourceLoadPriority::Low);
 
-    AVAssetResourceLoadingDataRequest* dataRequest = [m_avRequest dataRequest];
+    RetainPtr<AVAssetResourceLoadingDataRequest> dataRequest = [m_avRequest dataRequest];
     m_currentOffset = m_requestedOffset = dataRequest ? [dataRequest requestedOffset] : -1;
     m_requestedLength = dataRequest ? [dataRequest requestedLength] : -1;
 
     if (dataRequest && m_requestedLength > 0
         && !request.hasHTTPHeaderField(HTTPHeaderName::Range)) {
-        String rangeEnd = dataRequest.requestsAllDataToEndOfResource ? emptyString() : makeString(m_requestedOffset + m_requestedLength - 1);
+        String rangeEnd = dataRequest.get().requestsAllDataToEndOfResource ? emptyString() : makeString(m_requestedOffset + m_requestedLength - 1);
         request.addHTTPHeaderField(HTTPHeaderName::Range, makeString("bytes="_s, m_requestedOffset, '-', rangeEnd));
     }
 
@@ -367,10 +371,9 @@ bool WebCoreAVFResourceLoader::responseReceived(const String& mimeType, int stat
         return true;
     }
 
-    if (contentRange.isValid())
-        m_responseOffset = static_cast<NSUInteger>(contentRange.firstBytePosition());
+    m_responseOffset = contentRange.isValid() ? static_cast<NSUInteger>(contentRange.firstBytePosition()) : 0;
 
-    if (AVAssetResourceLoadingContentInformationRequest* contentInfo = [m_avRequest contentInformationRequest]) {
+    if (RetainPtr<AVAssetResourceLoadingContentInformationRequest> contentInfo = [m_avRequest contentInformationRequest]) {
         String uti = UTIFromMIMEType(mimeType);
 
         [contentInfo setContentType:uti.createNSString().get()];
@@ -424,7 +427,7 @@ bool WebCoreAVFResourceLoader::newDataStoredInSharedBuffer(const FragmentedShare
 {
     assertIsCurrent(m_targetDispatcher.get());
 
-    AVAssetResourceLoadingDataRequest* dataRequest = [m_avRequest dataRequest];
+    RetainPtr<AVAssetResourceLoadingDataRequest> dataRequest = [m_avRequest dataRequest];
     if (!dataRequest)
         return true;
 
@@ -437,42 +440,40 @@ bool WebCoreAVFResourceLoader::newDataStoredInSharedBuffer(const FragmentedShare
     auto bytesToSkip = m_currentOffset - m_responseOffset;
     auto array = data.createNSDataArray();
     for (NSData* segment in array.get()) {
+        if (!remainingLength)
+            break;
+        NSUInteger usableBytes = segment.length;
+        NSUInteger bytesOffset = 0;
         if (bytesToSkip) {
             if (bytesToSkip > segment.length) {
                 bytesToSkip -= segment.length;
                 continue;
             }
-            auto bytesToUse = segment.length - bytesToSkip;
-            [dataRequest respondWithData:[segment subdataWithRange:NSMakeRange(static_cast<NSUInteger>(bytesToSkip), static_cast<NSUInteger>(bytesToUse))]];
+            usableBytes = segment.length - bytesToSkip;
+            bytesOffset = bytesToSkip;
             bytesToSkip = 0;
-            remainingLength -= bytesToUse;
-            m_currentOffset += bytesToUse;
-            continue;
         }
-        if (segment.length <= remainingLength) {
+        m_currentOffset += usableBytes;
+        if (!bytesOffset && usableBytes <= remainingLength)
             [dataRequest respondWithData:segment];
-            remainingLength -= segment.length;
-            m_currentOffset += segment.length;
-            continue;
+        else {
+            usableBytes = std::min(usableBytes, remainingLength);
+            [dataRequest respondWithData:[segment subdataWithRange:NSMakeRange(bytesOffset, usableBytes)]];
         }
-        [dataRequest respondWithData:[segment subdataWithRange:NSMakeRange(0, remainingLength)]];
-        m_currentOffset += remainingLength;
-        remainingLength = 0;
-        break;
+        remainingLength -= usableBytes;
     }
 
     // There was not enough data in the buffer to satisfy the data request.
     if (remainingLength)
         return false;
 
-    if (m_currentOffset >= m_requestedOffset + m_requestedLength) {
-        BEGIN_BLOCK_OBJC_EXCEPTIONS
-        [m_avRequest finishLoading];
-        END_BLOCK_OBJC_EXCEPTIONS
-        stopLoading();
-        return true;
-    }
-    return false;
+    ASSERT(m_currentOffset >= m_requestedOffset + m_requestedLength);
+
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+    [m_avRequest finishLoading];
+    END_BLOCK_OBJC_EXCEPTIONS
+    stopLoading();
+    return true;
 }
 
 }

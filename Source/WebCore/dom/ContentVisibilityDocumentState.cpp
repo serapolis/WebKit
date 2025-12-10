@@ -28,16 +28,17 @@
 
 #include "ContainerNodeInlines.h"
 #include "ContentVisibilityAutoStateChangeEvent.h"
-#include "DocumentInlines.h"
 #include "DocumentTimeline.h"
 #include "EventNames.h"
 #include "FrameSelection.h"
 #include "IntersectionObserverCallback.h"
 #include "IntersectionObserverEntry.h"
 #include "Logging.h"
+#include "NodeDocument.h"
 #include "NodeRenderStyle.h"
 #include "RenderElement.h"
 #include "RenderStyleInlines.h"
+#include "Settings.h"
 #include "SimpleRange.h"
 #include "StyleOriginatedAnimation.h"
 #include "VisibleSelection.h"
@@ -258,8 +259,8 @@ void ContentVisibilityDocumentState::updateAnimations(const Element& element, Is
 {
     if (wasSkipped == IsSkippedContent::No || becomesSkipped == IsSkippedContent::Yes)
         return;
-    for (RefPtr animation : WebAnimation::instances()) {
-        RefPtr styleOriginatedAnimation = dynamicDowncast<StyleOriginatedAnimation>(animation.releaseNonNull());
+    for (auto& animation : WebAnimation::instances()) {
+        RefPtr styleOriginatedAnimation = dynamicDowncast<StyleOriginatedAnimation>(*animation);
         if (!styleOriginatedAnimation)
             continue;
         auto owningElement = styleOriginatedAnimation->owningElement();

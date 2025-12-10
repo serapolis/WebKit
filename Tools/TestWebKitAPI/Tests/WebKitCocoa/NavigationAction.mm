@@ -335,4 +335,4 @@ TEST(WKNavigationAction, UserInputState)
 #endif
 }
 
-#endif
+#endif // PLATFORM(MAC) || PLATFORM(IOS)

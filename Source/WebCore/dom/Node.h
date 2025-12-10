@@ -109,6 +109,8 @@ enum class TaskSource : uint8_t;
 using MutationObserverOptions = OptionSet<MutationObserverOptionType>;
 using MutationRecordDeliveryOptions = OptionSet<MutationObserverOptionType>;
 
+enum class IsMutationBySetInnerHTML : uint8_t { No, Yes };
+
 using NodeOrString = Variant<RefPtr<Node>, String>;
 
 const int initialNodeVectorSize = 11; // Covers 99.5%. See webkit.org/b/80706
@@ -255,7 +257,8 @@ public:
     bool isPseudoElement() const { return isElementNode() && hasTypeFlag(TypeFlag::IsPseudoElementOrSpecialInternalNode); }
     inline bool isBeforePseudoElement() const;
     inline bool isAfterPseudoElement() const;
-    inline PseudoId pseudoId() const;
+    inline std::optional<PseudoElementType> pseudoElementType() const;
+    inline std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifier() const;
 
 #if ENABLE(VIDEO)
     virtual bool isWebVTTElement() const { return false; }
@@ -392,6 +395,15 @@ public:
     void setHasHeldBackChildrenChanged() { setStateFlag(StateFlag::HasHeldBackChildrenChanged); }
     void clearHasHeldBackChildrenChanged() { clearStateFlag(StateFlag::HasHeldBackChildrenChanged); }
 
+    bool hasDidMutateSubtreeAfterSetInnerHTML() const { return hasStateFlag(StateFlag::DidMutateSubtreeAfterSetInnerHTML); }
+    void setDidMutateSubtreeAfterSetInnerHTML() { setStateFlag(StateFlag::DidMutateSubtreeAfterSetInnerHTML); }
+    void clearDidMutateSubtreeAfterSetInnerHTML() { clearStateFlag(StateFlag::DidMutateSubtreeAfterSetInnerHTML); }
+    void setDidMutateSubtreeAfterSetInnerHTMLOnAncestors();
+
+    bool hasWasParsedWithFastPath() const { return hasStateFlag(StateFlag::WasParsedWithFastPath); }
+    void setWasParsedWithFastPath() { setStateFlag(StateFlag::WasParsedWithFastPath); }
+    void clearWasParsedWithFastPath() { clearStateFlag(StateFlag::WasParsedWithFastPath); }
+
     void setChildNeedsStyleRecalc() { setStyleFlag(NodeStyleFlag::DescendantNeedsStyleResolution); }
     inline void clearChildNeedsStyleRecalc();
 
@@ -429,8 +441,8 @@ public:
     WEBCORE_EXPORT Document* ownerDocument() const;
 
     // Returns the document associated with this node. A document node returns itself.
-    inline Document& document() const; // Defined in NodeInlines.h
-    inline Ref<Document> protectedDocument() const; // Defined in NodeInlines.h
+    inline Document& document() const; // Defined in NodeDocument.h
+    inline Ref<Document> protectedDocument() const; // Defined in NodeDocument.h
 
     TreeScope& treeScope() const
     {
@@ -502,6 +514,7 @@ public:
 
     // Use these two methods with caution.
     inline RenderBox* renderBox() const; // Defined in NodeInlines.h
+    inline CheckedPtr<RenderBox> checkedRenderBox() const; // Defined in NodeInlines.h
     inline RenderBoxModelObject* renderBoxModelObject() const; // Defined in NodeInlines.h
 
     // Wrapper for nodes that don't have a renderer, but still cache the style (like HTMLOptionElement).
@@ -541,7 +554,7 @@ public:
 #endif // ENABLE(TREE_DEBUGGING)
 
     void invalidateNodeListAndCollectionCachesInAncestors();
-    void invalidateNodeListAndCollectionCachesInAncestorsForAttribute(const QualifiedName&);
+    void invalidateNodeListCollectionAndInnerHTMLPrefixCachesInAncestorsForAttribute(const QualifiedName&, const IsMutationBySetInnerHTML = IsMutationBySetInnerHTML::No);
     NodeListsNodeData* nodeLists();
     void clearNodeLists();
 
@@ -568,6 +581,8 @@ public:
 
     void dispatchSubtreeModifiedEvent();
     void dispatchDOMActivateEvent(Event& underlyingClickEvent);
+
+    void dispatchWebKitSubmitEvent(Event& underlyingSubmitEvent);
 
 #if ENABLE(TOUCH_EVENTS)
     virtual bool allowsDoubleTapGesture() const { return true; }
@@ -671,7 +686,11 @@ protected:
 #if ENABLE(FULLSCREEN_API)
         IsFullscreen = 1 << 19,
 #endif
-        // 12 bits free.
+        IsShadowRootAttachedEventPending = 1 << 20,
+        InLargestContentfulPaintTextContentSet = 1 << 21,
+        DidMutateSubtreeAfterSetInnerHTML = 1 << 22,
+        WasParsedWithFastPath = 1 << 23
+        // 8 bits free.
     };
 
     enum class TabIndexState : uint8_t {
@@ -792,7 +811,7 @@ private:
     void trackForDebugging();
     void materializeRareData();
 
-    Vector<std::unique_ptr<MutationObserverRegistration>>* mutationObserverRegistry();
+    Vector<Ref<MutationObserverRegistration>>* mutationObserverRegistry();
     WeakHashSet<MutationObserverRegistration>* transientMutationObserverRegistry();
 
     void adjustStyleValidity(Style::Validity, Style::InvalidationMode);

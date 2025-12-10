@@ -72,7 +72,7 @@ RefPtr<WebCore::SharedBuffer> AuxiliaryProcessProxy::fetchAudioComponentServerRe
 
 Vector<String> AuxiliaryProcessProxy::platformOverrideLanguages() const
 {
-    static const NeverDestroyed<Vector<String>> overrideLanguages = makeVector<String>([[NSUserDefaults standardUserDefaults] stringArrayForKey:@"AppleLanguages"]);
+    static const NeverDestroyed<Vector<String>> overrideLanguages = makeVector<String>(retainPtr([[NSUserDefaults standardUserDefaults] stringArrayForKey:@"AppleLanguages"]).get());
     return overrideLanguages;
 }
 
@@ -103,7 +103,7 @@ void AuxiliaryProcessProxy::platformStartConnectionTerminationWatchdog()
     if (!m_connection)
         return;
 
-    OSObjectPtr xpcConnection = m_connection->xpcConnection();
+    XPCObjectPtr<xpc_connection_t> xpcConnection = m_connection->xpcConnection();
     if (!xpcConnection)
         return;
 

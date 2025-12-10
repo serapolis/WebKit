@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2005 Allan Sandfeld Jensen (kde@carewolf.com)
  *           (C) 2005, 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2005-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2010-2018 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -48,6 +48,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderFragmentContainer.h"
 #include "RenderInline.h"
@@ -380,7 +381,7 @@ LayoutSize RenderBoxModelObject::relativePositionOffset() const
     auto topFixed = top.tryFixed();
     auto leftFixed = left.tryFixed();
     if (topFixed && leftFixed && bottom.isAuto() && right.isAuto() && containingBlock->writingMode().isAnyLeftToRight()) {
-        offset.expand(leftFixed->value, topFixed->value);
+        offset.expand(leftFixed->resolveZoom(style.usedZoomForLength()), topFixed->resolveZoom(style.usedZoomForLength()));
         return offset;
     }
 
@@ -403,11 +404,11 @@ LayoutSize RenderBoxModelObject::relativePositionOffset() const
         };
         if (!left.isAuto()) {
             if (!right.isAuto() && !containingBlock->writingMode().isAnyLeftToRight())
-                offset.setWidth(-Style::evaluate(right, !right.isFixed() ? availableWidth() : 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */));
+                offset.setWidth(-Style::evaluate<LayoutUnit>(right, !right.isFixed() ? availableWidth() : 0_lu, style.usedZoomForLength()));
             else
-                offset.expand(Style::evaluate(left, !left.isFixed() ? availableWidth() : 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */), 0_lu);
+                offset.expand(Style::evaluate<LayoutUnit>(left, !left.isFixed() ? availableWidth() : 0_lu, style.usedZoomForLength()), 0_lu);
         } else if (!right.isAuto())
-            offset.expand(-Style::evaluate(right, !right.isFixed() ? availableWidth() : 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */), 0_lu);
+            offset.expand(-Style::evaluate<LayoutUnit>(right, !right.isFixed() ? availableWidth() : 0_lu, style.usedZoomForLength()), 0_lu);
     }
 
     // If the containing block of a relatively positioned element does not
@@ -438,10 +439,10 @@ LayoutSize RenderBoxModelObject::relativePositionOffset() const
         // FIXME: The computation of the available height is repeated later for "bottom".
         // We could refactor this and move it to some common code for both ifs, however moving it outside of the ifs
         // is not possible as it'd cause performance regressions.
-        offset.expand(0_lu, Style::evaluate(top, !top.isFixed() ? availableHeight() : 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */));
+        offset.expand(0_lu, Style::evaluate<LayoutUnit>(top, !top.isFixed() ? availableHeight() : 0_lu, style.usedZoomForLength()));
     } else if (!bottom.isAuto() && (!bottom.isPercentOrCalculated() || containingBlockHasDefiniteHeight)) {
         // FIXME: Check comment above for "top", it applies here too.
-        offset.expand(0_lu, -Style::evaluate(bottom, !bottom.isFixed() ? availableHeight() : 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */));
+        offset.expand(0_lu, -Style::evaluate<LayoutUnit>(bottom, !bottom.isFixed() ? availableHeight() : 0_lu, style.usedZoomForLength()));
     }
     return offset;
 }
@@ -547,13 +548,15 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
 
     LayoutUnit maxWidth = containingBlock->contentBoxLogicalWidth();
 
+    const auto& zoomFactor = style().usedZoomForLength();
+
     // Sticky positioned element ignore any override logical width on the containing block (as they don't call
     // containingBlockLogicalWidthForContent). It's unclear whether this is totally fine.
     LayoutBoxExtent minMargin(
-        Style::evaluateMinimum(style().marginTop(), maxWidth, 1.0f /* FIXME ZOOM EFFECTED? */),
-        Style::evaluateMinimum(style().marginRight(), maxWidth, 1.0f /* FIXME ZOOM EFFECTED? */),
-        Style::evaluateMinimum(style().marginBottom(), maxWidth, 1.0f /* FIXME ZOOM EFFECTED? */),
-        Style::evaluateMinimum(style().marginLeft(), maxWidth, 1.0f /* FIXME ZOOM EFFECTED? */)
+        Style::evaluateMinimum<LayoutUnit>(style().marginTop(), maxWidth, zoomFactor),
+        Style::evaluateMinimum<LayoutUnit>(style().marginRight(), maxWidth, zoomFactor),
+        Style::evaluateMinimum<LayoutUnit>(style().marginBottom(), maxWidth, zoomFactor),
+        Style::evaluateMinimum<LayoutUnit>(style().marginLeft(), maxWidth, zoomFactor)
     );
 
     // Compute the container-relative area within which the sticky element is allowed to move.
@@ -603,22 +606,22 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
     constraints.setStickyBoxRect(stickyBoxRelativeToScrollingAncestor);
 
     if (!style().left().isAuto()) {
-        constraints.setLeftOffset(Style::evaluate(style().left(), constrainingRect.width(), 1.0f /* FIXME ZOOM EFFECTED? */));
+        constraints.setLeftOffset(Style::evaluate<float>(style().left(), constrainingRect.width(), style().usedZoomForLength()));
         constraints.addAnchorEdge(ViewportConstraints::AnchorEdgeLeft);
     }
 
     if (!style().right().isAuto()) {
-        constraints.setRightOffset(Style::evaluate(style().right(), constrainingRect.width(), 1.0f /* FIXME ZOOM EFFECTED? */));
+        constraints.setRightOffset(Style::evaluate<float>(style().right(), constrainingRect.width(), style().usedZoomForLength()));
         constraints.addAnchorEdge(ViewportConstraints::AnchorEdgeRight);
     }
 
     if (!style().top().isAuto()) {
-        constraints.setTopOffset(Style::evaluate(style().top(), constrainingRect.height(), 1.0f /* FIXME ZOOM EFFECTED? */));
+        constraints.setTopOffset(Style::evaluate<float>(style().top(), constrainingRect.height(), style().usedZoomForLength()));
         constraints.addAnchorEdge(ViewportConstraints::AnchorEdgeTop);
     }
 
     if (!style().bottom().isAuto()) {
-        constraints.setBottomOffset(Style::evaluate(style().bottom(), constrainingRect.height(), 1.0f /* FIXME ZOOM EFFECTED? */));
+        constraints.setBottomOffset(Style::evaluate<float>(style().bottom(), constrainingRect.height(), style().usedZoomForLength()));
         constraints.addAnchorEdge(ViewportConstraints::AnchorEdgeBottom);
     }
 }
@@ -941,7 +944,7 @@ RenderTextFragment* RenderBoxModelObject::firstLetterRemainingText() const
 {
     if (!isFirstLetter())
         return nullptr;
-    return firstLetterRemainingTextMap().get(*this).get();
+    return firstLetterRemainingTextMap().get(*this);
 }
 
 void RenderBoxModelObject::setFirstLetterRemainingText(RenderTextFragment& remainingText)

@@ -1,7 +1,8 @@
 /*
  * Copyright (C) 2004, 2005, 2006, 2007, 2008 Nikolas Zimmermann <zimmermann@kde.org>
  * Copyright (C) 2004, 2005, 2006, 2007 Rob Buis <buis@kde.org>
- * Copyright (C) 2015-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -37,6 +38,10 @@ class SVGUseElement final : public SVGGraphicsElement, public SVGURIReference, p
 public:
     static Ref<SVGUseElement> create(const QualifiedName&, Document&);
     virtual ~SVGUseElement();
+
+    // CachedResourceClient.
+    void ref() const final { SVGGraphicsElement::ref(); }
+    void deref() const final { SVGGraphicsElement::deref(); }
 
     void invalidateShadowTree();
     void updateUserAgentShadowTree() final;
@@ -74,6 +79,8 @@ private:
 
     Document* externalDocument() const;
     void updateExternalDocument();
+
+    FloatRect getBBox(StyleUpdateStrategy = AllowStyleUpdate) override;
 
     RefPtr<SVGElement> findTarget(AtomString* targetID = nullptr) const;
 

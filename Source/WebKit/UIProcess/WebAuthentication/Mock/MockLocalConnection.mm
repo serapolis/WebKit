@@ -180,9 +180,10 @@ RetainPtr<NSArray> MockLocalConnection::getExistingCredentials(const String& rpI
     OSStatus status = SecItemCopyMatching(bridge_cast(query.get()), &attributesArrayRef);
     if (status && status != errSecItemNotFound)
         return nullptr;
-    RetainPtr nsAttributesArray = bridge_cast(adoptCF(checked_cf_cast<CFArrayRef>(attributesArrayRef)));
+    // FIXME: The Security framework API is missing the `CF_RETURNS_RETAINED` annotation (rdar://161546781).
+    SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr nsAttributesArray = bridge_cast(adoptCF(checked_cf_cast<CFArrayRef>(attributesArrayRef)));
     return [nsAttributesArray sortedArrayUsingComparator:^(NSDictionary *a, NSDictionary *b) {
-        return [b[(id)kSecAttrModificationDate] compare:a[(id)kSecAttrModificationDate]];
+        return [retainPtr(b[(id)kSecAttrModificationDate]) compare:retainPtr(a[(id)kSecAttrModificationDate]).get()];
     }];
 }
 

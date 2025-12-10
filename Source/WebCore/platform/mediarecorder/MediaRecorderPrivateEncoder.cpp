@@ -469,7 +469,7 @@ void MediaRecorderPrivateEncoder::appendVideoFrame(MediaTime sampleTime, Ref<Vid
         VideoEncoder::Config config { static_cast<uint64_t>(frame->presentationSize().width()), static_cast<uint64_t>(frame->presentationSize().height()), false, videoBitRate() };
 
         Ref promise = VideoEncoder::create(codecStringForMediaVideoCodecId(m_videoCodec), config, [weakThis = ThreadSafeWeakPtr { *this }, config](auto&& configuration) mutable {
-            queueSingleton().dispatch([weakThis, config = WTFMove(config), configuration] {
+            queueSingleton().dispatch([weakThis, config = WTFMove(config), configuration = WTFMove(configuration)]() mutable {
                 if (RefPtr protectedThis = weakThis.get())
                     protectedThis->processVideoEncoderActiveConfiguration(config, WTFMove(configuration));
             });
@@ -543,7 +543,7 @@ Ref<FragmentedSharedBuffer> MediaRecorderPrivateEncoder::takeData()
     {
         Locker locker { m_lock };
         flushDataBuffer();
-        return m_data.take();
+        return m_data.takeBuffer();
     }
 }
 
@@ -668,7 +668,7 @@ void MediaRecorderPrivateEncoder::processVideoEncoderActiveConfiguration(const V
     else
         videoInfo->displaySize = { static_cast<float>(config.width), static_cast<float>(config.height) };
     if (configuration.description)
-        videoInfo->atomData = SharedBuffer::create(*configuration.description);
+        videoInfo->extensionAtoms = { 1, { computeBoxType(m_videoCodec), SharedBuffer::create(*configuration.description) } };
     if (configuration.colorSpace)
         videoInfo->colorSpace = *configuration.colorSpace;
     videoInfo->codecName = m_videoCodec;

@@ -68,6 +68,15 @@ WebXRInputSource* WebXRInputSourceArray::item(unsigned index) const
     return index >= m_inputSources.size() ? nullptr: m_inputSources[index].ptr();
 }
 
+RefPtr<WebXRInputSource> WebXRInputSourceArray::itemByHandle(PlatformXR::InputSourceHandle handle) const
+{
+    for (auto& item : m_inputSources) {
+        if (item->handle() == handle)
+            return item.ptr();
+    }
+    return nullptr;
+}
+
 void WebXRInputSourceArray::clear()
 {
     m_inputSources.clear();
@@ -135,7 +144,7 @@ void WebXRInputSourceArray::handleRemovedInputSources(const InputSourceList& inp
     //  3.1 Let inputSource be the XRInputSource in session's list of active XR input sources associated with the XR input source.
     //  3.2 Add inputSource to removed.
     m_inputSources.removeAllMatching([&inputSources, &removed, &removedWithInputEvents, &inputEvents](auto& source) {
-        if (!std::ranges::any_of(inputSources, [&source](auto& item) { return item.handle == source->handle(); })) {
+        if (std::ranges::none_of(inputSources, [&source](auto& item) { return item.handle == source->handle(); })) {
             Vector<Ref<XRInputSourceEvent>> sourceInputEvents;
             source->disconnect();
             source->pollEvents(sourceInputEvents);

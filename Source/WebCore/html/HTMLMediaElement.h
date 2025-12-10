@@ -139,16 +139,6 @@ class RemotePlayback;
 using CueInterval = PODInterval<MediaTime, TextTrackCue*>;
 using CueList = Vector<CueInterval>;
 
-enum class HTMLMediaElementSourceType : uint8_t {
-    File,
-    HLS,
-    MediaSource,
-    ManagedMediaSource,
-    MediaStream,
-    LiveStream,
-    StoredStream,
-};
-
 using MediaProvider = std::optional < Variant <
 #if ENABLE(MEDIA_STREAM)
     RefPtr<MediaStream>,
@@ -167,6 +157,7 @@ public:
     virtual ~HTMLMediaElementClient() = default;
 
     virtual void audioSessionCategoryChanged(AudioSessionCategory, AudioSessionMode, RouteSharingPolicy) { }
+    virtual void routingContextUIDChanged(const String&) { }
 };
 
 class HTMLMediaElement
@@ -183,7 +174,7 @@ class HTMLMediaElement
     , private AudioTrackClient
     , private TextTrackClient
     , private VideoTrackClient
-#if USE(AUDIO_SESSION) && PLATFORM(MAC)
+#if USE(AUDIO_SESSION)
     , private AudioSessionConfigurationChangeObserver
 #endif
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -199,7 +190,7 @@ class HTMLMediaElement
 public:
     USING_CAN_MAKE_WEAKPTR(SINGLE_ARG(CanMakeWeakPtr<HTMLMediaElement, WeakPtrFactoryInitialization::Eager>));
 
-    // ActiveDOMObject.
+    // ActiveDOMObject, AudioSessionConfigurationChangeObserver.
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
     using HTMLElement::protectedScriptExecutionContext;
@@ -258,7 +249,6 @@ public:
     std::optional<MediaSessionGroupIdentifier> mediaSessionGroupIdentifier() const final;
 
     WEBCORE_EXPORT bool isActiveNowPlayingSession() const;
-    void isActiveNowPlayingSessionChanged() final;
 
 // DOM API
 // error state
@@ -305,6 +295,7 @@ public:
     WEBCORE_EXPORT bool preservesPitch() const;
     WEBCORE_EXPORT void setPreservesPitch(bool);
 
+    WEBCORE_EXPORT double mediaPlayerCurrentTime() const;
 
 // MediaTime versions of playback state
     MediaTime currentMediaTime() const;
@@ -481,6 +472,9 @@ public:
     void textTrackReadyStateChanged(TextTrack*);
     void updateTextTrackRepresentationImageIfNeeded();
 
+    WEBCORE_EXPORT void showCaptionDisplaySettingsPreview();
+    WEBCORE_EXPORT void hideCaptionDisplaySettingsPreview();
+
     WEBCORE_EXPORT bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;
     WEBCORE_EXPORT bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) override;
 
@@ -584,6 +578,7 @@ public:
     MediaPlayer::Preload effectivePreloadValue() const;
     MediaElementSession* mediaSessionIfExists() const { return m_mediaSession.get(); }
     WEBCORE_EXPORT MediaElementSession& mediaSession() const;
+    Ref<MediaElementSession> protectedMediaSession() const { return mediaSession(); }
 
     void pageScaleFactorChanged();
     void userInterfaceLayoutDirectionChanged();
@@ -603,8 +598,8 @@ public:
     void allowsMediaDocumentInlinePlaybackChanged();
     void updateShouldPlay();
 
-    inline bool hasRenderer() const; // Defined in RenderMedia.h.
-    inline RenderMedia* renderer() const; // Defined in RenderMedia.h.
+    inline bool hasRenderer() const; // Defined in RenderMediaInlines.h.
+    inline RenderMedia* renderer() const; // Defined in RenderMediaInlines.h.
 
     void resetPlaybackSessionState();
     WEBCORE_EXPORT bool isVisibleInViewport() const;
@@ -633,7 +628,7 @@ public:
     using Identified<HTMLMediaElementIdentifier>::identifier;
 
 #if !RELEASE_LOG_DISABLED
-    const Logger& logger() const final { return *m_logger.get(); }
+    const Logger& logger() const final { return m_logger.get(); }
     using PlatformMediaSessionClient::protectedLogger;
     uint64_t logIdentifier() const final { return m_logIdentifier; }
     ASCIILiteral logClassName() const final { return "HTMLMediaElement"_s; }
@@ -690,7 +685,7 @@ public:
     void setShowingStats(bool);
 
     enum class SpeechSynthesisState : uint8_t { None, Speaking, CompletingExtendedDescription, Paused };
-    WEBCORE_EXPORT RefPtr<TextTrackCue> cueBeingSpoken() const;
+    TextTrackCue* cueBeingSpoken() const { return m_cueBeingSpoken.get(); }
 #if ENABLE(SPEECH_SYNTHESIS)
     WEBCORE_EXPORT SpeechSynthesis& speechSynthesis();
     Ref<SpeechSynthesis> protectedSpeechSynthesis();
@@ -715,7 +710,7 @@ public:
     void updateSpatialTrackingLabel();
     void defaultSpatialTrackingLabelChanged(const String&);
 
-    const String& spatialTrackingLabel() const;
+    String spatialTrackingLabel() const;
     void setSpatialTrackingLabel(const String&);
 #endif
 
@@ -735,6 +730,11 @@ public:
     uint32_t checkedPtrCountWithoutThreadCheck() const { return CanMakeCheckedPtr<Node>::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const { CanMakeCheckedPtr<Node>::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const { CanMakeCheckedPtr<Node>::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion()
+    {
+        PlatformMediaSessionClient::setDidBeginCheckedPtrDeletion();
+        CanMakeCheckedPtr<Node>::setDidBeginCheckedPtrDeletion();
+    }
 
     void forceStereoDecoding() { m_forceStereoDecoding = true; }
 protected:
@@ -756,7 +756,7 @@ protected:
     bool isMediaElement() const final { return true; }
 
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
-    bool isReplaced(const RenderStyle&) const override { return true; }
+    bool isReplaced(const RenderStyle* = nullptr) const override { return true; }
 
     SecurityOriginData documentSecurityOrigin() const final;
 
@@ -988,6 +988,7 @@ private:
     // These "internal" functions do not check user gesture restrictions.
     void playInternal();
     void pauseInternal();
+    void completePlayInternal();
 
     void prepareForLoad();
     void allowVideoRendering();
@@ -1073,8 +1074,11 @@ private:
     void sceneIdentifierDidChange() final;
 #endif
 
-#if USE(AUDIO_SESSION) && PLATFORM(MAC)
+#if USE(AUDIO_SESSION)
+#if PLATFORM(MAC)
     void hardwareMutedStateDidChange(const AudioSession&) final;
+#endif
+    void routingContextUIDDidChange(const AudioSession&) final;
 #endif
 
     bool hasMediaSource() const;
@@ -1155,6 +1159,7 @@ private:
     bool isWatchtimeTimerActive() const;
     void startWatchtimeTimer();
     void pauseWatchtimeTimer();
+    void fireAndRestartWatchtimeTimer();
     void invalidateWatchtimeTimer();
     void watchtimeTimerFired();
     void startBufferingStopwatch();
@@ -1352,9 +1357,9 @@ private:
 
     std::optional<CaptionUserPreferences::CaptionDisplayMode> m_captionDisplayMode;
 
-    RefPtr<AudioTrackList> m_audioTracks;
-    RefPtr<TextTrackList> m_textTracks;
-    RefPtr<VideoTrackList> m_videoTracks;
+    const RefPtr<AudioTrackList> m_audioTracks;
+    const RefPtr<TextTrackList> m_textTracks;
+    const RefPtr<VideoTrackList> m_videoTracks;
     Vector<RefPtr<TextTrack>> m_textTracksWhenResourceSelectionBegan;
 
     struct CueData;
@@ -1387,7 +1392,7 @@ private:
     RefPtr<Blob> m_blob;
     URLKeepingBlobAlive m_blobURLForReading;
     MediaProvider m_mediaProvider;
-    WTF::Observer<WebCoreOpaqueRoot()> m_opaqueRootProvider;
+    const Ref<WTF::Observer<WebCoreOpaqueRoot()>> m_opaqueRootProvider;
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     bool m_hasNeedkeyListener { false };
@@ -1457,12 +1462,12 @@ private:
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     using DefaultSpatialTrackingLabelChangedObserver = WTF::Observer<void(String&&)>;
-    DefaultSpatialTrackingLabelChangedObserver m_defaultSpatialTrackingLabelChangedObserver;
+    const Ref<DefaultSpatialTrackingLabelChangedObserver> m_defaultSpatialTrackingLabelChangedObserver;
     String m_spatialTrackingLabel;
 #endif
 
 #if !RELEASE_LOG_DISABLED
-    RefPtr<Logger> m_logger;
+    const Ref<Logger> m_logger;
     const uint64_t m_logIdentifier;
 #endif
 

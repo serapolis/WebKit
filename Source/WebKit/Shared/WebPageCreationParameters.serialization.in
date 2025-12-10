@@ -100,7 +100,6 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     bool hasResourceLoadClient;
 
     Vector<String> mimeTypesWithCustomContentProviders;
-    String overrideReferrerForAllRequests;
 
     bool controlledByAutomation;
     bool isProcessSwap;
@@ -251,6 +250,7 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     String openedMainFrameName;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier;
     WebCore::SandboxFlags initialSandboxFlags;
+    WebCore::ReferrerPolicy initialReferrerPolicy;
     std::optional<WebCore::WindowFeatures> windowFeatures;
     bool statusBarIsVisible;
     bool menuBarIsVisible;
@@ -284,6 +284,12 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
 #endif
 
     bool shouldSendConsoleLogsToUIProcessForTesting;
+
+#if ENABLE(IMAGE_ANALYSIS)
+    std::optional<WebCore::ImageTranslationLanguageIdentifiers> imageTranslationLanguageIdentifiers;
+#endif
+
+    std::optional<WebKit::TextManipulationParameters> textManipulationParameters;
 }
 
 [Nested] struct WebKit::RemotePageParameters {

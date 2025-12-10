@@ -26,13 +26,12 @@
 import WebGPU_Internal
 
 extension WebGPU.Buffer {
-    func copy(from data: Span<UInt8>, offset: Int) {
-        // FIXME: Use a bounds-checking implementation when one is available.
-        var bufferContents = unsafe MutableSpan<UInt8>(_unsafeCxxSpan: getBufferContents());
-        precondition(bufferContents.count >= offset + data.count)
-        for i in 0..<data.count {
-            bufferContents[offset + i] = data[i]
-        }
+    func copy(from source: Span<UInt8>, offset: Int) {
+        // FIXME (rdar://161274084): Swift doesn't have a lifetime-safe way to return a borrowed value from a refcounted object yet.
+        let bufferContents = unsafe MutableSpan(_unsafeCxxSpan: getBufferContents())
+
+        var destination = bufferContents._consumingExtracting(droppingFirst: offset)
+        destination.copyMemory(from: source)
     }
 }
 
@@ -47,32 +46,22 @@ public func Buffer_getMappedRange_thunk(_ buffer: WebGPU.Buffer, offset: Int, si
     unsafe buffer.getMappedRange(offset: offset, size: size)
 }
 
-internal func computeRangeSize(size: Int, offset: Int) -> Int
-{
-    let result = WebGPU_Internal.checkedDifferenceSizeT(size, offset)
-    if result.hasOverflowed() {
-        return 0
-    }
-    return result.value()
-}
-
 extension WebGPU.Buffer {
-    public func getMappedRange(offset: Int, size: Int) -> SpanUInt8
-    {
+    func getMappedRange(offset: Int, size: Int) -> SpanUInt8 {
         if !isValid() {
             return unsafe SpanUInt8()
         }
 
         var rangeSize = size
         if size == WGPU_WHOLE_MAP_SIZE {
-            rangeSize = computeRangeSize(size: Int(currentSize()), offset: offset)
+            rangeSize = max(Int(currentSize()) - offset, 0)
         }
 
         if !validateGetMappedRange(offset, rangeSize) {
             return unsafe SpanUInt8()
         }
 
-        m_mappedRanges.add(WTFRangeSizeT(UInt(offset), UInt(offset + rangeSize)))
+        m_mappedRanges.add(.init(UInt(offset), UInt(offset + rangeSize)))
         m_mappedRanges.compact()
 
         if m_buffer.storageMode == .private || m_buffer.storageMode == .memoryless || m_buffer.length == 0 {

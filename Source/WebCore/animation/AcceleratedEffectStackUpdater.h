@@ -25,37 +25,42 @@
 
 #pragma once
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 
 #include <WebCore/AcceleratedEffect.h>
+#include <WebCore/AcceleratedTimeline.h>
 #include <WebCore/AnimationMalloc.h>
+#include <WebCore/TimelineIdentifier.h>
 #include <wtf/HashSet.h>
-#include <wtf/Seconds.h>
 
 namespace WebCore {
 
+class AcceleratedTimeline;
 class Document;
 class Element;
+class ScrollTimeline;
 struct Styleable;
 
 class AcceleratedEffectStackUpdater {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AcceleratedEffectStackUpdater, Animation);
 public:
-    AcceleratedEffectStackUpdater(Document&);
+    AcceleratedEffectStackUpdater() = default;
 
-    void updateEffectStacks();
-    void updateEffectStackForTarget(const Styleable&);
+    void update();
+    void scheduleUpdateForTarget(const Styleable&);
+    bool hasTargetsPendingUpdate() const { return !m_targetsPendingUpdate.isEmpty(); }
+    void scrollTimelineDidChange(ScrollTimeline&);
 
-    Seconds timeOrigin() const { return m_timeOrigin; }
-
-protected:
+    WEBCORE_EXPORT AcceleratedTimelinesUpdate takeTimelinesUpdate();
 
 private:
     using HashedStyleable = std::pair<Element*, std::optional<Style::PseudoElementIdentifier>>;
     HashSet<HashedStyleable> m_targetsPendingUpdate;
-    Seconds m_timeOrigin;
+    HashSet<Ref<ScrollTimeline>> m_scrollTimelinesPendingUpdate;
+    HashMap<TimelineIdentifier, WeakPtr<AcceleratedTimeline>> m_timelines;
+    AcceleratedTimelinesUpdate m_timelinesUpdate;
 };
 
 } // namespace WebCore
 
-#endif // ENABLE(THREADED_ANIMATION_RESOLUTION)
+#endif // ENABLE(THREADED_ANIMATIONS)

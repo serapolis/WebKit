@@ -128,15 +128,17 @@ GstElement* GStreamerVideoCapturer::createConverter()
         return nullptr;
     }
 
+    auto videoConvert = createVideoConvertScaleElement();
+    if (!videoConvert) [[unlikely]]
+        return nullptr;
+
     auto* bin = gst_bin_new(nullptr);
-    auto* videoscale = makeGStreamerElement("videoscale"_s, "videoscale"_s);
-    auto* videoconvert = makeGStreamerElement("videoconvert"_s);
     auto* videorate = makeGStreamerElement("videorate"_s, "videorate"_s);
 
     // https://gitlab.freedesktop.org/gstreamer/gst-plugins-base/issues/97#note_56575
     g_object_set(videorate, "drop-only", TRUE, "average-period", UINT64_C(1), nullptr);
 
-    gst_bin_add_many(GST_BIN_CAST(bin), videoscale, videoconvert, videorate, nullptr);
+    gst_bin_add_many(GST_BIN_CAST(bin), videoConvert.get(), videorate, nullptr);
 
     m_videoSrcMIMETypeFilter = gst_element_factory_make("capsfilter", "mimetype-filter");
 
@@ -147,13 +149,13 @@ GstElement* GStreamerVideoCapturer::createConverter()
     gst_bin_add_many(GST_BIN_CAST(bin), m_videoSrcMIMETypeFilter.get(), decodebin, nullptr);
     gst_element_link(m_videoSrcMIMETypeFilter.get(), decodebin);
 
-    auto sinkPad = adoptGRef(gst_element_get_static_pad(videoscale, "sink"));
+    auto sinkPad = adoptGRef(gst_element_get_static_pad(videoConvert.get(), "sink"));
     g_signal_connect_swapped(decodebin, "pad-added", G_CALLBACK(+[](GstPad* sinkPad, GstPad* srcPad) {
         RELEASE_ASSERT(!gst_pad_is_linked(sinkPad));
         gst_pad_link(srcPad, sinkPad);
     }), sinkPad.get());
 
-    gst_element_link_many(videoscale, videoconvert, videorate, nullptr);
+    gst_element_link(videoConvert.get(), videorate);
 
     sinkPad = adoptGRef(gst_element_get_static_pad(m_videoSrcMIMETypeFilter.get(), "sink"));
     gst_element_add_pad(bin, gst_ghost_pad_new("sink", sinkPad.get()));
@@ -229,9 +231,9 @@ bool GStreamerVideoCapturer::setFrameRate(double frameRate)
     return true;
 }
 
-static std::optional<int> getMaxIntValueFromStructure(const GstStructure* structure, const char* fieldName)
+static std::optional<int> getMaxIntValueFromStructure(const GstStructure* structure, ASCIILiteral fieldName)
 {
-    const GValue* value = gst_structure_get_value(structure, fieldName);
+    const GValue* value = gst_structure_get_value(structure, fieldName.characters());
     if (!value)
         return std::nullopt;
 
@@ -265,9 +267,9 @@ static std::optional<int> getMaxIntValueFromStructure(const GstStructure* struct
     return (maxInt > -G_MAXINT) ? std::make_optional<>(maxInt) : std::nullopt;
 }
 
-static std::optional<double> getMaxFractionValueFromStructure(const GstStructure* structure, const char* fieldName)
+static std::optional<double> getMaxFractionValueFromStructure(const GstStructure* structure, ASCIILiteral fieldName)
 {
-    const GValue* value = gst_structure_get_value(structure, fieldName);
+    const GValue* value = gst_structure_get_value(structure, fieldName.characters());
     if (!value)
         return std::nullopt;
 
@@ -354,15 +356,15 @@ void GStreamerVideoCapturer::reconfigure()
 
     gst_caps_foreach(deviceCaps.get(),
         reinterpret_cast<GstCapsForeachFunc>(+[](GstCapsFeatures*, GstStructure* structure, MimeTypeSelector* selector) -> gboolean {
-            auto width = getMaxIntValueFromStructure(structure, "width");
+            auto width = getMaxIntValueFromStructure(structure, "width"_s);
             if (!width.has_value())
                 return TRUE;
 
-            auto height = getMaxIntValueFromStructure(structure, "height");
+            auto height = getMaxIntValueFromStructure(structure, "height"_s);
             if (!height.has_value())
                 return TRUE;
 
-            auto frameRate = getMaxFractionValueFromStructure(structure, "framerate");
+            auto frameRate = getMaxFractionValueFromStructure(structure, "framerate"_s);
             if (!frameRate.has_value())
                 return TRUE;
 
@@ -371,10 +373,10 @@ void GStreamerVideoCapturer::reconfigure()
                 selector->maxWidth = *width;
                 selector->maxHeight = *height;
                 selector->maxFrameRate = *frameRate;
-                selector->mimeType = gstStructureGetName(structure).toString();
+                selector->mimeType = gstStructureGetName(structure).span();
                 if (gst_structure_has_name(structure, "video/x-raw")) {
                     if (gst_structure_has_field(structure, "format"))
-                        selector->format = makeString(gstStructureGetString(structure, "format"_s));
+                        selector->format = gstStructureGetString(structure, "format"_s).span();
                     else
                         return TRUE;
                 }
@@ -385,10 +387,10 @@ void GStreamerVideoCapturer::reconfigure()
                 selector->maxWidth = *width;
                 selector->maxHeight = *height;
                 selector->maxFrameRate = *frameRate;
-                selector->mimeType = gstStructureGetName(structure).toString();
+                selector->mimeType = gstStructureGetName(structure).span();
                 if (gst_structure_has_name(structure, "video/x-raw")) {
                     if (gst_structure_has_field(structure, "format"))
-                        selector->format = makeString(gstStructureGetString(structure, "format"_s));
+                        selector->format = gstStructureGetString(structure, "format"_s).span();
                     else
                         return TRUE;
                 }

@@ -32,7 +32,6 @@
 
 #include "CSSPropertyNames.h"
 #include "CachedImage.h"
-#include "CalculationValue.h"
 #include "ColorBlending.h"
 #include "Document.h"
 #include "FloatConversion.h"
@@ -41,16 +40,15 @@
 #include "FontSelectionValueInlines.h"
 #include "FontTaggedSettings.h"
 #include "IdentityTransformOperation.h"
-#include "Length.h"
 #include "Logging.h"
 #include "Matrix3DTransformOperation.h"
 #include "MatrixTransformOperation.h"
 #include "PathOperation.h"
 #include "RenderBox.h"
 #include "RenderStyleSetters.h"
-#include "SVGRenderStyle.h"
 #include "ScopedName.h"
 #include "Settings.h"
+#include "StyleCalculationValue.h"
 #include "StyleDynamicRangeLimit.h"
 #include "StyleImageWrapper.h"
 #include "StyleInterpolationClient.h"
@@ -58,7 +56,6 @@
 #include "StyleLengthWrapper+Blending.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StyleResolver.h"
-#include "StyleTextEdge.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 #include <wtf/PointerComparison.h>
@@ -91,17 +88,6 @@ inline float blendFunc(float from, float to, const Context& context)
 inline WebCore::Color blendFunc(const WebCore::Color& from, const WebCore::Color& to, const Context& context)
 {
     return WebCore::blend(from, to, context);
-}
-
-inline WebCore::Length blendFunc(const WebCore::Length& from, const WebCore::Length& to, const Context& context, ValueRange valueRange = ValueRange::All)
-{
-    return WebCore::blend(from, to, context, valueRange);
-}
-
-inline TabSize blendFunc(const TabSize& from, const TabSize& to, const Context& context)
-{
-    auto blendedValue = WebCore::blend(from.value(), to.value(), context);
-    return { blendedValue < 0 ? 0 : blendedValue, from.isSpaces() ? SpaceValueType : LengthValueType };
 }
 
 inline ContentVisibility blendFunc(ContentVisibility from, ContentVisibility to, const Context& context)
@@ -151,48 +137,6 @@ inline DisplayType blendFunc(DisplayType from, DisplayType to, const Context& co
     if (context.progress >= 1)
         return to;
     return from == DisplayType::None ? to : from;
-}
-
-#if ENABLE(VARIATION_FONTS)
-
-inline FontVariationSettings blendFunc(const FontVariationSettings& from, const FontVariationSettings& to, const Context& context)
-{
-    if (context.isDiscrete) {
-        ASSERT(!context.progress || context.progress == 1.0);
-        return context.progress ? to : from;
-    }
-
-    ASSERT(from.size() == to.size());
-    FontVariationSettings result;
-    size_t size = from.size();
-    for (size_t i = 0; i < size; ++i) {
-        auto& fromItem = from.at(i);
-        auto& toItem = to.at(i);
-        ASSERT(fromItem.tag() == toItem.tag());
-        result.insert({ fromItem.tag(), blendFunc(fromItem.value(), toItem.value(), context) });
-    }
-    return result;
-}
-
-#endif
-
-inline FontSelectionValue blendFunc(FontSelectionValue from, FontSelectionValue to, const Context& context)
-{
-    return FontSelectionValue(std::max(0.0f, blendFunc(static_cast<float>(from), static_cast<float>(to), context)));
-}
-
-inline std::optional<FontSelectionValue> blendFunc(std::optional<FontSelectionValue> from, std::optional<FontSelectionValue> to, const Context& context)
-{
-    if (!from && !to)
-        return std::nullopt;
-
-    auto valueOrDefault = [](std::optional<FontSelectionValue> fontSelectionValue) {
-        if (!fontSelectionValue)
-            return 0.0f;
-        return static_cast<float>(fontSelectionValue.value());
-    };
-
-    return normalizedFontItalicValue(blendFunc(valueOrDefault(from), valueOrDefault(to), context));
 }
 
 } // namespace WebCore::Style::Interpolation

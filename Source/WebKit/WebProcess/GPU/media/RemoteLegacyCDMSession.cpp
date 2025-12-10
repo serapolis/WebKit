@@ -95,11 +95,19 @@ void RemoteLegacyCDMSession::invalidate()
 
 RefPtr<Uint8Array> RemoteLegacyCDMSession::generateKeyRequest(const String& mimeType, Uint8Array* initData, String& destinationURL, unsigned short& errorCode, uint32_t& systemCode)
 {
-    if (!m_factory || !initData || !m_client)
+    if (!initData)
+        return nullptr;
+
+    RefPtr client = m_client.get();
+    if (!client)
+        return nullptr;
+
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return nullptr;
 
     auto ipcInitData = convertToSharedBuffer(initData);
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::GenerateKeyRequest(mimeType, ipcInitData, m_client->mediaKeysHashSalt()), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::GenerateKeyRequest(mimeType, ipcInitData, client->mediaKeysHashSalt()), m_identifier);
 
     RefPtr<SharedBuffer> ipcNextMessage;
     if (sendResult.succeeded())
@@ -113,20 +121,25 @@ RefPtr<Uint8Array> RemoteLegacyCDMSession::generateKeyRequest(const String& mime
 
 void RemoteLegacyCDMSession::releaseKeys()
 {
-    if (!m_factory)
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return;
 
-    m_factory->gpuProcessConnection().connection().send(Messages::RemoteLegacyCDMSessionProxy::ReleaseKeys(), m_identifier);
+    factory->gpuProcessConnection().connection().send(Messages::RemoteLegacyCDMSessionProxy::ReleaseKeys(), m_identifier);
     m_cachedKeyCache.clear();
 }
 
 bool RemoteLegacyCDMSession::update(Uint8Array* keyData, RefPtr<Uint8Array>& nextMessage, unsigned short& errorCode, uint32_t& systemCode)
 {
-    if (!m_factory || !keyData)
+    if (!keyData)
+        return false;
+
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return false;
 
     auto ipcKeyData = convertToSharedBuffer(keyData);
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::Update(ipcKeyData), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::Update(ipcKeyData), m_identifier);
 
     bool succeeded { false };
     RefPtr<SharedBuffer> ipcNextMessage;
@@ -141,14 +154,15 @@ bool RemoteLegacyCDMSession::update(Uint8Array* keyData, RefPtr<Uint8Array>& nex
 
 RefPtr<ArrayBuffer> RemoteLegacyCDMSession::cachedKeyForKeyID(const String& keyId) const
 {
-    if (!m_factory)
+    RefPtr factory = m_factory.get();
+    if (!factory)
         return nullptr;
 
     auto foundInCache = m_cachedKeyCache.find(keyId);
     if (foundInCache != m_cachedKeyCache.end())
         return foundInCache->value;
 
-    auto sendResult = m_factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::CachedKeyForKeyID(keyId), m_identifier);
+    auto sendResult = factory->gpuProcessConnection().connection().sendSync(Messages::RemoteLegacyCDMSessionProxy::CachedKeyForKeyID(keyId), m_identifier);
     auto [ipcKey] = sendResult.takeReplyOr(nullptr);
 
     if (!ipcKey)
@@ -161,21 +175,22 @@ RefPtr<ArrayBuffer> RemoteLegacyCDMSession::cachedKeyForKeyID(const String& keyI
 
 void RemoteLegacyCDMSession::sendMessage(RefPtr<SharedBuffer>&& message, const String& destinationURL)
 {
-    if (!m_client)
+    RefPtr client = m_client.get();
+    if (!client)
         return;
 
     if (!message) {
-        m_client->sendMessage(nullptr, destinationURL);
+        client->sendMessage(nullptr, destinationURL);
         return;
     }
 
-    m_client->sendMessage(convertToUint8Array(WTFMove(message)).get(), destinationURL);
+    client->sendMessage(convertToUint8Array(WTFMove(message)).get(), destinationURL);
 }
 
 void RemoteLegacyCDMSession::sendError(WebCore::LegacyCDMSessionClient::MediaKeyErrorCode errorCode, uint32_t systemCode)
 {
-    if (m_client)
-        m_client->sendError(errorCode, systemCode);
+    if (RefPtr client = m_client.get())
+        client->sendError(errorCode, systemCode);
 }
 
 }

@@ -44,6 +44,9 @@ public:
     size_t trackElementIndex();
     HTMLTrackElement* trackElement() const { return m_trackElement.get(); }
 
+    void ref() const final { TextTrack::ref(); }
+    void deref() const final { TextTrack::deref(); }
+
 private:
     LoadableTextTrack(HTMLTrackElement&, const AtomString& kind, const AtomString& label, const AtomString& language);
 
@@ -62,7 +65,7 @@ private:
 #endif
 
     WeakPtr<HTMLTrackElement, WeakPtrImplWithEventTargetData> m_trackElement;
-    std::unique_ptr<TextTrackLoader> m_loader;
+    RefPtr<TextTrackLoader> m_loader;
     URL m_url;
     bool m_loadPending { false };
 };

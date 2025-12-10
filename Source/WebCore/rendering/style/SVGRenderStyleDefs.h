@@ -29,7 +29,7 @@
 
 #pragma once
 
-#include <WebCore/Length.h>
+#include <WebCore/RenderStyleConstants.h>
 #include <WebCore/SVGLengthValue.h>
 #include <WebCore/StyleBoxShadow.h>
 #include <WebCore/StyleColor.h>
@@ -37,13 +37,13 @@
 #include <WebCore/StyleSVGBaselineShift.h>
 #include <WebCore/StyleSVGCenterCoordinateComponent.h>
 #include <WebCore/StyleSVGCoordinateComponent.h>
+#include <WebCore/StyleSVGMarkerResource.h>
 #include <WebCore/StyleSVGPaint.h>
 #include <WebCore/StyleSVGPathData.h>
 #include <WebCore/StyleSVGRadius.h>
 #include <WebCore/StyleSVGRadiusComponent.h>
 #include <WebCore/StyleSVGStrokeDasharray.h>
 #include <WebCore/StyleSVGStrokeDashoffset.h>
-#include <WebCore/StyleURL.h>
 #include <wtf/FixedVector.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -56,84 +56,6 @@ namespace WebCore {
 
 class CSSValue;
 class CSSValueList;
-
-enum class TextAnchor : uint8_t {
-    Start,
-    Middle,
-    End
-};
-
-enum class ColorInterpolation : uint8_t {
-    Auto,
-    SRGB,
-    LinearRGB
-};
-
-enum class ColorRendering : uint8_t {
-    Auto,
-    OptimizeSpeed,
-    OptimizeQuality
-};
-
-enum class ShapeRendering : uint8_t {
-    Auto,
-    OptimizeSpeed,
-    CrispEdges,
-    GeometricPrecision
-};
-
-enum class GlyphOrientation : uint8_t {
-    Degrees0,
-    Degrees90,
-    Degrees180,
-    Degrees270,
-    Auto
-};
-
-enum class AlignmentBaseline : uint8_t {
-    Baseline,
-    BeforeEdge,
-    TextBeforeEdge,
-    Middle,
-    Central,
-    AfterEdge,
-    TextAfterEdge,
-    Ideographic,
-    Alphabetic,
-    Hanging,
-    Mathematical
-};
-
-enum class DominantBaseline : uint8_t {
-    Auto,
-    UseScript,
-    NoChange,
-    ResetSize,
-    Ideographic,
-    Alphabetic,
-    Hanging,
-    Mathematical,
-    Central,
-    Middle,
-    TextAfterEdge,
-    TextBeforeEdge
-};
-
-enum class VectorEffect : uint8_t {
-    None,
-    NonScalingStroke
-};
-
-enum class BufferedRendering : uint8_t {
-    Auto,
-    Dynamic,
-    Static
-};
-
-enum class MaskType : uint8_t {
-    Luminance,
-    Alpha
-};
 
 // Inherited/Non-Inherited Style Datastructures
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleFillData);
@@ -149,9 +71,9 @@ public:
     void dumpDifferences(TextStream&, const StyleFillData&) const;
 #endif
 
-    Style::Opacity opacity;
-    Style::SVGPaint paint;
-    Style::SVGPaint visitedLinkPaint;
+    Style::Opacity fillOpacity;
+    Style::SVGPaint fill;
+    Style::SVGPaint visitedLinkFill;
 
 private:
     StyleFillData();
@@ -171,11 +93,11 @@ public:
     void dumpDifferences(TextStream&, const StyleStrokeData&) const;
 #endif
 
-    Style::Opacity opacity;
-    Style::SVGPaint paint;
-    Style::SVGPaint visitedLinkPaint;
-    Style::SVGStrokeDashoffset dashOffset;
-    Style::SVGStrokeDasharray dashArray;
+    Style::Opacity strokeOpacity;
+    Style::SVGPaint stroke;
+    Style::SVGPaint visitedLinkStroke;
+    Style::SVGStrokeDashoffset strokeDashOffset;
+    Style::SVGStrokeDasharray strokeDashArray;
 
 private:
     StyleStrokeData();
@@ -195,8 +117,8 @@ public:
     void dumpDifferences(TextStream&, const StyleStopData&) const;
 #endif
 
-    Style::Opacity opacity;
-    Style::Color color;
+    Style::Opacity stopOpacity;
+    Style::Color stopColor;
 
 private:
     StyleStopData();
@@ -262,9 +184,9 @@ public:
     void dumpDifferences(TextStream&, const StyleInheritedResourceData&) const;
 #endif
 
-    Style::URL markerStart;
-    Style::URL markerMid;
-    Style::URL markerEnd;
+    Style::SVGMarkerResource markerStart;
+    Style::SVGMarkerResource markerMid;
+    Style::SVGMarkerResource markerEnd;
 
 private:
     StyleInheritedResourceData();
@@ -298,18 +220,6 @@ private:
     StyleLayoutData();
     StyleLayoutData(const StyleLayoutData&);
 };
-
-
-WTF::TextStream& operator<<(WTF::TextStream&, AlignmentBaseline);
-WTF::TextStream& operator<<(WTF::TextStream&, BufferedRendering);
-WTF::TextStream& operator<<(WTF::TextStream&, ColorInterpolation);
-WTF::TextStream& operator<<(WTF::TextStream&, ColorRendering);
-WTF::TextStream& operator<<(WTF::TextStream&, DominantBaseline);
-WTF::TextStream& operator<<(WTF::TextStream&, GlyphOrientation);
-WTF::TextStream& operator<<(WTF::TextStream&, MaskType);
-WTF::TextStream& operator<<(WTF::TextStream&, ShapeRendering);
-WTF::TextStream& operator<<(WTF::TextStream&, TextAnchor);
-WTF::TextStream& operator<<(WTF::TextStream&, VectorEffect);
 
 WTF::TextStream& operator<<(WTF::TextStream&, const StyleFillData&);
 WTF::TextStream& operator<<(WTF::TextStream&, const StyleStrokeData&);

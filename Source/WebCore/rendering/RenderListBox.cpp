@@ -34,6 +34,7 @@
 #include "AXObjectCache.h"
 #include "CSSFontSelector.h"
 #include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "EventHandler.h"
 #include "FocusController.h"
 #include "FrameSelection.h"
@@ -50,7 +51,7 @@
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderLayoutState.h"
@@ -235,7 +236,7 @@ void RenderListBox::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, L
 
     auto& logicalWidth = style().logicalWidth();
     if (logicalWidth.isCalculated())
-        minLogicalWidth = std::max(0_lu, Style::evaluate(logicalWidth, 0_lu, 1.0f /* FIXME ZOOM EFFECTED? */));
+        minLogicalWidth = std::max(0_lu, Style::evaluate<LayoutUnit>(logicalWidth, 0_lu, style().usedZoomForLength()));
     else if (!logicalWidth.isPercent())
         minLogicalWidth = maxLogicalWidth;
 }
@@ -248,7 +249,7 @@ void RenderListBox::computePreferredLogicalWidths()
     m_minPreferredLogicalWidth = 0;
     m_maxPreferredLogicalWidth = 0;
 
-    if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->value > 0)
+    if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive())
         m_minPreferredLogicalWidth = m_maxPreferredLogicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
     else
         computeIntrinsicLogicalWidths(m_minPreferredLogicalWidth, m_maxPreferredLogicalWidth);
@@ -415,30 +416,6 @@ void RenderListBox::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
     }
 }
 
-void RenderListBox::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer) const
-{
-    if (!selectElement().allowsNonContiguousSelection())
-        return RenderBlockFlow::addFocusRingRects(rects, additionalOffset, paintContainer);
-
-    // Focus the last selected item.
-    int selectedItem = selectElement().activeSelectionEndListIndex();
-    if (selectedItem >= 0) {
-        rects.append(snappedIntRect(itemBoundingBoxRect(additionalOffset, selectedItem)));
-        return;
-    }
-
-    // No selected items, find the first non-disabled item.
-    int indexOfFirstEnabledOption = 0;
-    for (auto& item : selectElement().listItems()) {
-        if (is<HTMLOptionElement>(item.get()) && !item->isDisabledFormControl()) {
-            selectElement().setActiveSelectionEndIndex(indexOfFirstEnabledOption);
-            rects.append(itemBoundingBoxRect(additionalOffset, indexOfFirstEnabledOption));
-            return;
-        }
-        indexOfFirstEnabledOption++;
-    }
-}
-
 bool RenderListBox::useDarkAppearance() const
 {
     return RenderBlockFlow::useDarkAppearance();
@@ -454,21 +431,21 @@ void RenderListBox::paintScrollbar(PaintInfo& paintInfo, const LayoutPoint& pain
 
 static LayoutSize itemOffsetForAlignment(TextRun textRun, const RenderStyle& elementStyle, const RenderStyle* itemStyle, FontCascade itemFont, LayoutRect itemBoundingBox)
 {
-    TextAlignMode actualAlignment = itemStyle->textAlign();
-    // FIXME: Firefox doesn't respect TextAlignMode::Justify. Should we?
-    // FIXME: Handle TextAlignMode::End here
-    if (actualAlignment == TextAlignMode::Start || actualAlignment == TextAlignMode::Justify)
-        actualAlignment = itemStyle->writingMode().isLogicalLeftInlineStart() ? TextAlignMode::Left : TextAlignMode::Right;
+    Style::TextAlign actualAlignment = itemStyle->textAlign();
+    // FIXME: Firefox doesn't respect Style::TextAlign::Justify. Should we?
+    // FIXME: Handle Style::TextAlign::End here
+    if (actualAlignment == Style::TextAlign::Start || actualAlignment == Style::TextAlign::Justify)
+        actualAlignment = itemStyle->writingMode().isLogicalLeftInlineStart() ? Style::TextAlign::Left : Style::TextAlign::Right;
 
     bool isHorizontalWritingMode = elementStyle.writingMode().isHorizontal();
 
     auto itemBoundingBoxLogicalWidth = isHorizontalWritingMode ? itemBoundingBox.width() : itemBoundingBox.height();
     auto itemBoundingBoxLogicalHeight = isHorizontalWritingMode ? itemBoundingBox.height() : itemBoundingBox.width();
     auto offset = LayoutSize(0, itemFont.metricsOfPrimaryFont().intAscent());
-    if (actualAlignment == TextAlignMode::Right || actualAlignment == TextAlignMode::WebKitRight) {
+    if (actualAlignment == Style::TextAlign::Right || actualAlignment == Style::TextAlign::WebKitRight) {
         float textWidth = itemFont.width(textRun);
         offset.setWidth(itemBoundingBoxLogicalWidth - textWidth - optionsSpacingInlineStart);
-    } else if (actualAlignment == TextAlignMode::Center || actualAlignment == TextAlignMode::WebKitCenter) {
+    } else if (actualAlignment == Style::TextAlign::Center || actualAlignment == Style::TextAlign::WebKitCenter) {
         float textWidth = itemFont.width(textRun);
         offset.setWidth((itemBoundingBoxLogicalWidth - textWidth) / 2);
     } else

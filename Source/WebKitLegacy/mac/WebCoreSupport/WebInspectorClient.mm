@@ -46,10 +46,10 @@
 #import <SecurityInterface/SFCertificatePanel.h>
 #import <SecurityInterface/SFCertificateView.h>
 #import <WebCore/CertificateInfo.h>
-#import <WebCore/InspectorController.h>
 #import <WebCore/InspectorFrontendClient.h>
 #import <WebCore/LocalFrame.h>
 #import <WebCore/Page.h>
+#import <WebCore/PageInspectorController.h>
 #import <WebCore/ScriptController.h>
 #import <WebCore/Settings.h>
 #import <WebKitLegacy/DOMExtensions.h>
@@ -107,7 +107,7 @@ void WebInspectorClient::inspectedPageDestroyed()
 {
 }
 
-FrontendChannel* WebInspectorClient::openLocalFrontend(InspectorController* inspectedPageController)
+FrontendChannel* WebInspectorClient::openLocalFrontend(PageInspectorController* inspectedPageController)
 {
     RetainPtr<WebInspectorWindowController> windowController = adoptNS([[WebInspectorWindowController alloc] initWithInspectedWebView:m_inspectedWebView.get().get() isUnderTest:inspectedPageController->isUnderTest()]);
     [windowController.get() setInspectorClient:this];
@@ -177,7 +177,7 @@ void WebInspectorClient::releaseFrontend()
 }
 
 
-WebInspectorFrontendClient::WebInspectorFrontendClient(WebView* inspectedWebView, WebInspectorWindowController* frontendWindowController, InspectorController* inspectedPageController, Page* frontendPage, std::unique_ptr<Settings> settings)
+WebInspectorFrontendClient::WebInspectorFrontendClient(WebView* inspectedWebView, WebInspectorWindowController* frontendWindowController, PageInspectorController* inspectedPageController, Page* frontendPage, std::unique_ptr<Settings> settings)
     : InspectorFrontendClientLocal(inspectedPageController, frontendPage, WTFMove(settings))
     , m_inspectedWebView(inspectedWebView)
     , m_frontendWindowController(frontendWindowController)
@@ -404,7 +404,7 @@ void WebInspectorFrontendClient::save(Vector<InspectorFrontendClient::SaveData>&
     auto suggestedURL = saveDatas[0].url;
     ASSERT(!suggestedURL.isEmpty());
 
-    NSURL *platformURL = m_suggestedToActualURLMap.get(suggestedURL).get();
+    RetainPtr<NSURL> platformURL = m_suggestedToActualURLMap.get(suggestedURL);
     if (!platformURL) {
         platformURL = [NSURL URLWithString:suggestedURL.createNSString().get()];
         // The user must confirm new filenames before we can save to them.
@@ -436,17 +436,17 @@ void WebInspectorFrontendClient::save(Vector<InspectorFrontendClient::SaveData>&
     };
 
     if (!forceSaveAs) {
-        saveToURL(platformURL);
+        saveToURL(platformURL.get());
         return;
     }
 
     NSSavePanel *panel = [NSSavePanel savePanel];
-    panel.nameFieldStringValue = platformURL.lastPathComponent;
+    panel.nameFieldStringValue = platformURL.get().lastPathComponent;
 
     // If we have a file URL we've already saved this file to a path and
     // can provide a good directory to show. Otherwise, use the system's
     // default behavior for the initial directory to show in the dialog.
-    if (platformURL.isFileURL)
+    if (platformURL.get().isFileURL)
         panel.directoryURL = [platformURL URLByDeletingLastPathComponent];
 
     auto completionHandler = ^(NSInteger result) {
@@ -562,7 +562,7 @@ void WebInspectorFrontendClient::save(Vector<InspectorFrontendClient::SaveData>&
     [window setTitlebarAppearsTransparent:YES];
 
     [self setWindow:window.get()];
-    return window.get();
+    return window.unsafeGet();
 }
 
 // MARK: -

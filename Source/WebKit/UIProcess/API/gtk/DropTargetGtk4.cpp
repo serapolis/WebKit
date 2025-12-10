@@ -28,10 +28,10 @@
 
 #if ENABLE(DRAG_SUPPORT) && USE(GTK4)
 
+#include "GtkUtilities.h"
 #include "SandboxExtension.h"
 #include "WebKitWebViewBasePrivate.h"
 #include <WebCore/DragData.h>
-#include <WebCore/GtkUtilities.h>
 #include <WebCore/PasteboardCustomData.h>
 #include <gtk/gtk.h>
 #include <wtf/glib/GSpanExtras.h>
@@ -399,6 +399,8 @@ void DropTarget::drop(IntPoint&& position, unsigned)
     DragData dragData(&m_selectionData.value(), *m_position, *m_position, gdkDragActionToDragOperation(gdk_drop_get_actions(m_drop.get())));
     page->performDragOperation(dragData, { }, { }, { });
     gdk_drop_finish(m_drop.get(), gdk_drop_get_actions(m_drop.get()));
+
+    m_drop = nullptr;
 }
 
 } // namespace WebKit

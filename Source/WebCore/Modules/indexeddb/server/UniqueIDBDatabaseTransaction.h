@@ -63,6 +63,7 @@ public:
 
     UniqueIDBDatabaseConnection* databaseConnection() const;
     UniqueIDBDatabase* database() const;
+    CheckedPtr<UniqueIDBDatabase> checkedDatabase() const;
     const IDBTransactionInfo& info() const { return m_transactionInfo; }
     WEBCORE_EXPORT bool isVersionChange() const;
     bool isReadOnly() const;
@@ -88,6 +89,7 @@ public:
     WEBCORE_EXPORT void deleteRecord(const IDBRequestData&, const IDBKeyRangeData&);
     WEBCORE_EXPORT void openCursor(const IDBRequestData&, const IDBCursorInfo&);
     WEBCORE_EXPORT void iterateCursor(const IDBRequestData&, const IDBIterateCursorData&);
+    void addOpenRequestResult(const IDBError&);
 
     void didActivateInBackingStore(const IDBError&);
 

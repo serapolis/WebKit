@@ -41,7 +41,8 @@
 #include "ContainerNodeInlines.h"
 #include "DateComponents.h"
 #include "DateTimeChooser.h"
-#include "DocumentInlines.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "ElementInlines.h"
 #include "EventLoop.h"
@@ -54,6 +55,7 @@
 #include "HTMLDataListElement.h"
 #include "HTMLFormElement.h"
 #include "HTMLImageLoader.h"
+#include "HTMLInputElementInlines.h"
 #include "HTMLOptionElement.h"
 #include "HTMLParserIdioms.h"
 #include "IdTargetObserver.h"
@@ -634,29 +636,6 @@ inline void HTMLInputElement::runPostTypeUpdateTasks()
     addToRadioButtonGroup();
 }
 
-#if ENABLE(TOUCH_EVENTS)
-inline void HTMLInputElement::updateTouchEventHandler()
-{
-    bool hasTouchEventHandler = m_inputType->hasTouchEventHandler();
-    if (hasTouchEventHandler != m_hasTouchEventHandler) {
-        if (hasTouchEventHandler) {
-#if ENABLE(IOS_TOUCH_EVENTS)
-            document().addTouchEventHandler(*this);
-#else
-            document().didAddTouchEventHandler(*this);
-#endif
-        } else {
-#if ENABLE(IOS_TOUCH_EVENTS)
-            document().removeTouchEventHandler(*this);
-#else
-            document().didRemoveTouchEventHandler(*this);
-#endif
-        }
-        m_hasTouchEventHandler = hasTouchEventHandler;
-    }
-}
-#endif
-
 void HTMLInputElement::subtreeHasChanged()
 {
     m_inputType->subtreeHasChanged();
@@ -952,7 +931,7 @@ RenderPtr<RenderElement> HTMLInputElement::createElementRenderer(RenderStyle&& s
     return m_inputType->createInputRenderer(WTFMove(style));
 }
 
-bool HTMLInputElement::isReplaced(const RenderStyle&) const
+bool HTMLInputElement::isReplaced(const RenderStyle*) const
 {
     return m_inputType && m_inputType->isImageButton();
 }
@@ -1154,7 +1133,7 @@ void HTMLInputElement::copyNonAttributePropertiesFromElement(const Element& sour
 
 ValueOrReference<String> HTMLInputElement::value() const
 {
-    if (protectedDocument()->requiresScriptTrackingPrivacyProtection(ScriptTrackingPrivacyCategory::FormControls))
+    if (shouldApplyScriptTrackingPrivacyProtection())
         return m_inputType->defaultValue();
     if (auto* fileInput = dynamicDowncast<FileInputType>(*m_inputType))
         return fileInput->firstElementPathForInputValue();

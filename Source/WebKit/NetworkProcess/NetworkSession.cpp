@@ -162,6 +162,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     , m_persistedDomains(parameters.resourceLoadStatisticsParameters.persistedDomains)
     , m_privateClickMeasurement(managerOrProxy(*this, networkProcess, parameters))
     , m_privateClickMeasurementDebugModeEnabled(parameters.enablePrivateClickMeasurementDebugMode)
+    , m_prefetchCache(makeUniqueRef<PrefetchCache>())
     , m_broadcastChannelRegistry(NetworkBroadcastChannelRegistry::create(networkProcess))
     , m_testSpeedMultiplier(parameters.testSpeedMultiplier)
     , m_allowsServerPreconnect(parameters.allowsServerPreconnect)
@@ -481,6 +482,21 @@ void NetworkSession::handlePrivateClickMeasurementConversion(WebCore::PCM::Attri
     }
 
     m_privateClickMeasurement->handleAttribution(WTFMove(attributionTriggerData), requestURL, RegistrableDomain(redirectRequest.url()), redirectRequest.firstPartyForCookies(), appBundleID);
+}
+
+void NetworkSession::simulatePrivateClickMeasurementConversion(int priority, int triggerData, const URL& sourceURL, const URL& destinationURL)
+{
+    RegistrableDomain destinationSite { destinationURL };
+    if (!destinationSite.matches(URL { "https://pcmdestination.example"_s }))
+        return;
+
+    ResourceRequest request { URL { sourceURL }, destinationURL.strippedForUseAsReferrer().string };
+    request.setFirstPartyForCookies(destinationURL);
+
+    WebCore::PCM::AttributionTriggerData attributionTriggerData;
+    attributionTriggerData.data = triggerData;
+    attributionTriggerData.priority = priority;
+    handlePrivateClickMeasurementConversion(WTFMove(attributionTriggerData), sourceURL, request, { });
 }
 
 void NetworkSession::dumpPrivateClickMeasurement(CompletionHandler<void(String)>&& completionHandler)
@@ -932,7 +948,7 @@ void NetworkSession::setPersistedDomains(HashSet<WebCore::RegistrableDomain>&& d
 
 CheckedRef<PrefetchCache> NetworkSession::checkedPrefetchCache()
 {
-    return m_prefetchCache;
+    return m_prefetchCache.get();
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)

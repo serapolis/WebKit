@@ -26,13 +26,21 @@
 #include "config.h"
 #include "PlacedGridItem.h"
 
+#include "GridAreaLines.h"
 #include "UnplacedGridItem.h"
 
 namespace WebCore {
 namespace Layout {
 
-PlacedGridItem::PlacedGridItem(const UnplacedGridItem& unplacedGridItem, GridAreaLines gridAreaLines)
+PlacedGridItem::PlacedGridItem(const UnplacedGridItem& unplacedGridItem, GridAreaLines gridAreaLines,
+    const ComputedSizes& inlineAxisSizes, const ComputedSizes& blockAxisSizes, const StyleSelfAlignmentData& inlineAxisAlignment,
+    const StyleSelfAlignmentData& blockAxisAlignment, const Style::ZoomFactor& usedZoom)
     : m_layoutBox(unplacedGridItem.m_layoutBox)
+    , m_inlineAxisSizes(inlineAxisSizes)
+    , m_blockAxisSizes(blockAxisSizes)
+    , m_inlineAxisAlignment(inlineAxisAlignment)
+    , m_blockAxisAlignment(blockAxisAlignment)
+    , m_usedZoom(usedZoom)
     , m_gridAreaLines(gridAreaLines)
 {
 }

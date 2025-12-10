@@ -27,10 +27,9 @@
 #include "PerformanceEventTiming.h"
 
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "EventNames.h"
 #include "EventTargetInlines.h"
-#include "Node.h"
+#include "NodeDocument.h"
 #include "PerformanceEventTimingCandidate.h"
 #include <cmath>
 
@@ -53,20 +52,16 @@ PerformanceEventTiming::PerformanceEventTiming(const PerformanceEventTimingCandi
 
 PerformanceEventTiming::~PerformanceEventTiming() = default;
 
-Node* PerformanceEventTiming::target() const
+RefPtr<Node> PerformanceEventTiming::target() const
 {
-    if (!m_target || !m_target->isNode())
+    RefPtr node = dynamicDowncast<Node>(m_target.get());
+    if (!node || !node->isConnected())
         return nullptr;
 
-    RefPtr<Node> node = downcast<Node>((m_target.get()));
-    if (!node)
+    if (!node->protectedDocument()->isFullyActive())
         return nullptr;
 
-    Ref document = node->document();
-    if (!node->isConnected() || !document->isFullyActive())
-        return nullptr;
-
-    return node.get();
+    return node;
 }
 
 PerformanceEntry::Type PerformanceEventTiming::performanceEntryType() const

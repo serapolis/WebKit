@@ -205,6 +205,8 @@ macro doVMEntry(makeCall)
     end
 
     storep vm, VMEntryRecord::m_vm[sp]
+    loadp ProtoCallFrame::context[protoCallFrame], t4
+    storep t4, VMEntryRecord::m_context[sp]
     loadp VM::topCallFrame[vm], t4
     storep t4, VMEntryRecord::m_prevTopCallFrame[sp]
     loadp VM::topEntryFrame[vm], t4
@@ -2237,8 +2239,8 @@ llintOpWithJump(op_switch_imm, OpSwitchImm, macro (size, get, jump, dispatch)
 
     bineq t1, Int32Tag, .opSwitchImmNotInt
 
+    btinz UnlinkedSimpleJumpTable::m_isList[t2], .opSwitchImmSlow
     loadi UnlinkedSimpleJumpTable::m_min[t2], t3
-    bieq t3, (constexpr INT32_MAX), .opSwitchImmSlow
 
     subi t3, t0
     loadp UnlinkedSimpleJumpTable::m_branchOffsets + Int32FixedVector::m_storage[t2], t3
@@ -2762,7 +2764,7 @@ end)
 macro loadWithStructureCheck(opcodeStruct, get, operand, slowPath)
     get(m_scope, t0)
     loadp PayloadOffset[cfr, t0, 8], t0
-    loadp %opcodeStruct%::Metadata::m_structure[t5], t1
+    loadp %opcodeStruct%::Metadata::m_structureID[t5], t1
     bineq JSCell::m_structureID[t0], t1, slowPath
 end
 
@@ -3427,10 +3429,17 @@ llintOpWithReturn(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, g
     dispatch()
 end)
 
+llintOpWithReturn(op_instanceof, OpInstanceof, macro (size, get, dispatch, return)
+    callSlowPath(_llint_slow_path_instanceof)
+    dispatch()
+.osrReturnPoint:
+    getterSetterOSRExitReturnPoint(op_instanceof, size)
+    dispatch()
+end)
+
 slowPathOp(get_property_enumerator)
 slowPathOp(enumerator_next)
 slowPathOp(enumerator_has_own_property)
 slowPathOp(mod)
 
 llintSlowPathOp(has_structure_with_flags)
-llintSlowPathOp(instanceof)

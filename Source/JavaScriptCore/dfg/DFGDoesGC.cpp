@@ -482,6 +482,12 @@ bool doesGC(Graph& graph, Node* node)
     case ValueNegate:
     case DateSetTime:
     case StringIndexOf:
+    case ResolvePromiseFirstResolving:
+    case RejectPromiseFirstResolving:
+    case FulfillPromiseFirstResolving:
+    case PromiseResolve:
+    case PromiseReject:
+    case PromiseThen:
 #else // not ASSERT_ENABLED
     // See comment at the top for why the default for all nodes should be to
     // return true.
@@ -592,7 +598,7 @@ bool doesGC(Graph& graph, Node* node)
 
     case PutByValDirect:
     case PutByVal:
-    case PutByValAlias:
+    case PutByValDirectResolved:
     case PutByValMegamorphic:
         if (!graph.m_plan.isFTL()) {
             switch (node->arrayMode().modeForPut().type()) {

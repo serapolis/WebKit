@@ -46,6 +46,9 @@
 #if ENABLE(MEDIA_SOURCE)
 #include <WebCore/DeprecatedGlobalSettings.h>
 #endif
+#if ENABLE(VIDEO) && ENABLE(GPU_PROCESS)
+#include "AudioVideoRendererRemote.h"
+#endif
 
 namespace WebKit {
 using namespace WebCore;
@@ -65,6 +68,13 @@ Ref<WebCore::AudioDestination> WebMediaStrategy::createAudioDestination(const We
         });
 #endif
     return WebCore::AudioDestination::create(options);
+}
+#endif
+
+#if ENABLE(VIDEO) && ENABLE(GPU_PROCESS)
+RefPtr<AudioVideoRenderer> WebMediaStrategy::createAudioVideoRenderer(LoggerHelper* loggerHelper, WebCore::HTMLMediaElementIdentifier mediaElementIdentifier, WebCore::MediaPlayerIdentifier playerIdentifier) const
+{
+    return AudioVideoRendererRemote::create(loggerHelper, mediaElementIdentifier, playerIdentifier, WebProcess::singleton().ensureProtectedGPUProcessConnection());
 }
 #endif
 
@@ -112,6 +122,14 @@ void WebMediaStrategy::enableMockMediaSource()
     WebCore::DeprecatedGlobalSettings::setGStreamerEnabled(false);
 #endif
     m_mockMediaSourceEnabled = true;
+
+#if USE(AVFOUNDATION)
+    if (hasRemoteRendererFor(MediaPlayerMediaEngineIdentifier::AVFoundationMSE)) {
+        WebCore::MediaStrategy::addMockMediaSourceEngine();
+        return;
+    }
+#endif
+
 #if ENABLE(GPU_PROCESS)
     if (m_useGPUProcess) {
         Ref connection = WebProcess::singleton().ensureGPUProcessConnection().connection();
@@ -120,14 +138,6 @@ void WebMediaStrategy::enableMockMediaSource()
     }
 #endif
     WebCore::MediaStrategy::addMockMediaSourceEngine();
-}
-#endif
-
-#if PLATFORM(COCOA) && ENABLE(VIDEO)
-void WebMediaStrategy::nativeImageFromVideoFrame(const WebCore::VideoFrame& frame, CompletionHandler<void(std::optional<RefPtr<WebCore::NativeImage>>&&)>&& completionHandler)
-{
-    // FIMXE: Move out of sync IPC.
-    completionHandler(WebProcess::singleton().ensureProtectedGPUProcessConnection()->protectedVideoFrameObjectHeapProxy()->getNativeImage(frame));
 }
 #endif
 

@@ -29,7 +29,7 @@ SYSTEM_HEADER_SEARCH_PATHS = $(WK_PRIVATE_SDK_DIR)$(WK_ALTERNATE_WEBKIT_SDK_PATH
 FRAMEWORK_SEARCH_PATHS[sdk=embedded*] = $(WK_QUOTED_OVERRIDE_FRAMEWORKS_DIR) $(BUILT_PRODUCTS_DIR);
 FRAMEWORK_SEARCH_PATHS[sdk=macosx*] = $(WK_QUOTED_OVERRIDE_FRAMEWORKS_DIR);
 
-SYSTEM_FRAMEWORK_SEARCH_PATHS = $(inherited) $(WK_PRIVATE_SDK_DIR)$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks $(SDKROOT)$(SYSTEM_LIBRARY_DIR)/Frameworks
+SYSTEM_FRAMEWORK_SEARCH_PATHS = $(inherited) $(WK_PRIVATE_SDK_DIR)$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks $(SDKROOT)$(SYSTEM_LIBRARY_DIR)/Frameworks;
 
 SWIFT_INCLUDE_PATHS = $(SRCROOT)/WebGPU/Internal;
 
@@ -85,10 +85,31 @@ WK_NO_STATIC_INITIALIZERS_Release_NO_ = $(WK_ERROR_WHEN_LINKING_WITH_STATIC_INIT
 WK_NO_STATIC_INITIALIZERS_Production__ = $(WK_ERROR_WHEN_LINKING_WITH_STATIC_INITIALIZERS);
 WK_NO_STATIC_INITIALIZERS_Production_NO_ = $(WK_ERROR_WHEN_LINKING_WITH_STATIC_INITIALIZERS);
 
-// Work around rdar://139232237 by hiding all exported symbols from the "Cxx" module.
+// Work around rdar://139232237 / rdar://165050676 by hiding all exported symbols from the "Cxx" module.
 UNEXPORT_SWIFT_CXX_LDFLAGS = -Wl,-unexported_symbol,_$s*3Cxx* -Wl,-unexported_symbol,_$s*defaultArg*;
 
-OTHER_LDFLAGS = $(inherited) $(UNEXPORT_SWIFT_CXX_LDFLAGS) $(SOURCE_VERSION_LDFLAGS) $(WK_NO_STATIC_INITIALIZERS) -Wl,-unexported_symbol,*s_heapSpec;
+ALLOW_SHARED_CACHE = $(ALLOW_SHARED_CACHE_$(WK_RELOCATABLE_FRAMEWORKS)_$(USE_STAGING_INSTALL_PATH)_$(WK_PLATFORM_NAME));
+ALLOW_SHARED_CACHE_YES_YES_macosx = NO;
+ALLOW_SHARED_CACHE_YES__macosx = NO;
+ALLOW_SHARED_CACHE__YES_macosx = NO;
+
+OTHER_LDFLAGS_SHARED_CACHE = $(OTHER_LDFLAGS_SHARED_CACHE_$(ALLOW_SHARED_CACHE));
+OTHER_LDFLAGS_SHARED_CACHE_NO = -Wl,-not_for_dyld_shared_cache;
+
+OTHER_LDFLAGS = $(inherited) $(UNEXPORT_SWIFT_CXX_LDFLAGS) $(SOURCE_VERSION_LDFLAGS) $(WK_NO_STATIC_INITIALIZERS) $(OTHER_LDFLAGS_SHARED_CACHE) $(OTHER_LDFLAGS_ADDITIONAL_FRAMEWORKS) -Wl,-unexported_symbol,*s_heapSpec;
+
+ENABLE_WEBGPU_SWIFT = ;
+ENABLE_WEBGPU_SWIFT[sdk=macosx*][arch=arm64*] = ENABLE_WEBGPU_SWIFT;
+ENABLE_WEBGPU_SWIFT[sdk=macosx*14*] = ;
+ENABLE_WEBGPU_SWIFT[sdk=macosx*15*] = ;
+ENABLE_WEBGPU_SWIFT[sdk=iphoneos*] = ENABLE_WEBGPU_SWIFT;
+// FIXME: Support WebGPU swift in iOS simulator builds once the underlying
+// modules issue is fixed (https://bugs.webkit.org/show_bug.cgi?id=300146).
+ENABLE_WEBGPU_SWIFT[sdk=iphonesimulator*] = ;
+ENABLE_WEBGPU_SWIFT[sdk=macosx*][arch=x86*] = ;
+ENABLE_WEBGPU_SWIFT[sdk=xros*] = ENABLE_WEBGPU_SWIFT;
+ENABLE_WEBGPU_SWIFT[sdk=appletvos*] = ;
+ENABLE_WEBGPU_SWIFT[sdk=watchos*] = ;
 
 SWIFT_OBJC_INTERFACE_HEADER_NAME = WebGPUSwift-Generated.h;
 SWIFT_VERSION = 6.0;
@@ -100,22 +121,7 @@ WK_SWIFT_OBJC_INTEROP_MODE_ENABLE_WEBGPU_SWIFT = objcxx;
 // SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES
 
 // FIXME: broaden SafeInteropWrappers to all of WebKit; rdar://159439903
-OTHER_SWIFT_FLAGS = $(inherited) @$(BUILT_PRODUCTS_DIR)/DerivedSources/WebGPU/platform-enabled-swift-args.$(arch).resp $(OTHER_SWIFT_FLAGS_$(WK_PLATFORM_NAME)) -enable-experimental-feature SafeInteropWrappers -Xcc -fvisibility=hidden;
-OTHER_SWIFT_FLAGS_macosx = $(OTHER_SWIFT_FLAGS$(WK_MACOS_1400));
-OTHER_SWIFT_FLAGS_maccatalyst = $(OTHER_SWIFT_FLAGS$(WK_MACCATALYST_14));
-OTHER_SWIFT_FLAGS_iphoneos = $(OTHER_SWIFT_FLAGS$(WK_IOS_17));
-OTHER_SWIFT_FLAGS_iphonesimulator = $(OTHER_SWIFT_FLAGS$(WK_IOS_17));
-OTHER_SWIFT_FLAGS_appletvos = $(OTHER_SWIFT_FLAGS$(WK_TVOS_17));
-OTHER_SWIFT_FLAGS_appletvsimulator = $(OTHER_SWIFT_FLAGS$(WK_TVOS_17));
-OTHER_SWIFT_FLAGS_watchos = $(OTHER_SWIFT_FLAGS$(WK_WATCHOS_10));
-OTHER_SWIFT_FLAGS_watchsimulator = $(OTHER_SWIFT_FLAGS$(WK_WATCHOS_10));
-OTHER_SWIFT_FLAGS_xros = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_xrsimulator = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_MACOS_SINCE_1400 = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_MACCATALYST_SINCE_14 = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_IOS_SINCE_17 = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_WATCHOS_SINCE_10 = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
-OTHER_SWIFT_FLAGS_TVOS_SINCE_17 = -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t;
+OTHER_SWIFT_FLAGS = $(inherited) @$(BUILT_PRODUCTS_DIR)/DerivedSources/WebGPU/platform-enabled-swift-args.$(arch).resp -Xcc -std=c++2b -Xcc -D__WEBGPU__ -Xcc -DUCHAR_TYPE=char16_t -enable-experimental-feature SafeInteropWrappers -Xcc -fvisibility=hidden -no-verify-emitted-module-interface;
 
 SWIFT_OPTIMIZATION_LEVEL = -O;
 SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone;
@@ -123,3 +129,11 @@ SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone;
 EXCLUDED_SOURCE_FILE_NAMES = $(EXCLUDED_SOURCE_FILE_NAMES_$(ENABLE_WEBGPU_SWIFT));
 EXCLUDED_SOURCE_FILE_NAMES_ENABLE_WEBGPU_SWIFT =;
 EXCLUDED_SOURCE_FILE_NAMES_ = *.swift;
+
+BUILD_LIBRARY_FOR_DISTRIBUTION = YES; // This is required for all frameworks in the OS.
+RUN_SWIFT_ABI_CHECKER_TOOL = NO;
+
+// When back-deploying for STP and downlevel builds, force Xcode to embed any
+// compatibility runtimes alongside WebKit.framework.
+ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = $(WK_USE_OVERRIDE_FRAMEWORKS_DIR);
+SWIFT_STDLIB_TOOL_DESTINATION_DIR = $(DSTROOT)$(WK_OVERRIDE_FRAMEWORKS_DIR);

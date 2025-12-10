@@ -28,8 +28,8 @@
 #if ENABLE(FULLSCREEN_API)
 
 #include <WebCore/Document.h>
+#include <WebCore/FullscreenOptions.h>
 #include <WebCore/GCReachableRef.h>
-#include <WebCore/HTMLMediaElement.h>
 #include <WebCore/HTMLMediaElementEnums.h>
 #include <WebCore/LayoutRect.h>
 #include <WebCore/Page.h>
@@ -45,7 +45,6 @@ class DocumentFullscreen final : public CanMakeWeakPtr<DocumentFullscreen> {
     WTF_MAKE_TZONE_ALLOCATED(DocumentFullscreen);
 public:
     DocumentFullscreen(Document&);
-    ~DocumentFullscreen() = default;
 
     void ref() const { m_document->ref(); }
     void deref() const { m_document->deref(); }
@@ -79,6 +78,10 @@ public:
     // Legacy Mozilla API.
     bool isFullscreen() const { return fullscreenElement(); }
     bool isFullscreenKeyboardInputAllowed() const { return fullscreenElement() && m_areKeysEnabledInFullscreen; }
+
+    // Fullscreen Keyboard Lock
+    void setKeyboardLockMode(FullscreenOptions::KeyboardLock mode) { m_keyboardLockMode = mode; }
+    bool isBrowserKeyboardLockEnabled() const { return m_keyboardLockMode == FullscreenOptions::KeyboardLock::Browser; }
 
     enum FullscreenCheckType {
         EnforceIFrameAllowFullscreenRequirement,
@@ -137,6 +140,9 @@ private:
     bool m_areKeysEnabledInFullscreen { false };
     bool m_isAnimatingFullscreen { false };
     bool m_pendingExitFullscreen { false };
+
+    // Fullscreen Keyboard Lock
+    FullscreenOptions::KeyboardLock m_keyboardLockMode { FullscreenOptions::KeyboardLock::None };
 
 #if !RELEASE_LOG_DISABLED
     const uint64_t m_logIdentifier;

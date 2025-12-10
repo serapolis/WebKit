@@ -31,9 +31,8 @@
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
 #include "DOMTimer.h"
-#include "Document.h"
 #include "DocumentFullscreen.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
 #include "EventNames.h"
 #include "HTMLIFrameElement.h"
 #include "HTMLImageElement.h"
@@ -105,23 +104,24 @@ bool ContentChangeObserver::isVisuallyHidden(const Node& node)
 
     auto fixedWidth = style.logicalWidth().tryFixed();
     auto fixedHeight = style.logicalHeight().tryFixed();
-    if ((fixedWidth && !fixedWidth->value) || (fixedHeight && !fixedHeight->value))
+    if ((fixedWidth && fixedWidth->isZero()) || (fixedHeight && fixedHeight->isZero()))
         return true;
 
     auto fixedTop = style.logicalTop().tryFixed();
     auto fixedLeft = style.logicalLeft().tryFixed();
+    auto usedZoom = style.usedZoomForLength();
     // FIXME: This is trying to check if the element is outside of the viewport. This is incorrect for many reasons.
-    if (fixedLeft && fixedWidth && -fixedLeft->value >= fixedWidth->value)
+    if (fixedLeft && fixedWidth && -fixedLeft->resolveZoom(usedZoom) >= fixedWidth->resolveZoom(usedZoom))
         return true;
-    if (fixedTop && fixedHeight && -fixedTop->value >= fixedHeight->value)
+    if (fixedTop && fixedHeight && -fixedTop->resolveZoom(usedZoom) >= fixedHeight->resolveZoom(usedZoom))
         return true;
 
     // It's a common technique used to position content offscreen.
-    if (style.hasOutOfFlowPosition() && fixedLeft && fixedLeft->value <= -999)
+    if (style.hasOutOfFlowPosition() && fixedLeft && fixedLeft->resolveZoom(usedZoom) <= -999)
         return true;
 
     // FIXME: Check for other cases like zero height with overflow hidden.
-    if (auto fixedMaxHeight = style.maxHeight().tryFixed(); fixedMaxHeight && !fixedMaxHeight->value)
+    if (auto fixedMaxHeight = style.maxHeight().tryFixed(); fixedMaxHeight && fixedMaxHeight->isZero())
         return true;
 
     // Special case opacity, because a descendant with non-zero opacity should still be considered hidden when one of its ancetors has opacity: 0;
@@ -147,10 +147,10 @@ bool ContentChangeObserver::isConsideredVisible(const Node& node)
 
     // 1px width or height content is not considered visible.
     auto& style = *node.renderStyle();
-
-    if (auto fixedWidth = style.logicalWidth().tryFixed(); fixedWidth && fixedWidth->value <= 1)
+    auto usedZoom = style.usedZoomForLength();
+    if (auto fixedWidth = style.logicalWidth().tryFixed(); fixedWidth && fixedWidth->resolveZoom(usedZoom) <= 1)
         return false;
-    if (auto fixedHeight = style.logicalHeight().tryFixed(); fixedHeight && fixedHeight->value <= 1)
+    if (auto fixedHeight = style.logicalHeight().tryFixed(); fixedHeight && fixedHeight->resolveZoom(usedZoom) <= 1)
         return false;
     return true;
 }
@@ -412,6 +412,7 @@ void ContentChangeObserver::reset()
     m_observedDomTimerIsBeingExecuted = false;
 
     m_visibilityCandidateList.clear();
+    m_initialElementVisibility.clear();
 
     m_contentObservationTimer.stop();
     m_elementsWithDestroyedVisibleRenderer.clear();
@@ -463,6 +464,11 @@ void ContentChangeObserver::didAddMouseMoveRelatedEventListener(const AtomString
 
 void ContentChangeObserver::elementDidBecomeVisible(const Element& element)
 {
+    if (m_initialElementVisibility.add(element, ElementVisibility::Hidden).iterator->value == ElementVisibility::Visible) {
+        LOG_WITH_STREAM(ContentObservation, stream << "elementDidBecomeVisible: element was initially visible, ignoring visibility change: " << &element);
+        return;
+    }
+
     LOG_WITH_STREAM(ContentObservation, stream << "elementDidBecomeVisible: element went from hidden to visible: " << &element);
     m_visibilityCandidateList.add(element);
     adjustObservedState(Event::ElementDidBecomeVisible);
@@ -471,6 +477,7 @@ void ContentChangeObserver::elementDidBecomeVisible(const Element& element)
 void ContentChangeObserver::elementDidBecomeHidden(const Element& element)
 {
     LOG_WITH_STREAM(ContentObservation, stream << "elementDidBecomeHidden: element went from visible to hidden: " << &element);
+    m_initialElementVisibility.add(element, ElementVisibility::Visible);
     // Candidate element is no longer visible.
     if (!m_visibilityCandidateList.remove(element))
         return;
@@ -711,6 +718,7 @@ ContentChangeObserver::StyleChangeScope::StyleChangeScope(Document& document, co
     , m_element(element)
     , m_hadRenderer(element.renderer())
 {
+    // FIXME: Should this use `isConsideredVisible` like the destructor instead of `isVisuallyHidden`?
     if (m_contentChangeObserver.shouldObserveVisibilityChangeForElement(element))
         m_wasHidden = isVisuallyHidden(m_element);
 }

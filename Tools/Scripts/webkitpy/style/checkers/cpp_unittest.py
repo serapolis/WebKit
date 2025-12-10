@@ -1381,24 +1381,6 @@ class CppStyleTest(CppStyleTestBase):
                                      'structured multi-line comments.  [readability/multiline_comment] [5]'])
         self.assert_multi_line_lint(r'''    // /* comment, but not multi-line''', '')
 
-    def test_multiline_strings(self):
-        multiline_string_error_message = (
-            'Multi-line string ("...") found.  This lint script doesn\'t '
-            'do well with such strings, and may give bogus warnings.  They\'re '
-            'ugly and unnecessary, and you should use concatenation instead".'
-            '  [readability/multiline_string] [5]')
-
-        file_path = 'mydir/foo.cpp'
-
-        error_collector = ErrorCollector(self.assertTrue)
-        self.process_file_data(file_path, 'cpp',
-                               ['const char* str = "This is a\\',
-                                ' multiline string.";'],
-                               error_collector)
-        self.assertEqual(
-            2,  # One per line.
-            error_collector.result_list().count(multiline_string_error_message))
-
     def test_platformh_comments(self):
         check_platformh_message = (
             'CPP comments are not allowed in Platform.h, '
@@ -6105,6 +6087,36 @@ class WebKitStyleTest(CppStyleTestBase):
             "  [runtime/wtf_move] [4]",
             'foo.mm')
 
+    def test_unsafe_get(self):
+        self.assert_lint(
+            'auto ptr = obj.get();',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto ptr = obj.unsafeGet();',
+            "Avoid using 'unsafeGet()' by extending the lifetime of the RefPtr."
+            "  [runtime/unsafe_get_ptr] [5]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto ptr = obj.unsafeGet();',
+            "Avoid using 'unsafeGet()' by extending the lifetime of the RefPtr."
+            "  [runtime/unsafe_get_ptr] [5]",
+            'foo.mm')
+
+        self.assert_lint(
+            'auto ptr = obj.unsafePtr();',
+            "Avoid using 'unsafePtr()' by extending the lifetime of the Ref."
+            "  [runtime/unsafe_get_ptr] [5]",
+            'foo.cpp')
+
+        self.assert_lint(
+            'auto ptr = obj.unsafePtr();',
+            "Avoid using 'unsafePtr()' by extending the lifetime of the Ref."
+            "  [runtime/unsafe_get_ptr] [5]",
+            'foo.mm')
+
     def test_wtf_never_destroyed(self):
         self.assert_lint(
              'static NeverDestroyed<Foo> foo;',
@@ -6172,6 +6184,104 @@ class WebKitStyleTest(CppStyleTestBase):
             'static LazyNeverDestroyed<Condition> condition;',
             "Use 'static Lock/Condition' instead of 'NeverDestroyed<Lock/Condition>'."
             "  [runtime/wtf_never_destroyed] [4]",
+            'foo.mm')
+
+    def test_wtf_os_object_ptr(self):
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'OSObjectPtr queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'OSObjectPtr<dispatch_queue_t> queue = adoptOSObject(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'auto group = adoptOSObject(dispatch_group_create());',
+            '',
+            'foo.cpp')
+        self.assert_lint(
+            'RetainPtr<dispatch_queue_t> m_queue;',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'RetainPtr<dispatch_group_t> m_group;',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'RetainPtr<dispatch_queue_t> queue;',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'RetainPtr<dispatch_group_t> group;',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto queue = adoptNS(dispatch_queue_create("foo", DISPATCH_QUEUE_SERIAL));',
+            "Use 'adoptOSObject()' instead of 'adoptNS()' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto group = adoptNS(dispatch_group_create());',
+            "Use 'adoptOSObject()' instead of 'adoptNS()' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_CONCURRENT }.get()));',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", RetainPtr { DISPATCH_QUEUE_SERIAL }.get()));',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_CONCURRENT).get()));',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+        self.assert_lint(
+            'auto queue = adoptOSObject(dispatch_queue_create("foo", retainPtr(DISPATCH_QUEUE_SERIAL).get()));',
+            "Use 'OSObjectPtr' instead of 'RetainPtr' for dispatch objects."
+            "  [runtime/wtf_os_object_ptr] [4]",
+            'foo.mm')
+
+    def test_wtf_xpc_object_ptr(self):
+        self.assert_lint(
+            'XPCObjectPtr<xpc_connection_t> connection = adoptXPCObject(xpc_connection_create_from_endpoint(endpoint));',
+            '',
+            'foo.cpp')
+
+        self.assert_lint(
+            'RetainPtr<xpc_connection_t> m_connection;',
+            "Use 'XPCObjectPtr' instead of 'RetainPtr' for XPC objects."
+            "  [runtime/wtf_xpc_object_ptr] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'OSObjectPtr<xpc_connection_t> m_connection;',
+            "Use 'XPCObjectPtr' instead of 'OSObjectPtr' for XPC objects."
+            "  [runtime/wtf_xpc_object_ptr] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'auto connection = adoptNS(xpc_connection_create_from_endpoint(endpoint));',
+            "Use 'adoptXPCObject()' instead of 'adoptNS()' for XPC objects."
+            "  [runtime/wtf_xpc_object_ptr] [4]",
+            'foo.mm')
+
+        self.assert_lint(
+            'auto connection = adoptOSObject(xpc_connection_create_from_endpoint(endpoint));',
+            "Use 'adoptXPCObject()' instead of 'adoptOSObject()' for XPC objects."
+            "  [runtime/wtf_xpc_object_ptr] [4]",
             'foo.mm')
 
     def test_lock_guard(self):
@@ -6526,6 +6636,8 @@ class WebKitStyleTest(CppStyleTestBase):
         self.assert_lint('postTask([foo = protectedFoo(), bar]() {', '')
         self.assert_lint('postTask([foo = protectedFoo(), bar](ScriptExecutionContext& context) {', '')
         self.assert_lint('postTask([foo = bar().protectedFoo(), bar](ScriptExecutionContext& context) {', '')
+        self.assert_lint('bool ancestorsRevealed = revealClosedDetailsAndHiddenUntilFoundAncestors(simpleRange->protectedStartContainer());', '')
+        self.assert_lint('bool ancestorsRevealed = revealClosedDetailsAndHiddenUntilFoundAncestors(simpleRange-checkedStartContainer());', '')
 
         self.assert_lint('auto foo = checkedFoo()->bar();', '')
         self.assert_lint('postTask([foo = checkedFoo()] {', '')
@@ -7186,6 +7298,30 @@ class WebKitStyleTest(CppStyleTestBase):
         self.assert_lint('WK_API_AVAILABLE(ios(WK_IOS_TBA), macos(WK_MAC_TBA))', '')  # WK_MAC_TBA and WK_IOS_TBA are OK, backwards.
         self.assert_lint('WK_API_AVAILABLE(macos(WK_IOS_TBA))', 'macos(WK_IOS_TBA) is invalid; expected WK_MAC_TBA or a major.minor version  [build/wk_api_available] [5]')
         self.assert_lint('WK_API_AVAILABLE(ios(WK_MAC_TBA))', 'ios(WK_MAC_TBA) is invalid; expected WK_IOS_TBA or a major.minor version  [build/wk_api_available] [5]')
+
+        # Test for incorrect TBA macro usage - each platform should use its own TBA macro.
+        self.assert_lint('WK_API_AVAILABLE(macos(WK_XROS_TBA))', 'macos(WK_XROS_TBA) is invalid; expected WK_MAC_TBA or a major.minor version  [build/wk_api_available] [5]')
+        self.assert_lint('WK_API_AVAILABLE(ios(WK_XROS_TBA))', 'ios(WK_XROS_TBA) is invalid; expected WK_IOS_TBA or a major.minor version  [build/wk_api_available] [5]')
+        self.assert_lint('WK_API_AVAILABLE(visionos(WK_MAC_TBA))', 'visionos(WK_MAC_TBA) is invalid; expected WK_XROS_TBA or a major.minor version  [build/wk_api_available] [5]')
+        self.assert_lint('WK_API_AVAILABLE(visionos(WK_IOS_TBA))', 'visionos(WK_IOS_TBA) is invalid; expected WK_XROS_TBA or a major.minor version  [build/wk_api_available] [5]')
+
+        # Test that correct TBA macro usage doesn't produce errors.
+        self.assert_lint('WK_API_AVAILABLE(visionos(WK_XROS_TBA))', '')
+        self.assert_lint('WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA), visionos(WK_XROS_TBA))', '')
+
+        # Test different platform orderings work correctly.
+        self.assert_lint('WK_API_AVAILABLE(ios(WK_IOS_TBA), macos(WK_MAC_TBA))', '')
+        self.assert_lint('WK_API_AVAILABLE(visionos(WK_XROS_TBA), ios(WK_IOS_TBA), macos(WK_MAC_TBA))', '')
+        self.assert_lint('WK_API_AVAILABLE(ios(14.0), visionos(1.0))', '')
+
+        # Test duplicate platform detection.
+        self.assert_lint('WK_API_AVAILABLE(macos(WK_MAC_TBA), macos(WK_MAC_TBA))', 'Duplicate platform names in WK_API_AVAILABLE  [build/wk_api_available] [5]')
+        self.assert_lint('WK_API_AVAILABLE(ios(14.0), macos(11.0), ios(15.0))', 'Duplicate platform names in WK_API_AVAILABLE  [build/wk_api_available] [5]')
+
+        # Test for the original bug that prompted this check - WK_MAC_TBA used for all platforms.
+        self.assert_lint('} WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_MAC_TBA), visionos(WK_MAC_TBA));',
+                         ['ios(WK_MAC_TBA) is invalid; expected WK_IOS_TBA or a major.minor version  [build/wk_api_available] [5]',
+                          'visionos(WK_MAC_TBA) is invalid; expected WK_XROS_TBA or a major.minor version  [build/wk_api_available] [5]'])
 
     def test_os_version_checks(self):
         self.assert_lint('#if PLATFORM(IOS_FAMILY) && __IPHONE_OS_VERSION_MIN_REQUIRED < 110000', 'Misplaced OS version check. Please use a named macro in one of headers in the wtf/Platform.h suite of files or an appropriate internal file.  [build/version_check] [5]')

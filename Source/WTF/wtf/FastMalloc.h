@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2005-2024 Apple Inc. All rights reserved.
+ *  Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -414,19 +414,17 @@ public: \
 using __thisIsAlsoHereToForceASemicolonAfterThisMacro UNUSED_TYPE_ALIAS = int
 
 template<typename T>
-inline constexpr std::enable_if_t<WTF::IsTypeComplete<std::remove_pointer_t<T>>, bool> allowCompactPointers()
+inline constexpr bool allowCompactPointers()
 {
-    return std::remove_pointer_t<T>::allowCompactPointers;
-}
-
-template<typename T>
-inline constexpr std::enable_if_t<!WTF::IsTypeComplete<std::remove_pointer_t<T>>, bool> allowCompactPointers()
-{
-    // We want to support compact pointers to incomplete types too, so we have this fallback:
-    // if a type is incomplete, AllowCompactPointers can be specialized on its pointer type,
-    // in which case we'll return its value. This is mostly accomplished using the below
-    // WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE macro.
-    return AllowCompactPointers<std::remove_const_t<std::remove_pointer_t<T>>*>::value;
+    if constexpr (WTF::IsTypeComplete<std::remove_pointer_t<T>>)
+        return std::remove_pointer_t<T>::allowCompactPointers;
+    else {
+        // We want to support compact pointers to incomplete types too, so we have this fallback:
+        // if a type is incomplete, AllowCompactPointers can be specialized on its pointer type,
+        // in which case we'll return its value. This is mostly accomplished using the below
+        // WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE macro.
+        return AllowCompactPointers<std::remove_const_t<std::remove_pointer_t<T>>*>::value;
+    }
 }
 
 using WTF::FastAlignedMalloc;
@@ -647,6 +645,7 @@ using __thisIsHereToForceASemicolonAfterThisMacro UNUSED_TYPE_ALIAS = int
 #define WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR_IMPL(T) \
 void operator delete(T* object, std::destroying_delete_t, size_t size) { \
     ASSERT_UNUSED(size, sizeof(T) == size); \
+    object->setDidBeginCheckedPtrDeletion(); \
     object->T::~T(); \
     if (object->checkedPtrCountWithoutThreadCheck()) [[unlikely]] { \
         zeroBytes(*object); \
@@ -666,3 +665,12 @@ using __thisIsHereToForceASemicolonAfterWTFOverrideDelete UNUSED_TYPE_ALIAS = in
 #define WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(ClassName) \
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR_IMPL(ClassName) \
 using __thisIsHereToForceASemicolonAfterWTFOverrideDelete UNUSED_TYPE_ALIAS = int
+
+#if HAVE(36BIT_ADDRESS)
+#define WTF_DATA_ADDRESS_IS_SANE(p) (reinterpret_cast<uintptr_t>(p) < (1ull << 36))
+#define RELEASE_ASSERT_DATA_ADDRESS_IS_SANE(p) RELEASE_ASSERT(WTF_DATA_ADDRESS_IS_SANE(p))
+#else
+#define WTF_DATA_ADDRESS_IS_SANE(p) (UNUSED_PARAM(p), true)
+#define RELEASE_ASSERT_DATA_ADDRESS_IS_SANE(p) UNUSED_PARAM(p)
+#endif
+

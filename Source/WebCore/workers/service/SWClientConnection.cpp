@@ -28,11 +28,11 @@
 
 #include "BackgroundFetchInformation.h"
 #include "BackgroundFetchRegistration.h"
-#include "DocumentInlines.h"
 #include "ExceptionData.h"
 #include "MessageEvent.h"
 #include "ResourceMonitor.h"
 #include "SWContextManager.h"
+#include "SecurityOrigin.h"
 #include "ServiceWorkerContainer.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "ServiceWorkerJobData.h"
@@ -93,7 +93,7 @@ bool SWClientConnection::postTaskForJob(ServiceWorkerJobIdentifier jobIdentifier
     }
     auto isPosted = dispatchToContextThreadIfNecessary(iterator->value, [jobIdentifier, task = WTFMove(task)] (ScriptExecutionContext& context) mutable {
         if (RefPtr container = context.serviceWorkerContainer()) {
-            if (auto* job = container->job(jobIdentifier))
+            if (RefPtr job = container->job(jobIdentifier))
                 task(*job);
         }
     });
@@ -129,22 +129,22 @@ void SWClientConnection::startScriptFetchForServer(ServiceWorkerJobIdentifier jo
         finishFetchingScriptInServer({ serverConnectionIdentifier(), jobIdentifier }, WTFMove(registrationKey), workerFetchError(ResourceError { errorDomainWebKitInternal, 0, { }, makeString("Failed to fetch script for service worker with scope "_s, registrationKey.scope().string()) }));
 }
 
-static void postMessageToContainer(ScriptExecutionContext& context, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, String&& sourceOrigin)
+static void postMessageToContainer(ScriptExecutionContext& context, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, const SecurityOriginData& sourceOrigin)
 {
     if (RefPtr container = context.ensureServiceWorkerContainer())
-        container->postMessage(WTFMove(message), WTFMove(sourceData), WTFMove(sourceOrigin));
+        container->postMessage(WTFMove(message), WTFMove(sourceData), sourceOrigin.securityOrigin());
 }
 
-void SWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, String&& sourceOrigin)
+void SWClientConnection::postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&& message, ServiceWorkerData&& sourceData, const SecurityOriginData& sourceOrigin)
 {
     ASSERT(isMainThread());
 
     if (RefPtr destinationDocument = Document::allDocumentsMap().get(destinationContextIdentifier)) {
-        postMessageToContainer(*destinationDocument, WTFMove(message), WTFMove(sourceData), WTFMove(sourceOrigin));
+        postMessageToContainer(*destinationDocument, WTFMove(message), WTFMove(sourceData), sourceOrigin);
         return;
     }
-    ScriptExecutionContext::postTaskTo(destinationContextIdentifier, [message = WTFMove(message), sourceData = WTFMove(sourceData).isolatedCopy(), sourceOrigin = WTFMove(sourceOrigin).isolatedCopy()](auto& context) mutable {
-        postMessageToContainer(context, WTFMove(message), WTFMove(sourceData), WTFMove(sourceOrigin));
+    ScriptExecutionContext::postTaskTo(destinationContextIdentifier, [message = WTFMove(message), sourceData = WTFMove(sourceData).isolatedCopy(), sourceOrigin = sourceOrigin.isolatedCopy()](auto& context) mutable {
+        postMessageToContainer(context, WTFMove(message), WTFMove(sourceData), sourceOrigin);
     });
 }
 

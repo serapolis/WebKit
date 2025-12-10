@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -2108,6 +2108,68 @@ public:
             cachedMemoryTempRegister().invalidate();
     }
 
+    void load16SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 16>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsh<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load16SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne || address.scale == TimesTwo) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsh<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsh<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load16SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsh<64>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
+    void load32SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 32>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsw<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load32SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne || address.scale == TimesFour) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsw<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsw<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load32SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsw<64>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
     void zeroExtend16To32(RegisterID src, RegisterID dest)
     {
         and32(TrustedImm32(0xffff), src, dest);
@@ -2191,6 +2253,37 @@ public:
     {
         moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
         m_assembler.ldrsb<32>(dest, memoryTempRegister, ARM64Registers::zr);
+        if (dest == memoryTempRegister)
+            cachedMemoryTempRegister().invalidate();
+    }
+
+    void load8SignedExtendTo64(Address address, RegisterID dest)
+    {
+        if (tryLoadSignedWithOffset<64, 8>(dest, address.base, address.offset))
+            return;
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.ldrsb<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load8SignedExtendTo64(BaseIndex address, RegisterID dest)
+    {
+        if (address.scale == TimesOne) {
+            if (auto baseGPR = tryFoldBaseAndOffsetPart(address)) {
+                m_assembler.ldrsb<64>(dest, baseGPR.value(), address.index, indexExtendType(address), address.scale);
+                return;
+            }
+        }
+
+        signExtend32ToPtr(TrustedImm32(address.offset), getCachedMemoryTempRegisterIDAndInvalidate());
+        m_assembler.add<64>(memoryTempRegister, memoryTempRegister, address.index, indexExtendType(address), address.scale);
+        m_assembler.ldrsb<64>(dest, address.base, memoryTempRegister);
+    }
+
+    void load8SignedExtendTo64(const void* address, RegisterID dest)
+    {
+        moveToCachedReg(TrustedImmPtr(address), cachedMemoryTempRegister());
+        m_assembler.ldrsb<64>(dest, memoryTempRegister, ARM64Registers::zr);
         if (dest == memoryTempRegister)
             cachedMemoryTempRegister().invalidate();
     }
@@ -2698,10 +2791,6 @@ public:
 
     // Floating-point operations:
 
-    static bool supportsFloatingPoint() { return true; }
-    static bool supportsFloatingPointTruncate() { return true; }
-    static bool supportsFloatingPointSqrt() { return true; }
-    static bool supportsFloatingPointAbs() { return true; }
     static bool supportsFloatingPointRounding() { return true; }
     static bool supportsCountPopulation() { return true; }
 
@@ -3137,12 +3226,14 @@ public:
 
     void moveDouble(FPRegisterID src, FPRegisterID dest)
     {
-        m_assembler.fmov<64>(dest, src);
+        if (src != dest)
+            m_assembler.fmov<64>(dest, src);
     }
 
     void moveVector(FPRegisterID src, FPRegisterID dest)
     {
-        m_assembler.vorr<128>(dest, src, src);
+        if (src != dest)
+            m_assembler.vorr<128>(dest, src, src);
     }
 
     void materializeVector(v128_t value, FPRegisterID dest)
@@ -3371,7 +3462,7 @@ public:
                 m_assembler.fcsel<datasize>(thenCase, elseCase, thenCase, Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionNE);
             } else {
-                m_assembler.fmov<64>(dest, elseCase);
+                moveDouble(elseCase, dest);
                 Jump unordered = makeBranch(Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionNE);
                 unordered.link(this);
@@ -3387,7 +3478,7 @@ public:
                 m_assembler.fcsel<datasize>(elseCase, thenCase, elseCase, Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionEQ);
             } else {
-                m_assembler.fmov<64>(dest, thenCase);
+                moveDouble(thenCase, dest);
                 Jump unordered = makeBranch(Assembler::ConditionVS);
                 m_assembler.fcsel<datasize>(dest, thenCase, elseCase, Assembler::ConditionEQ);
                 unordered.link(this);
@@ -5260,13 +5351,19 @@ public:
     {
         m_assembler.dmbISH();
     }
-    
+
     void loadAcq8SignedExtendTo32(Address address, RegisterID dest)
     {
         loadAcq8(address, dest);
         signExtend8To32(dest, dest);
     }
-    
+
+    void loadAcq8SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq8(address, dest);
+        signExtend8To64(dest, dest);
+    }
+
     void loadAcq8(Address address, RegisterID dest)
     {
         m_assembler.ldar<8>(dest, extractSimpleAddress(address));
@@ -5276,13 +5373,19 @@ public:
     {
         m_assembler.stlr<8>(src, extractSimpleAddress(address));
     }
-    
+
     void loadAcq16SignedExtendTo32(Address address, RegisterID dest)
     {
         loadAcq16(address, dest);
         signExtend16To32(dest, dest);
     }
-    
+
+    void loadAcq16SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq16(address, dest);
+        signExtend16To64(dest, dest);
+    }
+
     void loadAcq16(Address address, RegisterID dest)
     {
         m_assembler.ldar<16>(dest, extractSimpleAddress(address));
@@ -5297,7 +5400,13 @@ public:
     {
         m_assembler.ldar<32>(dest, extractSimpleAddress(address));
     }
-    
+
+    void loadAcq32SignedExtendTo64(Address address, RegisterID dest)
+    {
+        loadAcq32(address, dest);
+        signExtend32To64(dest, dest);
+    }
+
     void loadAcq64(Address address, RegisterID dest)
     {
         m_assembler.ldar<64>(dest, extractSimpleAddress(address));

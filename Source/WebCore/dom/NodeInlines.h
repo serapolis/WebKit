@@ -68,16 +68,6 @@ inline WebCoreOpaqueRoot Node::opaqueRoot() const
     return traverseToOpaqueRoot();
 }
 
-inline Document& Node::document() const
-{
-    return treeScope().documentScope();
-}
-
-inline Ref<Document> Node::protectedDocument() const
-{
-    return document();
-}
-
 inline Ref<TreeScope> Node::protectedTreeScope() const
 {
     return treeScope();
@@ -86,6 +76,11 @@ inline Ref<TreeScope> Node::protectedTreeScope() const
 inline RenderBox* Node::renderBox() const
 {
     return dynamicDowncast<RenderBox>(renderer());
+}
+
+inline CheckedPtr<RenderBox> Node::checkedRenderBox() const
+{
+    return renderBox();
 }
 
 inline RenderBoxModelObject* Node::renderBoxModelObject() const
@@ -131,19 +126,28 @@ inline RefPtr<Element> Node::protectedParentElement() const
 
 bool Node::isBeforePseudoElement() const
 {
-    return pseudoId() == PseudoId::Before;
+    auto* pseudoElement = dynamicDowncast<PseudoElement>(*this);
+    return pseudoElement && pseudoElement->pseudoElementType() == PseudoElementType::Before;
 }
 
 bool Node::isAfterPseudoElement() const
 {
-    return pseudoId() == PseudoId::After;
+    auto* pseudoElement = dynamicDowncast<PseudoElement>(*this);
+    return pseudoElement && pseudoElement->pseudoElementType() == PseudoElementType::After;
 }
 
-PseudoId Node::pseudoId() const
+std::optional<PseudoElementType> Node::pseudoElementType() const
 {
     if (auto* pseudoElement = dynamicDowncast<PseudoElement>(*this))
-        return pseudoElement->pseudoId();
-    return PseudoId::None;
+        return pseudoElement->pseudoElementType();
+    return { };
+}
+
+std::optional<Style::PseudoElementIdentifier> Node::pseudoElementIdentifier() const
+{
+    if (auto type = pseudoElementType())
+        return Style::PseudoElementIdentifier { *type };
+    return { };
 }
 
 inline void Node::setTabIndexState(TabIndexState state)

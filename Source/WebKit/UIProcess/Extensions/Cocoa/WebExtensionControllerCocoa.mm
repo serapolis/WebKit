@@ -458,6 +458,7 @@ void WebExtensionController::addUserContentController(WebUserContentControllerPr
             continue;
 
         context->addInjectedContent(userContentController);
+        context->addDeclarativeNetRequestRules(userContentController);
     }
 }
 
@@ -469,23 +470,25 @@ void WebExtensionController::removeUserContentController(WebUserContentControlle
             return;
     }
 
-    for (Ref context : m_extensionContexts)
+    for (Ref context : m_extensionContexts) {
         context->removeInjectedContent(userContentController);
+        userContentController.removeContentRuleList(context->uniqueIdentifier());
+    }
 
     m_allNonPrivateUserContentControllers.remove(userContentController);
     m_allPrivateUserContentControllers.remove(userContentController);
     m_allUserContentControllers.remove(userContentController);
 }
 
-WebsiteDataStore* WebExtensionController::websiteDataStore(std::optional<PAL::SessionID> sessionID) const
+RefPtr<WebsiteDataStore> WebExtensionController::websiteDataStore(std::optional<PAL::SessionID> sessionID) const
 {
     Ref configuration = m_configuration;
     if (!sessionID || configuration->defaultWebsiteDataStore().sessionID() == sessionID.value())
-        return &configuration->defaultWebsiteDataStore();
+        return configuration->defaultWebsiteDataStore();
 
     for (Ref dataStore : allWebsiteDataStores()) {
         if (dataStore->sessionID() == sessionID.value())
-            return dataStore.ptr();
+            return dataStore;
     }
 
     return nullptr;

@@ -41,10 +41,10 @@
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "CSSViewTransitionRule.h"
-#include "CachedResourceLoader.h"
 #include "CompositeOperation.h"
-#include "Document.h"
 #include "DocumentInlines.h"
+#include "DocumentResourceLoader.h"
+#include "DocumentView.h"
 #include "ElementRuleCollector.h"
 #include "FrameSelection.h"
 #include "InspectorInstrumentation.h"
@@ -67,6 +67,7 @@
 #include "SVGDocumentExtensions.h"
 #include "SVGElement.h"
 #include "SVGFontFaceElement.h"
+#include "SVGSVGElement.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "SharedStringHash.h"
@@ -287,6 +288,10 @@ auto Resolver::initializeStateAndStyle(const Element& element, const ResolutionC
         state.setParentStyle(RenderStyle::clonePtr(*state.style()));
     }
 
+    // BuilderState::useSVGZoomRulesForLength equivalent
+    if (is<SVGElement>(element) && !(is<SVGSVGElement>(element) && element.parentNode()))
+        state.style()->setUseSVGZoomRulesForLength(true);
+
     if (element.isLink()) {
         auto& style = *state.style();
         style.setIsLink(true);
@@ -302,7 +307,7 @@ auto Resolver::initializeStateAndStyle(const Element& element, const ResolutionC
     return state;
 }
 
-BuilderContext Resolver::builderContext(State& state)
+BuilderContext Resolver::builderContext(State& state) const
 {
     return {
         document(),
@@ -328,8 +333,8 @@ UnadjustedStyle Resolver::unadjustedStyleForElement(Element& element, const Reso
     else
         collector.matchAllRules(m_matchAuthorAndUserStyles, matchingBehavior != RuleMatchingBehavior::MatchAllRulesExcludingSMIL);
 
-    if (collector.matchedPseudoElementIds())
-        style.setHasPseudoStyles(collector.matchedPseudoElementIds());
+    if (collector.matchedPseudoElements())
+        style.setHasPseudoStyles(collector.matchedPseudoElements());
 
     auto elementStyleRelations = commitRelationsToRenderStyle(style, element, collector.styleRelations());
 
@@ -385,7 +390,7 @@ UnadjustedStyle Resolver::unadjustedStyleForCachedMatchResult(Element& element, 
     };
 }
 
-std::unique_ptr<RenderStyle> Resolver::styleForKeyframe(Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, const StyleRuleKeyframe& keyframe, BlendingKeyframe& blendingKeyframe)
+std::unique_ptr<RenderStyle> Resolver::styleForKeyframe(Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, const StyleRuleKeyframe& keyframe, BlendingKeyframe& blendingKeyframe) const
 {
     // Add all the animating properties to the keyframe.
     bool hasRevert = false;
@@ -416,8 +421,9 @@ std::unique_ptr<RenderStyle> Resolver::styleForKeyframe(Element& element, const 
 
     ElementRuleCollector collector(element, m_ruleSets, context.selectorMatchingState);
 
-    if (elementStyle.pseudoElementType() != PseudoId::None)
-        collector.setPseudoElementRequest(elementStyle.pseudoElementIdentifier());
+    auto pseudoElementIdentifier = elementStyle.pseudoElementIdentifier();
+    if (pseudoElementIdentifier)
+        collector.setPseudoElementRequest(*pseudoElementIdentifier);
 
     if (hasRevert) {
         // In the animation origin, 'revert' rolls back the cascaded value to the user level.
@@ -431,13 +437,13 @@ std::unique_ptr<RenderStyle> Resolver::styleForKeyframe(Element& element, const 
     builder.state().setIsBuildingKeyframeStyle();
     builder.applyAllProperties();
 
-    Adjuster adjuster(document(), *state.parentStyle(), nullptr, elementStyle.pseudoElementType() == PseudoId::None ? &element : nullptr);
+    Adjuster adjuster(document(), *state.parentStyle(), nullptr, !pseudoElementIdentifier ? &element : nullptr);
     adjuster.adjust(*state.style());
 
     return state.takeStyle();
 }
 
-bool Resolver::isAnimationNameValid(const String& name)
+bool Resolver::isAnimationNameValid(const String& name) const
 {
     return m_keyframesRuleMap.find(AtomString(name)) != m_keyframesRuleMap.end()
         || userAgentKeyframes().find(AtomString(name)) != userAgentKeyframes().end();
@@ -537,13 +543,13 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
     return deduplicatedKeyframes;
 }
 
-void Resolver::keyframeStylesForAnimation(Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, BlendingKeyframes& list, const TimingFunction* defaultTimingFunction)
+bool Resolver::keyframeStylesForAnimation(Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, BlendingKeyframes& list, const TimingFunction* defaultTimingFunction) const
 {
     list.clear();
 
     auto keyframeRules = keyframeRulesForName(list.keyframesName(), defaultTimingFunction);
     if (keyframeRules.isEmpty())
-        return;
+        return false;
 
     // Construct and populate the style for each keyframe.
     for (auto& keyframeRule : keyframeRules) {
@@ -561,6 +567,8 @@ void Resolver::keyframeStylesForAnimation(Element& element, const RenderStyle& e
             list.updatePropertiesMetadata(keyframeRule->properties());
         }
     }
+
+    return true;
 }
 
 std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, const PseudoElementRequest& pseudoElementRequest, const ResolutionContext& context)
@@ -576,8 +584,7 @@ std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, c
     }
 
     ElementRuleCollector collector(element, m_ruleSets, context.selectorMatchingState);
-    if (pseudoElementRequest.pseudoId() != PseudoId::None)
-        collector.setPseudoElementRequest(pseudoElementRequest);
+    collector.setPseudoElementRequest(pseudoElementRequest);
     collector.setMedium(m_mediaQueryEvaluator);
     collector.matchUARules();
 
@@ -586,14 +593,12 @@ std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, c
         collector.matchAuthorRules();
     }
 
-    ASSERT(!collector.matchedPseudoElementIds());
+    ASSERT(!collector.matchedPseudoElements());
 
     if (collector.matchResult().isEmpty())
         return { };
 
-    state.style()->setPseudoElementType(pseudoElementRequest.pseudoId());
-    if (!pseudoElementRequest.nameArgument().isNull())
-        state.style()->setPseudoElementNameArgument(pseudoElementRequest.nameArgument());
+    state.style()->setPseudoElementIdentifier(pseudoElementRequest.identifier());
 
     applyMatchedProperties(state, collector.matchResult(), PropertyCascade::normalProperties());
 
@@ -638,7 +643,8 @@ std::unique_ptr<RenderStyle> Resolver::defaultStyleForElement(const Element* ele
 
     auto size = fontSizeForKeyword(CSSValueMedium, false, document());
     fontDescription.setSpecifiedSize(size);
-    fontDescription.setComputedSize(computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), style.get(), document()));
+    auto computedFontSize = computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), style.get(), document());
+    fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
 
     fontDescription.setShouldAllowUserInstalledFonts(settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
     style->setFontDescription(WTFMove(fontDescription));

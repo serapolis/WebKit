@@ -32,7 +32,7 @@
 #include "LibWebRTCAudioFormat.h"
 #include "LibWebRTCProvider.h"
 #include "Logging.h"
-#include "SpanCoreAudio.h"
+#include <pal/cf/CoreAudioExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

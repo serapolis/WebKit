@@ -186,7 +186,10 @@
     (syscall-unix-in-use-after-launch-blocked-in-lockdown-mode))
 
 (with-filter (require-not (webcontent-process-launched))
-    (allow syscall-unix (syscall-unix-only-in-use-during-launch)))
+    (allow-syscall-unix-only-in-use-during-launch))
+
+(with-filter (system-attribute developer-mode)
+    (allow-syscall-unix-developer-mode))
 
 (allow syscall-unix
     (syscall-unix-rarely-in-use)
@@ -302,8 +305,4 @@
         (extension-class "com.apple.mediaserverd.read")
         (require-any
             (apply subpath issue-extension-secondary-paths))))
-#endif
-
-#if __has_include(<WebKitAdditions/WebContentSandbox-ios.defs>)
-#include <WebKitAdditions/WebContentSandbox-ios.defs>
 #endif

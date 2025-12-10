@@ -28,9 +28,9 @@
 
 #include "APINavigation.h"
 #include "DrawingAreaProxy.h"
+#include "GRefPtrGtk.h"
 #include "WebBackForwardList.h"
 #include "WebPageProxy.h"
-#include <WebCore/GRefPtrGtk.h>
 #include <WebCore/Scrollbar.h>
 #include <WebCore/UserInterfaceLayoutDirection.h>
 
@@ -624,7 +624,7 @@ void ViewGestureController::draw(cairo_t* cr, cairo_pattern_t* pageGroup)
 
 void ViewGestureController::removeSwipeSnapshot()
 {
-    m_snapshotRemovalTracker.reset();
+    m_snapshotRemovalTracker->reset();
 
     m_hasOutstandingRepaintRequest = false;
 

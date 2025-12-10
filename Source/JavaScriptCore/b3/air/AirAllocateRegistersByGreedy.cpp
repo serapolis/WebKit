@@ -55,15 +55,12 @@ namespace Greedy {
 
 // Experiments
 static constexpr bool eagerGroupsExhaustiveSearch = false;
-static constexpr bool spillCostDivideBySize = true;
-static constexpr bool spillCostSizeBias = 1000; // Only relevant when spillCostDivideBySize
-
-// Quickly filters out short ranges from live range splitting consideration.
-static constexpr size_t splitMinRangeSize = 8;
 
 static constexpr float unspillableCost = std::numeric_limits<float>::infinity();
 static constexpr float fastTmpSpillCost = std::numeric_limits<float>::max();
+static constexpr float maxSpillableSpillCost = std::numeric_limits<float>::max();
 static_assert(unspillableCost > fastTmpSpillCost);
+static_assert(unspillableCost > maxSpillableSpillCost);
 
 // Phase constants used for the PhaseInsertionSet. Ensures that the fixup and spill/fill instructions
 // inserted in a particular gap ends up in the correct order.
@@ -76,13 +73,16 @@ static bool verbose() { return Options::airGreedyRegAllocVerbose(); }
 
 // Terminology / core data-structures:
 //
-// Point: a position within the IR stream. There are two points associated with each
-// instruction: early and late. The early point for an instruction occurs immediately
+// Point: a position within the IR stream. There are four points associated with each
+// instruction, see PointOffsets. The early point for an instruction occurs immediately
 // before the instruction and the late occurs immediately following. Early use/defs
 // for that instruction are modeled as occurring at the early point whereas late use/defs
 // are modeled as occurring at the late point. The late point for an instruction and
 // early point for the subsequent instruction are distinct in order to avoid false
-// conflicts, e.g. when a late use is followed by an early def.
+// conflicts, e.g. when a late use is followed by an early def. Two "gap" points, Pre & Post,
+// exist for each instruction to allow distinguishing e.g. a Tmp being live into a block from
+// a Tmp becoming live due to an early def by the first instruction of the block
+// (and sinilarly for block exits and late use).
 //
 // Interval: contiguous set of points, represented by a half open interval [begin, end).
 //
@@ -125,6 +125,20 @@ static bool verbose() { return Options::airGreedyRegAllocVerbose(); }
 
 using Point = uint32_t;
 using Interval = WTF::Range<Point>;
+
+enum PointOffsets {
+    Pre = 0,
+    Early = 1,
+    // Inst lives between the Early and Late points.
+    Late = 2,
+    Post = 3,
+    PointsPerInst
+};
+
+// Quickly filters out short ranges from live range splitting consideration.
+static constexpr size_t splitMinRangeSize = 4 * PointOffsets::PointsPerInst;
+
+static constexpr unsigned spillCostSizeBias = 25000 * PointOffsets::PointsPerInst;
 
 class LiveRange {
 public:
@@ -543,7 +557,6 @@ struct TmpData {
 
     float spillCost()
     {
-        ASSERT(liveRange.size()); // 0-sized ranges shouldn't be allocated
         switch (spillability) {
         case Spillability::Unspillable:
             return unspillableCost;
@@ -554,14 +567,14 @@ struct TmpData {
         default:
             ASSERT_NOT_REACHED();
         }
-        // Heuristic that favors not spilling higher use/def frequency-adjusted counts and
-        // shorter ranges. The spillCostSizeBias causes the penalty for larger ranges to
-        // be more dramatic as the range size gets larger.
-        if (spillCostDivideBySize)
-            return useDefCost / (liveRange.size() + spillCostSizeBias);
-
-        // Simplest heuristic: favors not spill higher use/def frequency-adjusted counts.
-        return useDefCost;
+        ASSERT(liveRange.size()); // 0-sized ranges shouldn't be allocated
+        // Heuristic that primarily favors not spilling higher use/def frequency-adjusted counts and
+        // secondarily favors smaller ranges. The range size is a crude proxy for degree of
+        // interference, since the register allocator never directly computes that.
+        // The spillCostSizeBias causes the range size penalty to be relatively insignificant
+        // for smaller ranges but become significant for very larger ranges.
+        float cost = useDefCost / (liveRange.size() + spillCostSizeBias);
+        return std::min(cost, maxSpillableSpillCost);
     }
 
     void validate()
@@ -582,7 +595,8 @@ struct TmpData {
     float useDefCost { 0.0f };
     Tmp parentGroup;
     Tmp subGroup0, subGroup1;
-    uint32_t splitMetadataIndex { 0 };
+    uint32_t splitMetadataIndex : 31 { 0 };
+    uint32_t hasColdUse : 1 { 0 };
     Stage stage { Stage::New };
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
@@ -675,8 +689,6 @@ public:
     }
 
 private:
-    static constexpr Point pointsPerInst = 2;
-
     template<Bank bank>
     void dumpRegRanges(PrintStream& out) const
     {
@@ -705,11 +717,10 @@ private:
                 m_tailPoints[i] = tailPosition;
                 continue;
             }
-            // Two points per instruction: early and late.
-            tailPosition = headPosition + 2 * block->size() - 1;
+            tailPosition = headPosition + block->size() * PointOffsets::PointsPerInst - 1;
             m_blockToHeadPoint[block] = headPosition;
             m_tailPoints[i] = tailPosition;
-            headPosition += block->size() * pointsPerInst;
+            headPosition += block->size() * PointOffsets::PointsPerInst;
         }
     }
 
@@ -730,30 +741,42 @@ private:
 
     Point positionOfTail(BasicBlock* block)
     {
-        return positionOfHead(block) + block->size() * pointsPerInst - 1;
+        return positionOfHead(block) + block->size() * PointOffsets::PointsPerInst - 1;
     }
 
     static size_t instIndex(Point positionOfHead, Point point)
     {
-        return (point - positionOfHead) / pointsPerInst;
+        return (point - positionOfHead) / PointOffsets::PointsPerInst;
+    }
+
+    static Point positionOfEarly(Point positionOfHead, unsigned instIndex)
+    {
+        ASSERT(!(positionOfHead % PointOffsets::PointsPerInst));
+        return positionOfHead + instIndex * PointOffsets::PointsPerInst + PointOffsets::Early;
+    }
+
+    static Point positionOfLate(Point positionOfHead, unsigned instIndex)
+    {
+        ASSERT(!(positionOfHead % PointOffsets::PointsPerInst));
+        return positionOfHead + instIndex * PointOffsets::PointsPerInst + PointOffsets::Late;
     }
 
     static Point positionOfEarly(Interval interval)
     {
-        static_assert(!(pointsPerInst & (pointsPerInst - 1)));
-        return interval.begin() & ~static_cast<Point>(pointsPerInst - 1);
+        static_assert(!(PointOffsets::PointsPerInst & (PointOffsets::PointsPerInst - 1)));
+        return (interval.begin() & ~(PointOffsets::PointsPerInst - 1)) + PointOffsets::Early;
     }
 
     static Interval earlyInterval(Point positionOfEarly)
     {
-        ASSERT(!(positionOfEarly % pointsPerInst));
+        ASSERT((positionOfEarly % PointOffsets::PointsPerInst) == PointOffsets::Early);
         return Interval(positionOfEarly);
     }
 
     static Interval lateInterval(Point positionOfEarly)
     {
-        ASSERT(!(positionOfEarly % pointsPerInst));
-        return Interval(positionOfEarly + 1);
+        ASSERT((positionOfEarly % PointOffsets::PointsPerInst) == PointOffsets::Early);
+        return Interval(positionOfEarly + (PointOffsets::Late - PointOffsets::Early));
     }
 
     static Interval earlyAndLateInterval(Point positionOfEarly)
@@ -1043,8 +1066,8 @@ private:
 
             for (unsigned instIndex = block->size(); instIndex--;) {
                 Inst& inst = block->at(instIndex);
-                Point positionOfEarly = positionOfHead + instIndex * pointsPerInst;
-                Point positionOfLate = positionOfEarly + 1;
+                Point positionOfEarly = this->positionOfEarly(positionOfHead, instIndex);
+                Point positionOfLate = this->positionOfLate(positionOfHead, instIndex);
 
                 lateUses.shrink(0);
                 lateDefs.shrink(0);
@@ -1061,6 +1084,8 @@ private:
                         earlyUses.append(tmp);
                     if (Arg::isEarlyDef(role))
                         earlyDefs.append(tmp);
+                    if (Arg::isColdUse(role)) [[unlikely]]
+                        m_map[tmp].hasColdUse = true;
                 });
                 if (inst.kind.opcode == Patch) [[unlikely]] {
                     inst.extraEarlyClobberedRegs().forEachWithWidthAndPreserved(
@@ -1160,8 +1185,7 @@ private:
         m_code.forEachTmp<bank>([&](Tmp tmp) {
             ASSERT(!tmp.isReg());
             TmpData& data = m_map[tmp];
-            std::sort(data.coalescables.begin(), data.coalescables.end(),
-                [this] (const auto& a, const auto& b) -> bool {
+            std::ranges::sort(data.coalescables, [this](const auto& a, const auto& b) {
                     if (a.moveCost != b.moveCost)
                         return a.moveCost > b.moveCost;
                     // Favor coalescing shorter live ranges.
@@ -1177,15 +1201,14 @@ private:
             }
         });
 
-        std::sort(moves.begin(), moves.end(),
-            [](Move& a, Move& b) -> bool {
+        std::ranges::sort(moves, [](auto& a, auto& b) {
                 if (a.cost != b.cost)
                     return a.cost > b.cost;
                 if (a.tmp0.tmpIndex(bank) != b.tmp1.tmpIndex(bank))
                     return a.tmp0.tmpIndex(bank) < a.tmp0.tmpIndex(bank);
                 ASSERT(a.tmp1.tmpIndex(bank) != b.tmp1.tmpIndex(bank));
                 return a.tmp1.tmpIndex(bank) < b.tmp1.tmpIndex(bank);
-            });
+        });
 
         auto hasConflict = [this, &worklist0, &worklist1](Tmp group0, Tmp group1) {
             bool conflicts = false;
@@ -1301,7 +1324,7 @@ private:
             tmpData.useDefCost = useDefCost;
 
             if (cannotSpillInPlace.contains(tmp)
-                && tmpData.liveRange.intervals().size() == 1 && tmpData.liveRange.size() <= pointsPerInst) {
+                && tmpData.liveRange.intervals().size() == 1 && tmpData.liveRange.size() <= PointOffsets::PointsPerInst) {
                 tmpData.spillability = TmpData::Spillability::Unspillable;
                 m_stats[bank].numUnspillableTmps++;
             }
@@ -1381,6 +1404,7 @@ private:
                 return;
             if (tmpData.liveRange.intervals().isEmpty())
                 return;
+            m_stats[bank].maxLiveRangeSize = std::max(m_stats[bank].maxLiveRangeSize, static_cast<unsigned>(tmpData.liveRange.size()));
             setStageAndEnqueue(tmp, tmpData, Stage::TryAllocate);
         });
 
@@ -1818,7 +1842,7 @@ private:
             Point positionOfHead = this->positionOfHead(block);
             for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
                 Inst& inst = block->at(instIndex);
-                unsigned indexOfEarly = positionOfHead + instIndex * 2;
+                unsigned indexOfEarly = positionOfEarly(positionOfHead, instIndex);
 
                 // The TmpWidth analysis will say that a Move only stores 32 bits into the destination,
                 // if the source only had 32 bits worth of non-zero bits. Same for the source: it will
@@ -1874,6 +1898,7 @@ private:
                         // If the Tmp holds a constant then we want to rematerialize its
                         // value rather than loading it from the stack.
                         unsigned tmpIndex = AbsoluteTmpMapper<bank>::absoluteIndex(arg.tmp());
+                        ASSERT_IMPLIES(Arg::isColdUse(role), m_map[arg.tmp()].hasColdUse);
                         if (!Arg::isColdUse(role) && m_useCounts.isConstDef<bank>(tmpIndex)) {
                             int64_t value = m_useCounts.constant<bank>(tmpIndex);
                             Arg oldArg = arg;
@@ -1886,7 +1911,7 @@ private:
                             arg = imm;
                             if (inst.isValidForm()) {
                                 m_stats[bank].numRematerializeConst++;
-                                dataLogLnIf(verbose(), "Rematerialized (direct imm), arg=", oldArg, ", inst=", inst);
+                                dataLogLnIf(verbose(), "Rematerialized (direct imm), BB", *block, " arg=", oldArg, ", inst=", inst);
                                 return;
                             }
                             // Couldn't insert the immediate into the instruction directly, so undo.
@@ -1944,6 +1969,7 @@ private:
                     continue;
                 }
 
+                bool doKillInst = false;
                 // For every other case, add Load/Store as needed.
                 inst.forEachTmp([&] (Tmp& tmp, Arg::Role role, Bank argBank, Width) {
                     if (tmp.isReg() || argBank != bank)
@@ -1953,46 +1979,56 @@ private:
                         return;
 
                     Opcode move = moveOpcode(tmp);
-                    auto oldTmp = tmp;
-                    tmp = addSpillTmpWithInterval(tmp, intervalForSpill(indexOfEarly, role));
+                    auto originalTmp = tmp;
+                    auto tmpIndex = AbsoluteTmpMapper<bank>::absoluteIndex(tmp);
+
+                    bool canRematerializeConstant = bank == GP && m_useCounts.isConstDef<bank>(tmpIndex);
+                    ASSERT_IMPLIES(canRematerializeConstant, !(Arg::isAnyUse(role) && Arg::isAnyDef(role)));
+                    ASSERT_IMPLIES(canRematerializeConstant, role != Arg::Scratch);
+
+                    bool canKillDef = canRematerializeConstant && !m_map[originalTmp].hasColdUse;
+
+                    if (Arg::isAnyUse(role) || (!canKillDef && Arg::isAnyDef(role)))
+                        tmp = addSpillTmpWithInterval(tmp, intervalForSpill(indexOfEarly, role));
+
                     if (role == Arg::Scratch)
                         return;
 
                     Arg arg = Arg::stack(spilled);
                     if (Arg::isAnyUse(role)) {
-                        auto tryRematerialize = [&]() {
-                            if constexpr (bank == GP) {
-                                auto oldIndex = AbsoluteTmpMapper<bank>::absoluteIndex(oldTmp);
-                                if (m_useCounts.isConstDef<bank>(oldIndex)) {
-                                    int64_t value = m_useCounts.constant<bank>(oldIndex);
-                                    if (Arg::isValidImmForm(value) && isValidForm(Move, Arg::Imm, Arg::Tmp)) {
-                                        m_insertionSets[block].insert(instIndex, spillLoad, Move, inst.origin, Arg::imm(value), tmp);
-                                        m_stats[bank].numRematerializeConst++;
-                                        dataLogLnIf(verbose(), "Rematerialized (imm) ", oldTmp, ": ", tmp, " <- ", WTF::RawHex(value));
-                                        return true;
-                                    }
-                                    if (isValidForm(Move, Arg::BigImm, Arg::Tmp)) {
-                                        m_insertionSets[block].insert(instIndex, spillLoad, Move, inst.origin, Arg::bigImm(value), tmp);
-                                        m_stats[bank].numRematerializeConst++;
-                                        dataLogLnIf(verbose(), "Rematerialized (bigImm) ", oldTmp, ": ", tmp, " <- ", WTF::RawHex(value));
-                                        return true;
-                                    }
-                                }
+                        if (canRematerializeConstant) {
+                            int64_t value = m_useCounts.constant<bank>(tmpIndex);
+                            if (Arg::isValidImmForm(value) && isValidForm(Move, Arg::Imm, Arg::Tmp)) {
+                                m_insertionSets[block].insert(instIndex, spillLoad, Move, inst.origin, Arg::imm(value), tmp);
+                                m_stats[bank].numRematerializeConst++;
+                                dataLogLnIf(verbose(), "Rematerialized (imm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
+                            } else {
+                                RELEASE_ASSERT(isValidForm(Move, Arg::BigImm, Arg::Tmp));
+                                m_insertionSets[block].insert(instIndex, spillLoad, Move, inst.origin, Arg::bigImm(value), tmp);
+                                m_stats[bank].numRematerializeConst++;
+                                dataLogLnIf(verbose(), "Rematerialized (bigImm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
                             }
-                            return false;
-                        };
-
-                        if (!tryRematerialize()) {
+                        } else {
                             m_insertionSets[block].insert(instIndex, spillLoad, move, inst.origin, arg, tmp);
                             m_stats[bank].numLoadSpill++;
                         }
                     }
                     if (Arg::isAnyDef(role)) {
-                        m_insertionSets[block].insert(instIndex + 1, spillStore, move, inst.origin, tmp, arg);
-                        m_stats[bank].numStoreSpill++;
+                        if (canKillDef) {
+                            ASSERT(inst.kind.opcode == Move || inst.kind.opcode == Move32);
+                            ASSERT(inst.args[0].isSomeImm() && inst.args[1] == originalTmp);
+                            doKillInst = true;
+                            dataLogLnIf(verbose(), "Rematerialized BB", *block, " removing def inst: ", inst);
+                        } else {
+                            ASSERT(!doKillInst);
+                            m_insertionSets[block].insert(instIndex + 1, spillStore, move, inst.origin, tmp, arg);
+                            m_stats[bank].numStoreSpill++;
+                        }
                     }
                 });
                 ASSERT(inst.isValidForm());
+                if (doKillInst)
+                    inst = Inst(); // Will be removed by assignRegisters()
             }
         }
     }
@@ -2097,7 +2133,7 @@ private:
                         return;
                     Reg reg = assignedReg(tmp);
                     if (!reg) {
-                        dataLog("Failed to allocate reg for: ", tmp, "\n");
+                        dataLogLn("Failed to allocate reg: BB", *block, " inst=", inst, " tmp=", tmp);
                         RELEASE_ASSERT_NOT_REACHED();
                     }
                     tmp = Tmp(reg);

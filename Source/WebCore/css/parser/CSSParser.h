@@ -71,6 +71,10 @@ class ImmutableStyleProperties;
 class Element;
 class MutableStyleProperties;
 
+namespace Style {
+struct Color;
+}
+
 enum CSSAtRuleID : uint8_t;
 
 class CSSParser {
@@ -175,6 +179,7 @@ private:
     RefPtr<StyleRuleViewTransition> consumeViewTransitionRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRulePositionTry> consumePositionTryRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFunction> consumeFunctionRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
+    RefPtr<StyleRuleInternalBaseAppearance> consumeInternalBaseAppearanceRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
 
     RefPtr<StyleRuleKeyframe> consumeKeyframeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleBase> consumeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block);

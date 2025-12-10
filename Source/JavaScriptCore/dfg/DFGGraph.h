@@ -490,7 +490,7 @@ public:
 
     bool canOptimizeStringObjectAccess(const CodeOrigin&);
 
-    bool getRegExpPrototypeProperty(JSObject* regExpPrototype, Structure* regExpPrototypeStructure, UniquedStringImpl* uid, JSValue& returnJSValue);
+    bool getPrototypeProperty(JSObject* prototype, Structure* prototypeStructure, UniquedStringImpl* uid, JSValue& returnJSValue);
 
     bool roundShouldSpeculateInt32(Node* arithRound, PredictionPass pass)
     {
@@ -947,6 +947,13 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::RegExpPrimordialPropertiesWatchpointSet);
     }
 
+    bool isWatchingPromiseThenWatchpoint(Node* node)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
+        InlineWatchpointSet& set = globalObject->promiseThenWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::PromiseThenWatchpointSet);
+    }
+
     bool isWatchingArraySpeciesWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
@@ -973,6 +980,13 @@ public:
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
         InlineWatchpointSet& set = globalObject->objectPrototypeChainIsSaneWatchpointSet();
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet);
+    }
+
+    bool isWatchingPromiseSpeciesWatchpoint(Node* node)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
+        InlineWatchpointSet& set = globalObject->promiseSpeciesWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::PromiseSpeciesWatchpointSet);
     }
 
     Profiler::Compilation* compilation() { return m_plan.compilation(); }
@@ -1145,6 +1159,8 @@ public:
 
     JSValue tryGetConstantGetter(Node* getterSetter);
     JSValue tryGetConstantSetter(Node* getterSetter);
+
+    ObjectPropertyConditionSet tryEnsureAbsence(JSGlobalObject*, const StructureSet&, CacheableIdentifier);
 
     bool canDoFastSpread(Node*, const AbstractValue&);
     

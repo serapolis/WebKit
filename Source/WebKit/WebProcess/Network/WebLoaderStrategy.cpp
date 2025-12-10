@@ -51,8 +51,8 @@
 #include <WebCore/DataURLDecoder.h>
 #include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/DiagnosticLoggingKeys.h>
-#include <WebCore/DocumentInlines.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/FetchOptions.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/FrameInlines.h>
@@ -61,9 +61,10 @@
 #include <WebCore/HitTestResult.h>
 #include <WebCore/InspectorInstrumentationWebKit.h>
 #include <WebCore/LocalFrame.h>
+#include <WebCore/LocalFrameInlines.h>
 #include <WebCore/NetscapePlugInStreamLoader.h>
 #include <WebCore/NetworkLoadInformation.h>
-#include <WebCore/NodeInlines.h>
+#include <WebCore/NodeDocument.h>
 #include <WebCore/PlatformStrategies.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceLoader.h>
@@ -111,12 +112,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WebLoaderStrategy);
 
 [[maybe_unused]] static uint64_t frameIDForLog(const std::optional<WebResourceLoader::TrackingParameters>& parameters)
 {
-    return parameters ? parameters->pageID.toUInt64() : 0;
+    return parameters ? parameters->frameID.toUInt64() : 0;
 }
 
 [[maybe_unused]] static uint64_t resourceIDForLog(const std::optional<WebResourceLoader::TrackingParameters>& parameters)
 {
-    return parameters ? parameters->pageID.toUInt64() : 0;
+    return parameters ? parameters->resourceID.toUInt64() : 0;
 }
 
 WebLoaderStrategy::WebLoaderStrategy(WebProcess& webProcess)
@@ -390,6 +391,11 @@ static void addParametersShared(const LocalFrame* frame, NetworkResourceLoadPara
 
     parameters.allowPrivacyProxy = policySourceDocumentLoader ? policySourceDocumentLoader->allowPrivacyProxy() : true;
 
+    if (RefPtr framePolicySourceDocumentLoader = frame->loader().loaderForWebsitePolicies(isMainFrameNavigation ? FrameLoader::CanIncludeCurrentDocumentLoader::No : FrameLoader::CanIncludeCurrentDocumentLoader::Yes)) {
+        if (String referrer = framePolicySourceDocumentLoader->preferences().overrideReferrerForAllRequests; !referrer.isNull())
+            parameters.request.setHTTPHeaderField(HTTPHeaderName::Referer, referrer);
+    }
+
     if (auto* document = frame->document()) {
         parameters.crossOriginEmbedderPolicy = document->crossOriginEmbedderPolicy();
         parameters.isClearSiteDataHeaderEnabled = document->settings().clearSiteDataHTTPHeaderEnabled();
@@ -401,8 +407,6 @@ static void addParametersShared(const LocalFrame* frame, NetworkResourceLoadPara
         page->logMediaDiagnosticMessage(parameters.request.httpBody());
 
         if (RefPtr webPage = WebPage::fromCorePage(*page)) {
-            if (!webPage->overrideReferrerForAllRequests().isNull())
-                parameters.request.setHTTPHeaderField(HTTPHeaderName::Referer, webPage->overrideReferrerForAllRequests());
 #if ENABLE(WK_WEB_EXTENSIONS) && PLATFORM(COCOA)
             if (RefPtr extensionControllerProxy = webPage->webExtensionControllerProxy())
                 parameters.pageHasLoadedWebExtensions = extensionControllerProxy->hasLoadedContexts();
@@ -869,7 +873,7 @@ void WebLoaderStrategy::loadResourceSynchronously(FrameLoader& frameLoader, WebC
     if (!sendResult.succeeded()) {
         WEBLOADERSTRATEGY_WITH_FRAMELOADER_RELEASE_LOG_ERROR("loadResourceSynchronously: failed sending synchronous network process message %" PUBLIC_LOG_STRING, IPC::errorAsString(sendResult.error()).characters());
         if (page)
-            page->diagnosticLoggingClient().logDiagnosticMessage(WebCore::DiagnosticLoggingKeys::internalErrorKey(), WebCore::DiagnosticLoggingKeys::synchronousMessageFailedKey(), WebCore::ShouldSample::No);
+            page->checkedDiagnosticLoggingClient()->logDiagnosticMessage(WebCore::DiagnosticLoggingKeys::internalErrorKey(), WebCore::DiagnosticLoggingKeys::synchronousMessageFailedKey(), WebCore::ShouldSample::No);
         response = ResourceResponse();
         error = internalError(request.url());
     } else
@@ -1128,9 +1132,9 @@ void WebLoaderStrategy::setResourceLoadSchedulingMode(WebCore::Page& page, WebCo
     connection.send(Messages::NetworkConnectionToWebProcess::SetResourceLoadSchedulingMode(WebPage::fromCorePage(page)->identifier(), mode), 0);
 }
 
-void WebLoaderStrategy::prioritizeResourceLoads(const Vector<WebCore::SubresourceLoader*>& resources)
+void WebLoaderStrategy::prioritizeResourceLoads(const Vector<RefPtr<WebCore::SubresourceLoader>>& resources)
 {
-    auto identifiers = resources.map([](auto* loader) -> WebCore::ResourceLoaderIdentifier {
+    auto identifiers = resources.map([](auto& loader) -> WebCore::ResourceLoaderIdentifier {
         return *loader->identifier();
     });
 

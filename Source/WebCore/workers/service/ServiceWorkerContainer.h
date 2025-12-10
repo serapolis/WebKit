@@ -62,9 +62,10 @@ public:
 
     ~ServiceWorkerContainer();
 
-    // ActiveDOMObject.
+    // ContextDestructionObserver.
     void ref() const final;
     void deref() const final;
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     ServiceWorker* controller() const;
 
@@ -82,7 +83,7 @@ public:
     void queueTaskToFireUpdateFoundEvent(ServiceWorkerRegistrationIdentifier);
     void queueTaskToDispatchControllerChangeEvent();
 
-    void postMessage(MessageWithMessagePorts&&, ServiceWorkerData&& sourceData, String&& sourceOrigin);
+    void postMessage(MessageWithMessagePorts&&, ServiceWorkerData&& sourceData, Ref<SecurityOrigin>&& sourceOrigin);
 
     void getRegistrations(Ref<DeferredPromise>&&);
 
@@ -125,7 +126,7 @@ private:
 
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions& = { }) final;
 
-    void scheduleJob(std::unique_ptr<ServiceWorkerJob>&&);
+    void scheduleJob(Ref<ServiceWorkerJob>&&);
 
     void jobFailedWithException(ServiceWorkerJob&, const Exception&) final;
     void jobResolvedWithRegistration(ServiceWorkerJob&, ServiceWorkerRegistrationData&&, ShouldNotifyWhenResolved) final;
@@ -162,7 +163,7 @@ private:
     RefPtr<SWClientConnection> m_swConnection;
 
     struct OngoingJob {
-        std::unique_ptr<ServiceWorkerJob> job;
+        RefPtr<ServiceWorkerJob> job;
         RefPtr<PendingActivity<ServiceWorkerContainer>> pendingActivity;
     };
     HashMap<ServiceWorkerJobIdentifier, OngoingJob> m_jobMap;

@@ -2508,9 +2508,9 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
 
 // FIXME: This function should take span<const char8_t>, since it requires UTF-8.
 template<typename CharacterType>
-URLParser::LCharBuffer URLParser::percentDecode(std::span<const Latin1Character> input, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
+URLParser::Latin1Buffer URLParser::percentDecode(std::span<const Latin1Character> input, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
 {
-    LCharBuffer output;
+    Latin1Buffer output;
     output.reserveInitialCapacity(input.size());
     
     for (size_t i = 0; i < input.size(); ++i) {
@@ -2530,9 +2530,9 @@ URLParser::LCharBuffer URLParser::percentDecode(std::span<const Latin1Character>
     return output;
 }
     
-URLParser::LCharBuffer URLParser::percentDecode(std::span<const Latin1Character> input)
+URLParser::Latin1Buffer URLParser::percentDecode(std::span<const Latin1Character> input)
 {
-    LCharBuffer output;
+    Latin1Buffer output;
     output.reserveInitialCapacity(input.size());
     
     for (size_t i = 0; i < input.size(); ++i) {
@@ -2571,9 +2571,9 @@ void URLParser::addNonSpecialDotSlash()
     m_url.m_queryEnd += 2;
 }
 
-template<typename CharacterType> std::optional<URLParser::LCharBuffer> URLParser::domainToASCII(StringImpl& domain, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
+template<typename CharacterType> std::optional<URLParser::Latin1Buffer> URLParser::domainToASCII(StringImpl& domain, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition)
 {
-    LCharBuffer ascii;
+    Latin1Buffer ascii;
     if (domain.containsOnlyASCII() && !subdomainStartsWithXNDashDash(domain)) {
         size_t length = domain.length();
         if (domain.is8Bit()) {
@@ -2616,7 +2616,7 @@ template<typename CharacterType> std::optional<URLParser::LCharBuffer> URLParser
     return std::nullopt;
 }
 
-bool URLParser::hasForbiddenHostCodePoint(const URLParser::LCharBuffer& asciiDomain)
+bool URLParser::hasForbiddenHostCodePoint(const URLParser::Latin1Buffer& asciiDomain)
 {
     for (auto character : asciiDomain) {
         if (isForbiddenDomainCodePoint(character))
@@ -2863,7 +2863,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     
     const auto hostBegin = iterator;
     
-    LCharBuffer utf8Encoded;
+    Latin1Buffer utf8Encoded;
     for (; !iterator.atEnd(); ++iterator) {
         if (isTabOrNewline(*iterator)) [[unlikely]] {
             syntaxViolation(hostBegin);
@@ -2882,7 +2882,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
             return HostParsingResult::InvalidHost;
         utf8Encoded.append(std::span { buffer }.first(offset));
     }
-    LCharBuffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
+    Latin1Buffer percentDecoded = percentDecode(utf8Encoded.span(), hostBegin);
     String domain = String::fromUTF8(percentDecoded.span());
     if (domain.isNull())
         return HostParsingResult::InvalidHost;
@@ -2891,7 +2891,7 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
     auto asciiDomain = domainToASCII(*domain.impl(), hostBegin);
     if (!asciiDomain || hasForbiddenHostCodePoint(asciiDomain.value()))
         return HostParsingResult::InvalidHost;
-    LCharBuffer& asciiDomainValue = asciiDomain.value();
+    Latin1Buffer& asciiDomainValue = asciiDomain.value();
 
     auto address = parseIPv4Host<CharacterType, Latin1Character>(hostBegin, asciiDomainValue.span());
     if (address) {
@@ -2924,7 +2924,7 @@ std::optional<String> URLParser::formURLDecode(StringView input)
     if (utf8.isNull())
         return std::nullopt;
     auto percentDecoded = percentDecode(byteCast<Latin1Character>(utf8.span()));
-    return String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(percentDecoded.span()));
+    return String::fromUTF8ReplacingInvalidSequences(percentDecoded.span());
 }
 
 // https://url.spec.whatwg.org/#concept-urlencoded-parser
@@ -2991,15 +2991,14 @@ String URLParser::serialize(const URLEncodedForm& tuples)
 
 const UIDNA& URLParser::internationalDomainNameTranscoder()
 {
-    static UIDNA* encoder;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static UIDNA* encoder = [] {
         UErrorCode error = U_ZERO_ERROR;
-        encoder = uidna_openUTS46(UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_UNICODE | UIDNA_NONTRANSITIONAL_TO_ASCII, &error);
+        auto* encoder = uidna_openUTS46(UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_UNICODE | UIDNA_NONTRANSITIONAL_TO_ASCII, &error);
         if (U_FAILURE(error)) [[unlikely]]
             CRASH_WITH_INFO(error);
         RELEASE_ASSERT(encoder);
-    });
+        return encoder;
+    }();
     return *encoder;
 }
 

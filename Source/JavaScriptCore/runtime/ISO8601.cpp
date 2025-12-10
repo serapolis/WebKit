@@ -27,6 +27,7 @@
 #include "config.h"
 #include "ISO8601.h"
 
+#include "FractionToDouble.h"
 #include "IntlObject.h"
 #include "ParseInt.h"
 #include "TemporalObject.h"
@@ -48,9 +49,6 @@ static constexpr int64_t nsPerMinute = 1000LL * 1000 * 1000 * 60;
 static constexpr int64_t nsPerSecond = 1000LL * 1000 * 1000;
 static constexpr int64_t nsPerMillisecond = 1000LL * 1000;
 static constexpr int64_t nsPerMicrosecond = 1000LL;
-
-static constexpr int32_t maxYear = 275760;
-static constexpr int32_t minYear = -271821;
 
 std::optional<TimeZoneID> parseTimeZoneName(StringView string)
 {
@@ -974,7 +972,24 @@ static std::optional<std::tuple<PlainTime, std::optional<TimeZoneRecord>>> parse
 }
 
 template<typename CharacterType>
-static std::optional<PlainDate> parseDate(StringParsingBuffer<CharacterType>& buffer)
+static bool canBeYear(StringParsingBuffer<CharacterType>& buffer)
+{
+    // 4 characters for year, plus 2 more for month
+    if (buffer.lengthRemaining() < 6)
+        return false;
+    bool hasPrefix = buffer[0] == '+' || buffer[0] == '-';
+    if (!isASCIIDigit(buffer[0]) && !hasPrefix)
+        return false;
+    size_t start = hasPrefix ? 1 : 0;
+    for (size_t i = start; i < 4 + start; i++) {
+        if (!isASCIIDigit(buffer[i]))
+            return false;
+    }
+    return true;
+}
+
+template<typename CharacterType>
+static std::optional<PlainDate> parseDate(StringParsingBuffer<CharacterType>& buffer, TemporalDateFormat format)
 {
     // https://tc39.es/proposal-temporal/#prod-Date
     // Date :
@@ -1003,57 +1018,77 @@ static std::optional<PlainDate> parseDate(StringParsingBuffer<CharacterType>& bu
     //     2 Digit
     //     30
     //     31
+    //
+    //  DateSpecYearMonth :::
+    //      DateYear DateSeparator_[+Extended] DateMonth
+    //      DateYear DateSeparator_[~Extended] DateMonth
+    //
+    //  DateSpecMonthDay :::
+    //      --opt DateMonth DateSeparator_[+Extended] DateDay
+    //      --opt DateMonth DateSeparator_[~Extended] DateDay
 
     if (buffer.atEnd())
-        return std::nullopt;
-
-    bool sixDigitsYear = false;
-    int yearFactor = 1;
-    if (*buffer == '+') {
-        buffer.advance();
-        sixDigitsYear = true;
-    } else if (*buffer == '-') {
-        yearFactor = -1;
-        buffer.advance();
-        sixDigitsYear = true;
-    } else if (!isASCIIDigit(*buffer))
         return std::nullopt;
 
     int32_t year = 0;
-    if (sixDigitsYear) {
-        if (buffer.lengthRemaining() < 6)
-            return std::nullopt;
-        for (unsigned index = 0; index < 6; ++index) {
-            if (!isASCIIDigit(buffer[index]))
-                return std::nullopt;
+    bool splitByHyphen = false;
+
+    if (*buffer == '-') {
+        if (buffer.lengthRemaining() > 2
+            && buffer[1] == '-'
+            && format == TemporalDateFormat::MonthDay) {
+            buffer.advanceBy(2);
         }
-        year = parseDecimalInt32(std::span { buffer.position(), 6 }) * yearFactor;
-        if (!year && yearFactor < 0)
-            return std::nullopt;
-        buffer.advanceBy(6);
-    } else {
-        if (buffer.lengthRemaining() < 4)
-            return std::nullopt;
-        for (unsigned index = 0; index < 4; ++index) {
-            if (!isASCIIDigit(buffer[index]))
-                return std::nullopt;
-        }
-        year = parseDecimalInt32(std::span { buffer.position(), 4 });
-        buffer.advanceBy(4);
     }
 
-    if (buffer.atEnd())
-        return std::nullopt;
+    // Look ahead to distinguish month from year
+    if (canBeYear(buffer)) {
+        bool sixDigitsYear = false;
+        int yearFactor = 1;
+        if (*buffer == '+') {
+            buffer.advance();
+            sixDigitsYear = true;
+        } else if (*buffer == '-') {
+            yearFactor = -1;
+            buffer.advance();
+            sixDigitsYear = true;
+        } else if (!isASCIIDigit(*buffer))
+            return std::nullopt;
 
-    bool splitByHyphen = false;
-    if (*buffer == '-') {
-        splitByHyphen = true;
-        buffer.advance();
-        if (buffer.lengthRemaining() < 5)
+        if (sixDigitsYear) {
+            if (buffer.lengthRemaining() < 6)
+                return std::nullopt;
+            for (unsigned index = 0; index < 6; ++index) {
+                if (!isASCIIDigit(buffer[index]))
+                    return std::nullopt;
+            }
+            year = parseDecimalInt32(std::span { buffer.position(), 6 }) * yearFactor;
+            if (!year && yearFactor < 0)
+                return std::nullopt;
+            buffer.advanceBy(6);
+        } else {
+            if (buffer.lengthRemaining() < 4)
+                return std::nullopt;
+            for (unsigned index = 0; index < 4; ++index) {
+                if (!isASCIIDigit(buffer[index]))
+                return std::nullopt;
+            }
+            year = parseDecimalInt32(std::span { buffer.position(), 4 });
+            buffer.advanceBy(4);
+        }
+
+        if (buffer.atEnd())
             return std::nullopt;
-    } else {
-        if (buffer.lengthRemaining() < 4)
-            return std::nullopt;
+
+        if (*buffer == '-') {
+            splitByHyphen = true;
+            buffer.advance();
+            if (buffer.lengthRemaining() < 5 && format == TemporalDateFormat::Date)
+                return std::nullopt;
+        } else {
+            if (buffer.lengthRemaining() < 4 && format == TemporalDateFormat::Date)
+                return std::nullopt;
+        }
     }
     // We ensured that buffer has enough length for month and day. We do not need to check length.
 
@@ -1071,12 +1106,16 @@ static std::optional<PlainDate> parseDate(StringParsingBuffer<CharacterType>& bu
     } else
         return std::nullopt;
 
-    if (splitByHyphen) {
-        if (*buffer == '-')
+    if (format == TemporalDateFormat::YearMonth && buffer.atEnd())
+        return PlainDate(year, month, 1);
+
+    if (*buffer == '-') {
+        if (splitByHyphen || format != TemporalDateFormat::Date)
             buffer.advance();
         else
             return std::nullopt;
-    }
+    } else if (splitByHyphen)
+        return std::nullopt;
 
     unsigned day = 0;
     auto firstDayCharacter = *buffer;
@@ -1089,14 +1128,27 @@ static std::optional<PlainDate> parseDate(StringParsingBuffer<CharacterType>& bu
         if (!day || day > daysInMonth(year, month))
             return std::nullopt;
         buffer.advance();
-    } else
+    } else if (format != TemporalDateFormat::YearMonth)
         return std::nullopt;
 
-    return PlainDate(year, month, day);
+    // PlainDate represents out-of-range years using outOfRangeYear
+    if (!isYearWithinLimits(year)) [[unlikely]]
+        year = outOfRangeYear;
+
+    switch (format) {
+    case TemporalDateFormat::Date:
+        return PlainDate(year, month, day);
+    case TemporalDateFormat::YearMonth:
+        return PlainDate(year, month, 1);
+    case TemporalDateFormat::MonthDay:
+        return PlainDate(1972, month, day);
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
 }
 
 template<typename CharacterType>
-static std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> parseDateTime(StringParsingBuffer<CharacterType>& buffer)
+static std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> parseDateTime(StringParsingBuffer<CharacterType>& buffer, TemporalDateFormat format)
 {
     // https://tc39.es/proposal-temporal/#prod-DateTime
     // DateTime :
@@ -1104,7 +1156,7 @@ static std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::option
     //
     // TimeSpecSeparator :
     //     DateTimeSeparator TimeSpec
-    auto plainDate = parseDate(buffer);
+    auto plainDate = parseDate(buffer, format);
     if (!plainDate)
         return std::nullopt;
     if (buffer.atEnd())
@@ -1170,13 +1222,13 @@ static std::optional<std::tuple<PlainTime, std::optional<TimeZoneRecord>, std::o
 }
 
 template<typename CharacterType>
-static std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> parseCalendarDateTime(StringParsingBuffer<CharacterType>& buffer)
+static std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> parseCalendarDateTime(StringParsingBuffer<CharacterType>& buffer, TemporalDateFormat format)
 {
     // https://tc39.es/proposal-temporal/#prod-DateTime
     // CalendarDateTime :
     //     DateTime CalendarName[opt]
     //
-    auto dateTime = parseDateTime(buffer);
+    auto dateTime = parseDateTime(buffer, format);
     if (!dateTime)
         return std::nullopt;
 
@@ -1276,20 +1328,20 @@ std::optional<std::tuple<PlainTime, std::optional<TimeZoneRecord>, std::optional
     return tuple;
 }
 
-std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> parseDateTime(StringView string)
+std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> parseDateTime(StringView string, TemporalDateFormat format)
 {
-    return readCharactersForParsing(string, [](auto buffer) -> std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> {
-        auto result = parseDateTime(buffer);
+    return readCharactersForParsing(string, [format](auto buffer) -> std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>>> {
+        auto result = parseDateTime(buffer, format);
         if (!buffer.atEnd())
             return std::nullopt;
         return result;
     });
 }
 
-std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> parseCalendarDateTime(StringView string)
+std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> parseCalendarDateTime(StringView string, TemporalDateFormat format)
 {
-    return readCharactersForParsing(string, [](auto buffer) -> std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> {
-        auto result = parseCalendarDateTime(buffer);
+    return readCharactersForParsing(string, [format](auto buffer) -> std::optional<std::tuple<PlainDate, std::optional<PlainTime>, std::optional<TimeZoneRecord>, std::optional<CalendarID>>> {
+        auto result = parseCalendarDateTime(buffer, format);
         if (!buffer.atEnd())
             return std::nullopt;
         return result;
@@ -1308,7 +1360,7 @@ std::optional<ExactTime> parseInstant(StringView string)
     //     TimeZoneUTCOffset TimeZoneBracketedAnnotation_opt
 
     return readCharactersForParsing(string, [](auto buffer) -> std::optional<ExactTime> {
-        auto datetime = parseCalendarDateTime(buffer);
+        auto datetime = parseCalendarDateTime(buffer, TemporalDateFormat::Date);
         if (!datetime)
             return std::nullopt;
         auto [plainDate, plainTimeOptional, timeZoneOptional, calendarOptional] = WTFMove(datetime.value());
@@ -1468,9 +1520,10 @@ String temporalTimeToString(PlainTime plainTime, std::tuple<Precision, unsigned>
     return makeString(pad('0', 2, plainTime.hour()), ':', pad('0', 2, plainTime.minute()), ':', pad('0', 2, plainTime.second()), '.', pad('0', paddingLength, emptyString()), fraction);
 }
 
-String temporalDateToString(PlainDate plainDate)
+static String temporalDateToString(int32_t year, int32_t month)
 {
-    auto year = plainDate.year();
+    // If we're printing a date, it should be within range
+    ASSERT(isYearWithinLimits(year));
 
     String prefix;
     auto yearDigits = 4;
@@ -1480,7 +1533,13 @@ String temporalDateToString(PlainDate plainDate)
         year = std::abs(year);
     }
 
-    return makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, plainDate.month()), '-', pad('0', 2, plainDate.day()));
+    return makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, month));
+}
+
+static String temporalDateToString(int32_t year, int32_t month, int32_t day)
+{
+    auto first = temporalDateToString(year, month);
+    return makeString(first, '-', pad('0', 2, day));
 }
 
 String temporalDateTimeToString(PlainDate plainDate, PlainTime plainTime, std::tuple<Precision, unsigned> precision)
@@ -1488,24 +1547,50 @@ String temporalDateTimeToString(PlainDate plainDate, PlainTime plainTime, std::t
     return makeString(temporalDateToString(plainDate), 'T', temporalTimeToString(plainTime, precision));
 }
 
+String temporalDateToString(PlainDate plainDate)
+{
+    return temporalDateToString(plainDate.year(), plainDate.month(), plainDate.day());
+}
+
+String temporalYearMonthToString(PlainYearMonth plainYearMonth, StringView calendarName)
+{
+    if (calendarName == "always"_s) {
+        // FIXME: Include the correct calendar ID when calendars are fully implemented.
+        return makeString(temporalDateToString(plainYearMonth.isoPlainDate()), "[u-ca=iso8601]"_s);
+    }
+    return temporalDateToString(plainYearMonth.year(), plainYearMonth.month());
+}
+
+String temporalMonthDayToString(PlainMonthDay plainMonthDay, StringView calendarName)
+{
+    if (calendarName == "always"_s) {
+        // FIXME: print the correct calendar ID when calendars are fully implemented
+        auto first = temporalDateToString(plainMonthDay.isoPlainDate());
+        return makeString(first, "[u-ca=iso8601]"_s);
+    }
+
+    return makeString(pad('0', 2, plainMonthDay.month()), '-', pad('0', 2, plainMonthDay.day()));
+}
+
 String monthCode(uint32_t month)
 {
     return makeString('M', pad('0', 2, month));
 }
 
-// returns 0 for any invalid string
-uint8_t monthFromCode(StringView monthCode)
+// https://tc39.es/proposal-temporal/#sec-temporal-parsemonthcode
+std::optional<ParsedMonthCode> parseMonthCode(StringView monthCode)
 {
-    if (monthCode.length() != 3 || !monthCode.startsWith('M') || !isASCIIDigit(monthCode[2]))
-        return 0;
+    // Allow leap month marker (e.g. "M05L"), even though it doesn't apply to ISO8601 calendar
+    if (monthCode.length() < 3 || monthCode.length() > 4 || !monthCode.startsWith('M') || !isASCIIDigit(monthCode[2]))
+        return { };
 
-    uint8_t result = monthCode[2] - '0';
-    if (monthCode[1] == '1')
-        result += 10;
-    else if (monthCode[1] != '0')
-        return 0;
+    // 4th code unit must be 'L' because the month code is valid
+    auto isLeapMonth = monthCode.length() == 4;
 
-    return result;
+    uint8_t monthNumber = monthCode[2] - '0';
+    monthNumber += (monthCode[1] - '0') * 10;
+
+    return ParsedMonthCode { monthNumber, isLeapMonth };
 }
 
 ExactTime ExactTime::fromISOPartsAndOffset(int32_t year, uint8_t month, uint8_t day, unsigned hour, unsigned minute, unsigned second, unsigned millisecond, unsigned microsecond, unsigned nanosecond, int64_t offset)
@@ -1822,10 +1907,22 @@ bool isDateTimeWithinLimits(int32_t year, uint8_t month, uint8_t day, unsigned h
     return true;
 }
 
-// More effective for our purposes than isInBounds<int32_t>.
-bool isYearWithinLimits(double year)
+// https://tc39.es/proposal-temporal/#sec-temporal-isvalidisodate
+bool isValidISODate(double year, double month, double day)
 {
-    return year >= minYear && year <= maxYear;
+    if (month < 1 || month > 12)
+        return false;
+    auto daysInMonth1 = daysInMonth(year, month);
+    if (day < 1 || day > daysInMonth1)
+        return false;
+    return true;
+}
+
+// https://tc39.es/proposal-temporal/#sec-temporal-create-iso-date-record
+PlainDate createISODateRecord(double year, double month, double day)
+{
+    ASSERT(isValidISODate(year, month, day));
+    return PlainDate(year, month, day);
 }
 
 } // namespace ISO8601

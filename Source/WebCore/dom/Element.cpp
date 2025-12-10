@@ -27,6 +27,7 @@
 #include "Element.h"
 
 #include "AXObjectCache.h"
+#include "AriaNotifyOptions.h"
 #include "Attr.h"
 #include "AttributeChangeInvalidation.h"
 #include "CheckVisibilityOptions.h"
@@ -49,7 +50,9 @@
 #include "DOMTokenList.h"
 #include "DocumentFullscreen.h"
 #include "DocumentInlines.h"
+#include "DocumentQuirks.h"
 #include "DocumentSharedObjectPool.h"
+#include "DocumentView.h"
 #include "Editing.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementAnimationRareData.h"
@@ -97,6 +100,7 @@
 #include "KeyboardEvent.h"
 #include "KeyframeAnimationOptions.h"
 #include "KeyframeEffect.h"
+#include "LargestContentfulPaintData.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
@@ -114,9 +118,9 @@
 #include "PointerLockOptions.h"
 #include "PopoverData.h"
 #include "PseudoClassChangeInvalidation.h"
-#include "Quirks.h"
 #include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -148,7 +152,9 @@
 #include "ShadowRootInit.h"
 #include "SimulatedClick.h"
 #include "SlotAssignment.h"
+#include "StylableInlines.h"
 #include "StyleInvalidator.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleProperties.h"
 #include "StyleResolver.h"
 #include "StyleScope.h"
@@ -168,6 +174,7 @@
 #include "markup.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <ranges>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -177,6 +184,10 @@
 
 #if PLATFORM(MAC)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+#import <pal/system/ios/UserInterfaceIdiom.h>
 #endif
 
 namespace WebCore {
@@ -1277,18 +1288,26 @@ void Element::scrollIntoViewIfNeeded(bool centerIfNeeded)
     LocalFrameView::scrollRectToVisible(absoluteBounds, *renderer, insideFixed, { SelectionRevealMode::Reveal, alignX, alignY, ShouldAllowCrossOriginScrolling::No });
 }
 
-void Element::scrollIntoViewIfNotVisible(bool centerIfNotVisible)
+void Element::scrollIntoViewIfNotVisible(bool centerIfNotVisible, AllowScrollingOverflowHidden allowScrollingOverflowHidden)
 {
     protectedDocument()->updateLayoutIgnorePendingStylesheets(LayoutOptions::UpdateCompositingLayers);
 
     CheckedPtr renderer = this->renderer();
     if (!renderer)
         return;
-    
+
     bool insideFixed;
     LayoutRect absoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
     auto align = centerIfNotVisible ? ScrollAlignment::alignCenterIfNotVisible : ScrollAlignment::alignToEdgeIfNotVisible;
-    LocalFrameView::scrollRectToVisible(absoluteBounds, *renderer, insideFixed, { SelectionRevealMode::Reveal, align, align, ShouldAllowCrossOriginScrolling::No });
+    ScrollRectToVisibleOptions options = {
+        .revealMode = SelectionRevealMode::Reveal,
+        .alignX = align,
+        .alignY = align,
+        .shouldAllowCrossOriginScrolling = ShouldAllowCrossOriginScrolling::No,
+        .allowScrollingOverflowHidden = allowScrollingOverflowHidden
+    };
+
+    LocalFrameView::scrollRectToVisible(absoluteBounds, *renderer, insideFixed, options);
 }
 
 void Element::scrollBy(const ScrollToOptions& options)
@@ -1397,13 +1416,13 @@ static double localZoomForRenderer(const RenderElement& renderer)
         CheckedPtr prev = &renderer;
         for (CheckedPtr curr = prev->parent(); curr; curr = curr->parent()) {
             if (curr->style().usedZoom() != prev->style().usedZoom()) {
-                zoomFactor = prev->style().zoom();
+                zoomFactor = Style::evaluate<double>(prev->style().zoom());
                 break;
             }
             prev = curr;
         }
         if (prev->isRenderView())
-            zoomFactor = prev->style().zoom();
+            zoomFactor = Style::evaluate<double>(prev->style().zoom());
     }
     return zoomFactor;
 }
@@ -1592,8 +1611,11 @@ int Element::clientWidth()
         // Currently, WebKit doesn't have table wrapper box, and we are supposed to
         // retrieve clientWidth/Height from table wrapper box, not table grid box. So
         // when we retrieve clientWidth/Height, it includes table's border size.
-        if (renderer->isRenderTable())
+        if (renderer->isRenderTable()) {
+            if (renderer->style().boxSizing() == BoxSizing::ContentBox)
+                clientWidth += renderer->paddingLeft() + renderer->paddingRight();
             clientWidth += renderer->borderLeft() + renderer->borderRight();
+        }
         return convertToNonSubpixelValue(adjustLayoutUnitForAbsoluteZoom(clientWidth, *renderer).toDouble());
     }
     return 0;
@@ -1626,8 +1648,11 @@ int Element::clientHeight()
         // Currently, WebKit doesn't have table wrapper box, and we are supposed to
         // retrieve clientWidth/Height from table wrapper box, not table grid box. So
         // when we retrieve clientWidth/Height, it includes table's border size.
-        if (renderer->isRenderTable())
+        if (renderer->isRenderTable()) {
+            if (renderer->style().boxSizing() == BoxSizing::ContentBox)
+                clientHeight += renderer->paddingTop() + renderer->paddingBottom();
             clientHeight += renderer->borderTop() + renderer->borderBottom();
+        }
         return convertToNonSubpixelValue(adjustLayoutUnitForAbsoluteZoom(clientHeight, *renderer).toDouble());
     }
     return 0;
@@ -2072,36 +2097,6 @@ const AtomString& Element::getAttributeNS(const AtomString& namespaceURI, const 
     return getAttribute(QualifiedName(nullAtom(), localName, namespaceURI));
 }
 
-static ExceptionOr<String> trustedTypesCompliantAttributeValue(const String attributeType, const TrustedTypeOrString& value, Element* element, String sink)
-{
-    auto stringValueHolder = WTF::switchOn(value,
-        [&](const String& string) -> ExceptionOr<String> {
-            if (attributeType.isNull())
-                return String(string);
-            return trustedTypeCompliantString(stringToTrustedType(attributeType), *(element->document().scriptExecutionContext()), string, sink);
-        },
-        [&](const RefPtr<TrustedHTML>& trustedHTML) -> ExceptionOr<String> {
-            if (attributeType.isNull() || attributeType == "TrustedHTML"_s)
-                return trustedHTML->toString();
-            return trustedTypeCompliantString(stringToTrustedType(attributeType), *(element->document().scriptExecutionContext()), trustedHTML->toString(), sink);
-        },
-        [&](const RefPtr<TrustedScript>& trustedScript) -> ExceptionOr<String> {
-            if (attributeType.isNull() || attributeType == "TrustedScript"_s)
-                return trustedScript->toString();
-            return trustedTypeCompliantString(stringToTrustedType(attributeType), *(element->document().scriptExecutionContext()), trustedScript->toString(), sink);
-        },
-        [&](const RefPtr<TrustedScriptURL>& trustedScriptURL) -> ExceptionOr<String> {
-            if (attributeType.isNull() || attributeType == "TrustedScriptURL"_s)
-                return trustedScriptURL->toString();
-            return trustedTypeCompliantString(stringToTrustedType(attributeType), *(element->document().scriptExecutionContext()), trustedScriptURL->toString(), sink);
-        }
-    );
-    if (stringValueHolder.hasException())
-        return stringValueHolder.releaseException();
-
-    return stringValueHolder.releaseReturnValue();
-}
-
 ALWAYS_INLINE unsigned Element::validateAttributeIndex(unsigned index, const QualifiedName& qname) const
 {
     if (!elementData())
@@ -2155,40 +2150,27 @@ ExceptionOr<void> Element::setAttribute(const AtomString& qualifiedName, const T
     if (!document().settings().trustedTypesEnabled())
         setAttributeInternal(index, name, std::get<AtomString>(value), InSynchronizationOfLazyAttribute::No);
     else {
-        AttributeTypeAndSink attributeTypeAndSink;
-        if (document().requiresTrustedTypes())
-            attributeTypeAndSink = trustedTypeForAttribute(nodeName(), name.localName().convertToASCIILowercase(), this->namespaceURI(), name.namespaceURI());
-        auto attributeValue = trustedTypesCompliantAttributeValue(attributeTypeAndSink.attributeType, value, this, attributeTypeAndSink.sink);
+        AttributeTypeAndSink type;
+        if (document().contextDocument().requiresTrustedTypes())
+            type = trustedTypeForAttribute(nodeName(), name.localName().convertToASCIILowercase(), this->namespaceURI(), name.namespaceURI());
+        auto compliantValue = trustedTypesCompliantAttributeValue(document().contextDocument(), type.attributeType, value, type.sink);
 
-        if (attributeValue.hasException())
-            return attributeValue.releaseException();
+        if (compliantValue.hasException())
+            return compliantValue.releaseException();
 
-        if (!attributeTypeAndSink.attributeType.isNull())
+        if (!type.attributeType.isNull())
             index = validateAttributeIndex(index, name);
 
-        setAttributeInternal(index, name,  AtomString(attributeValue.releaseReturnValue()), InSynchronizationOfLazyAttribute::No);
+        setAttributeInternal(index, name, compliantValue.releaseReturnValue(), InSynchronizationOfLazyAttribute::No);
     }
     return { };
 }
 
-ExceptionOr<void> Element::setAttribute(const QualifiedName& name, const AtomString& value, bool enforceTrustedTypes)
+void Element::setAttribute(const QualifiedName& name, const AtomString& value)
 {
     synchronizeAttribute(name);
-    if (enforceTrustedTypes && document().requiresTrustedTypes()) {
-        auto attributeTypeAndSink = trustedTypeForAttribute(nodeName(), name.localName().convertToASCIILowercase(), this->namespaceURI(), name.namespaceURI());
-        auto attributeValue = trustedTypesCompliantAttributeValue(attributeTypeAndSink.attributeType, value, this, attributeTypeAndSink.sink);
-
-        if (attributeValue.hasException())
-            return attributeValue.releaseException();
-
-        unsigned index = elementData() ? elementData()->findAttributeIndexByName(name) : ElementData::attributeNotFound;
-        setAttributeInternal(index, name, AtomString(attributeValue.releaseReturnValue()), InSynchronizationOfLazyAttribute::No);
-    } else {
-        unsigned index = elementData() ? elementData()->findAttributeIndexByName(name) : ElementData::attributeNotFound;
-        setAttributeInternal(index, name, value, InSynchronizationOfLazyAttribute::No);
-    }
-
-    return { };
+    unsigned index = elementData() ? elementData()->findAttributeIndexByName(name) : ElementData::attributeNotFound;
+    setAttributeInternal(index, name, value, InSynchronizationOfLazyAttribute::No);
 }
 
 void Element::setAttributeWithoutOverwriting(const QualifiedName& name, const AtomString& value)
@@ -2303,8 +2285,10 @@ void Element::notifyAttributeChanged(const QualifiedName& name, const AtomString
         CustomElementReactionQueue::enqueueAttributeChangedCallbackIfNeeded(*this, name, oldValue, newValue);
 
     if (oldValue != newValue) {
-        invalidateNodeListAndCollectionCachesInAncestorsForAttribute(name);
-
+        IsMutationBySetInnerHTML isMutationBySetInnerHTML = reason == AttributeModificationReason::ParserFastPath
+            ? IsMutationBySetInnerHTML::Yes
+            : IsMutationBySetInnerHTML::No;
+        invalidateNodeListCollectionAndInnerHTMLPrefixCachesInAncestorsForAttribute(name, isMutationBySetInnerHTML);
         if (CheckedPtr cache = document().existingAXObjectCache())
             cache->deferAttributeChangeIfNeeded(*this, name, oldValue, newValue);
 
@@ -2383,6 +2367,10 @@ void Element::attributeChanged(const QualifiedName& name, const AtomString& oldV
             updateEffectiveLangStateAndPropagateToDescendants();
         break;
     }
+    case AttributeNames::customelementregistryAttr:
+        if (reason == AttributeModificationReason::Parser && !isDefinedCustomElement())
+            setUsesNullCustomElementRegistry();
+        break;
     default: {
         Ref document = this->document();
         if (isElementReflectionAttribute(document->settings(), name) || isElementsArrayReflectionAttribute(name)) {
@@ -2594,7 +2582,7 @@ void Element::classAttributeChanged(const AtomString& newClassString, AttributeM
             classList->associatedAttributeValueChanged();
     }
 
-    if (reason == AttributeModificationReason::Parser) {
+    if (reason == AttributeModificationReason::Parser || reason == AttributeModificationReason::ParserFastPath) {
         // If ElementData is ShareableElementData created in parserSetAttributes,
         // it is possible that SpaceSplitString is already created and set.
         // We also do not need to invalidate caches / styles since it is not inserted to the tree yet.
@@ -2660,7 +2648,7 @@ void Element::setIsLink(bool flag)
 
 bool Element::allowsDoubleTapGesture() const
 {
-    if (renderStyle() && renderStyle()->touchActions() != TouchAction::Auto)
+    if (renderStyle() && !renderStyle()->touchAction().isAuto())
         return false;
 
     RefPtr parent = parentElement();
@@ -2849,7 +2837,7 @@ void Element::stripScriptingAttributes(Vector<Attribute>& attributeVector) const
     });
 }
 
-void Element::parserSetAttributes(std::span<const Attribute> attributes)
+void Element::parserSetAttributes(std::span<const Attribute> attributes, AttributeModificationReason reason)
 {
     ASSERT(!isConnected());
     ASSERT(!parentNode());
@@ -2869,7 +2857,7 @@ void Element::parserSetAttributes(std::span<const Attribute> attributes)
 
     // Use attributes instead of m_elementData because attributeChanged might modify m_elementData.
     for (const auto& attribute : attributes)
-        notifyAttributeChanged(attribute.name(), nullAtom(), attribute.value(), AttributeModificationReason::Parser);
+        notifyAttributeChanged(attribute.name(), nullAtom(), attribute.value(), reason);
 }
 
 void Element::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
@@ -3069,23 +3057,23 @@ Node::InsertedIntoAncestorResult Element::insertedIntoAncestor(InsertionType ins
                 updateNameForDocument(*newHTMLDocument, nullAtom(), nameValue);
         }
 
-        if (parentOfInsertedTree.isInTreeScope() && usesScopedCustomElementRegistryMap()) {
-            if (CustomElementRegistry::registryForElement(*this) == treeScope().customElementRegistry())
-                CustomElementRegistry::removeFromScopedCustomElementRegistryMap(*this);
-        }
-    }
-
-    if (usesNullCustomElementRegistry() && !parentOfInsertedTree.usesNullCustomElementRegistry()) {
-        clearUsesNullCustomElementRegistry();
-        if (parentOfInsertedTree.usesScopedCustomElementRegistryMap()) [[unlikely]] {
-            RefPtr registry = CustomElementRegistry::registryForElement(downcast<Element>(parentOfInsertedTree));
-            ASSERT(registry);
-            CustomElementRegistry::addToScopedCustomElementRegistryMap(*this, *registry);
+        if (parentOfInsertedTree.isInTreeScope()) {
+            if (usesScopedCustomElementRegistryMap()) {
+                if (CustomElementRegistry::registryForElement(*this) == treeScope().customElementRegistry())
+                    CustomElementRegistry::removeFromScopedCustomElementRegistryMap(*this);
+            } else if (!usesNullCustomElementRegistry()) {
+                if (treeScope().customElementRegistry() != document().customElementRegistry()) [[unlikely]] {
+                    // This element was moved into a shadow tree with a scoped custom elemnt registry.
+                    // Keep using the document's non-scoped custom element registry.
+                    if (RefPtr window = document().window())
+                        CustomElementRegistry::addToScopedCustomElementRegistryMap(*this, window->ensureCustomElementRegistry());
+                }
+            }
         }
     }
 
     if (insertionType.connectedToDocument) {
-        if (isCustomElementUpgradeCandidate()) [[unlikely]] {
+        if (isCustomElementUpgradeCandidate() && !usesNullCustomElementRegistry()) [[unlikely]] {
             ASSERT(isConnected());
             CustomElementReactionQueue::tryToUpgradeElement(*this);
         }
@@ -3304,6 +3292,24 @@ void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
 
     if (shadowRoot->mode() == ShadowRootMode::UserAgent)
         didAddUserAgentShadowRoot(shadowRoot);
+    else
+        enqueueShadowRootAttachedEvent();
+}
+
+void Element::enqueueShadowRootAttachedEvent()
+{
+    if (hasStateFlag(StateFlag::IsShadowRootAttachedEventPending))
+        return;
+    setStateFlag(StateFlag::IsShadowRootAttachedEventPending);
+    MutationObserver::enqueueShadowRootAttachedEvent(*this);
+}
+
+void Element::dispatchShadowRootAttachedEvent()
+{
+    Ref<Event> event = Event::create(eventNames().webkitshadowrootattachedEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes);
+    event->setIsShadowRootAttachedEvent();
+    event->setTarget(Ref { *this });
+    dispatchEvent(event);
 }
 
 void Element::removeShadowRootSlow(ShadowRoot& oldRoot)
@@ -3382,9 +3388,14 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init, std::
         }
         return Exception { ExceptionCode::NotSupportedError };
     }
-    RefPtr registry = init.customElementRegistry;
-    if (registry && !registry->isScoped() && registry != document().customElementRegistry())
-        return Exception { ExceptionCode::NotSupportedError };
+    RefPtr<CustomElementRegistry> registry;
+    if (init.customElementRegistry) {
+        registry = *init.customElementRegistry;
+        if (registry && !registry->isScoped() && registry != document().customElementRegistry())
+            return Exception { ExceptionCode::NotSupportedError };
+        if (!registry)
+            registryKind = CustomElementRegistryKind::Null;
+    }
     auto scopedRegistry = ShadowRootScopedCustomElementRegistry::No;
     if (!registryKind)
         registryKind = !registry && usesNullCustomElementRegistry() ? CustomElementRegistryKind::Null : CustomElementRegistryKind::Window;
@@ -3395,7 +3406,7 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init, std::
         ASSERT(registryKind == CustomElementRegistryKind::Window);
         scopedRegistry = ShadowRootScopedCustomElementRegistry::Yes;
     } else
-        registry = CustomElementRegistry::registryForElement(*this);
+        registry = document().customElementRegistry();
     Ref shadow = ShadowRoot::create(document(), init.mode, init.slotAssignment,
         init.delegatesFocus ? ShadowRootDelegatesFocus::Yes : ShadowRootDelegatesFocus::No,
         init.clonable ? ShadowRoot::Clonable::Yes : ShadowRoot::Clonable::No,
@@ -3419,7 +3430,7 @@ ExceptionOr<ShadowRoot&> Element::attachDeclarativeShadow(ShadowRootMode mode, S
         clonable == ShadowRootClonable::Yes,
         serializable == ShadowRootSerializable::Yes,
         SlotAssignmentMode::Named,
-        nullptr,
+        std::nullopt,
         referenceTarget,
     }, registryKind);
     if (exceptionOrShadowRoot.hasException())
@@ -3488,16 +3499,21 @@ RefPtr<ShadowRoot> Element::protectedUserAgentShadowRoot() const
 
 ShadowRoot& Element::ensureUserAgentShadowRoot()
 {
-    if (RefPtr shadow = userAgentShadowRoot())
+    if (auto* shadow = userAgentShadowRoot())
         return *shadow;
     return createUserAgentShadowRoot();
+}
+
+Ref<ShadowRoot> Element::ensureProtectedUserAgentShadowRoot()
+{
+    return ensureUserAgentShadowRoot();
 }
 
 ShadowRoot& Element::createUserAgentShadowRoot()
 {
     ASSERT(!userAgentShadowRoot());
     Ref newShadow = ShadowRoot::create(document(), ShadowRootMode::UserAgent);
-    ShadowRoot& shadow = newShadow;
+    ShadowRoot& shadow = newShadow.unsafeGet();
     addShadowRoot(WTFMove(newShadow));
     return shadow;
 }
@@ -3645,7 +3661,8 @@ void Element::childrenChanged(const ChildChange& change)
     }
 
     if (document().isDirAttributeDirty()) [[unlikely]] {
-        if (selfOrPrecedingNodesAffectDirAuto())
+        // Inserting a replaced Element (image, canvas, input, etc) should be treated as a neutral character.
+        if (selfOrPrecedingNodesAffectDirAuto() && !(change.type == ChildChange::Type::ElementInserted && change.siblingChanged->isReplaced()))
             updateEffectiveTextDirection();
     }
 }
@@ -3746,6 +3763,20 @@ void Element::attachAttributeNodeIfNeeded(Attr& attrNode)
 
 ExceptionOr<RefPtr<Attr>> Element::setAttributeNode(Attr& attrNode)
 {
+    // Attr::value() will return its 'm_standaloneValue' member any time its Element is set to nullptr. We need to cache this value
+    // before making changes to attrNode's Element connections.
+    auto attrNodeValue = attrNode.value();
+
+    if (document().contextDocument().requiresTrustedTypes()) {
+        auto& name = attrNode.qualifiedName();
+        auto type = trustedTypeForAttribute(nodeName(), name.localName().convertToASCIILowercase(), this->namespaceURI(), name.namespaceURI());
+        auto compliantValue = trustedTypesCompliantAttributeValue(document().contextDocument(), type.attributeType, attrNodeValue, type.sink);
+
+        if (compliantValue.hasException())
+            return compliantValue.releaseException();
+        attrNodeValue = compliantValue.releaseReturnValue();
+    }
+
     RefPtr oldAttrNode = attrIfExists(attrNode.qualifiedName());
     if (oldAttrNode.get() == &attrNode)
         return oldAttrNode;
@@ -3761,22 +3792,6 @@ ExceptionOr<RefPtr<Attr>> Element::setAttributeNode(Attr& attrNode)
     }
 
     auto& elementData = ensureUniqueElementData();
-
-    // Attr::value() will return its 'm_standaloneValue' member any time its Element is set to nullptr. We need to cache this value
-    // before making changes to attrNode's Element connections.
-    auto attrNodeValue = attrNode.value();
-
-    if (document().requiresTrustedTypes()) {
-        auto attributeTypeAndSink = trustedTypeForAttribute(nodeName(), attrNode.qualifiedName().localName().convertToASCIILowercase(), this->namespaceURI(), attrNode.qualifiedName().namespaceURI());
-        auto attributeNodeValue = trustedTypesCompliantAttributeValue(attributeTypeAndSink.attributeType, attrNodeValue, this, attributeTypeAndSink.sink);
-
-        if (attributeNodeValue.hasException())
-            return attributeNodeValue.releaseException();
-        attrNodeValue = AtomString(attributeNodeValue.releaseReturnValue());
-
-        if (!attributeTypeAndSink.attributeType.isNull() && attrNode.ownerElement() && attrNode.ownerElement() != this)
-            return Exception { ExceptionCode::InUseAttributeError };
-    }
 
     auto existingAttributeIndex = elementData.findAttributeIndexByName(attrNode.qualifiedName());
 
@@ -3805,6 +3820,23 @@ ExceptionOr<RefPtr<Attr>> Element::setAttributeNode(Attr& attrNode)
 
 ExceptionOr<RefPtr<Attr>> Element::setAttributeNodeNS(Attr& attrNode)
 {
+    // Attr::value() will return its 'm_standaloneValue' member any time its Element is set to nullptr. We need to cache this value
+    // before making changes to attrNode's Element connections.
+    auto attrNodeValue = attrNode.value();
+
+    if (document().contextDocument().requiresTrustedTypes()) {
+        auto& name = attrNode.qualifiedName();
+        auto type = trustedTypeForAttribute(nodeName(), name.localName(), this->namespaceURI(), name.namespaceURI());
+        auto compliantValue = trustedTypesCompliantAttributeValue(document().contextDocument(), type.attributeType, attrNodeValue, type.sink);
+
+        if (compliantValue.hasException())
+            return compliantValue.releaseException();
+        attrNodeValue = compliantValue.releaseReturnValue();
+
+        if (!type.attributeType.isNull() && attrNode.ownerElement() && attrNode.ownerElement() != this)
+            return Exception { ExceptionCode::InUseAttributeError };
+    }
+
     RefPtr oldAttrNode = attrIfExists(attrNode.qualifiedName());
     if (oldAttrNode == &attrNode)
         return oldAttrNode;
@@ -3814,22 +3846,7 @@ ExceptionOr<RefPtr<Attr>> Element::setAttributeNodeNS(Attr& attrNode)
     if (attrNode.ownerElement() && attrNode.ownerElement() != this)
         return Exception { ExceptionCode::InUseAttributeError };
 
-    // Attr::value() will return its 'm_standaloneValue' member any time its Element is set to nullptr. We need to cache this value
-    // before making changes to attrNode's Element connections.
-    auto attrNodeValue = attrNode.value();
     unsigned index = 0;
-
-    if (document().requiresTrustedTypes()) {
-        auto attributeTypeAndSink = trustedTypeForAttribute(nodeName(), attrNode.qualifiedName().localName(), this->namespaceURI(), attrNode.qualifiedName().namespaceURI());
-        auto attributeNodeValue = trustedTypesCompliantAttributeValue(attributeTypeAndSink.attributeType, attrNodeValue, this, attributeTypeAndSink.sink);
-
-        if (attributeNodeValue.hasException())
-            return attributeNodeValue.releaseException();
-        attrNodeValue = AtomString(attributeNodeValue.releaseReturnValue());
-
-        if (!attributeTypeAndSink.attributeType.isNull() && attrNode.ownerElement() && attrNode.ownerElement() != this)
-            return Exception { ExceptionCode::InUseAttributeError };
-    }
 
     {
         ScriptDisallowedScope::InMainThread scriptDisallowedScope;
@@ -3900,16 +3917,16 @@ ExceptionOr<void> Element::setAttributeNS(const AtomString& namespaceURI, const 
     if (!document().settings().trustedTypesEnabled())
         setAttribute(result.releaseReturnValue(), std::get<AtomString>(value));
     else {
-        QualifiedName parsedAttributeName  = result.returnValue();
-        AttributeTypeAndSink attributeTypeAndSink;
-        if (document().requiresTrustedTypes())
-            attributeTypeAndSink = trustedTypeForAttribute(nodeName(), parsedAttributeName.localName(), this->namespaceURI(), parsedAttributeName.namespaceURI());
-        auto attributeValue = trustedTypesCompliantAttributeValue(attributeTypeAndSink.attributeType, value, this, attributeTypeAndSink.sink);
+        QualifiedName parsedAttributeName = result.returnValue();
+        AttributeTypeAndSink type;
+        if (document().contextDocument().requiresTrustedTypes())
+            type = trustedTypeForAttribute(nodeName(), parsedAttributeName.localName(), this->namespaceURI(), parsedAttributeName.namespaceURI());
+        auto compliantValue = trustedTypesCompliantAttributeValue(document().contextDocument(), type.attributeType, value, type.sink);
 
-        if (attributeValue.hasException())
-            return attributeValue.releaseException();
+        if (compliantValue.hasException())
+            return compliantValue.releaseException();
 
-        setAttribute(result.releaseReturnValue(), AtomString(attributeValue.releaseReturnValue()));
+        setAttribute(result.releaseReturnValue(), compliantValue.releaseReturnValue());
     }
 
     return { };
@@ -4170,7 +4187,7 @@ void Element::focus(const FocusOptions& options)
         // Focus and change event handlers can cause us to lose our last ref.
         // If a focus event handler changes the focus to a different node it
         // does not make sense to continue and update appearence.
-        if (!page->focusController().setFocusedElement(newTarget.get(), frame, optionsWithVisibility))
+        if (!page->focusController().setFocusedElement(newTarget.get(), frame.ptr(), optionsWithVisibility))
             return;
     }
 
@@ -4238,7 +4255,7 @@ void Element::blur()
 {
     if (treeScope().focusedElementInScope() == this) {
         if (RefPtr frame = document().frame())
-            frame->protectedPage()->focusController().setFocusedElement(nullptr, *frame);
+            frame->protectedPage()->focusController().setFocusedElement(nullptr, frame.get());
         else
             protectedDocument()->setFocusedElement(nullptr);
     }
@@ -4275,19 +4292,28 @@ void Element::dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, const Focu
     static bool dispatchEventBeforeNotifyingClient = false;
 #endif
 
-    Ref focusEvent = FocusEvent::create(eventNames().focusEvent, Event::CanBubble::No, Event::IsCancelable::No, document().windowProxy(), 0, WTFMove(oldFocusedElement));
+    auto dispatchEvent = [&](Element& element) {
+        Ref beforefocusEvent = Event::create(eventNames().webkitbeforefocusEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes);
+        beforefocusEvent->setIsAutofillEvent();
+        element.dispatchEvent(beforefocusEvent);
+        element.dispatchEvent(FocusEvent::create(eventNames().focusEvent, Event::CanBubble::No, Event::IsCancelable::No, document().windowProxy(), 0, WTFMove(oldFocusedElement)));
+    };
     if (dispatchEventBeforeNotifyingClient)
-        dispatchEvent(WTFMove(focusEvent));
+        dispatchEvent(*this);
 
     if (RefPtr page = document().page(); page && document().focusedElement() == this)
         page->chrome().client().elementDidFocus(*this, options);
 
     if (!dispatchEventBeforeNotifyingClient)
-        dispatchEvent(WTFMove(focusEvent));
+        dispatchEvent(*this);
 }
 
 void Element::dispatchBlurEvent(RefPtr<Element>&& newFocusedElement)
 {
+    Ref beforeblurEvent = Event::create(eventNames().webkitbeforeblurEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes);
+    beforeblurEvent->setIsAutofillEvent();
+    dispatchEvent(beforeblurEvent);
+
     dispatchEvent(FocusEvent::create(eventNames().blurEvent, Event::CanBubble::No, Event::IsCancelable::No, document().windowProxy(), 0, WTFMove(newFocusedElement)));
     if (RefPtr page = document().page())
         page->chrome().client().elementDidBlur(*this);
@@ -4351,12 +4377,16 @@ ExceptionOr<void> Element::replaceChildrenWithMarkup(const String& markup, Optio
     if (fragment.hasException())
         return fragment.releaseException();
 
-    return replaceChildrenWithFragment(container, fragment.releaseReturnValue());
+    bool usedFastPath = fragment.returnValue()->hasWasParsedWithFastPath();
+    auto result = replaceChildrenWithFragment(container, fragment.releaseReturnValue());
+    if (!result.hasException() && usedFastPath)
+        document().updateCachedSetInnerHTML(markup, container.get(), *this);
+    return result;
 }
 
 ExceptionOr<void> Element::setHTMLUnsafe(Variant<RefPtr<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(html), "Element setHTMLUnsafe"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(html), "Element setHTMLUnsafe"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -4390,7 +4420,7 @@ String Element::outerHTML() const
 
 ExceptionOr<void> Element::setOuterHTML(Variant<RefPtr<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(html), "Element outerHTML"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(html), "Element outerHTML"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -4431,7 +4461,7 @@ ExceptionOr<void> Element::setOuterHTML(Variant<RefPtr<TrustedHTML>, String>&& h
 
 ExceptionOr<void> Element::setInnerHTML(Variant<RefPtr<TrustedHTML>, String>&& html)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(html), "Element innerHTML"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(html), "Element innerHTML"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -4570,12 +4600,12 @@ void Element::removeFromTopLayer()
     });
 }
 
-static PseudoElement* beforeOrAfterPseudoElement(const Element& host, PseudoId pseudoElementSpecifier)
+static PseudoElement* beforeOrAfterPseudoElement(const Element& host, PseudoElementType pseudoElementSpecifier)
 {
     switch (pseudoElementSpecifier) {
-    case PseudoId::Before:
+    case PseudoElementType::Before:
         return host.beforePseudoElement();
-    case PseudoId::After:
+    case PseudoElementType::After:
         return host.afterPseudoElement();
     default:
         return nullptr;
@@ -4679,7 +4709,7 @@ const RenderStyle* Element::resolveComputedStyle(ResolveComputedStyleMode mode)
     // Resolve and cache styles starting from the most distant ancestor.
     // FIXME: This is not as efficient as it could be. For example if an ancestor has a non-inherited style change but
     // the styles are otherwise clean we would not need to re-resolve descendants.
-    for (auto& element : makeReversedRange(elementsRequiringComputedStyle)) {
+    for (auto& element : elementsRequiringComputedStyle | std::views::reverse) {
         if (computedStyle && computedStyle->containerType() != ContainerType::Normal && mode != ResolveComputedStyleMode::Editability) {
             // If we find a query container we need to bail out and do full style update to resolve it.
             if (document->updateStyleIfNeeded())
@@ -4722,9 +4752,7 @@ const RenderStyle& Element::resolvePseudoElementStyle(const Style::PseudoElement
     if (!style) {
         style = RenderStyle::createPtr();
         style->inheritFrom(*parentStyle);
-        // FIXME: RenderStyle should switch to use PseudoElementIdentifier.
-        style->setPseudoElementType(pseudoElementIdentifier.pseudoId);
-        style->setPseudoElementNameArgument(pseudoElementIdentifier.nameArgument);
+        style->setPseudoElementIdentifier(pseudoElementIdentifier);
     }
 
     auto* computedStyle = style.get();
@@ -4739,7 +4767,7 @@ const RenderStyle* Element::computedStyle(const std::optional<Style::PseudoEleme
         return nullptr;
 
     if (pseudoElementIdentifier) {
-        if (RefPtr pseudoElement = beforeOrAfterPseudoElement(*this, pseudoElementIdentifier->pseudoId))
+        if (RefPtr pseudoElement = beforeOrAfterPseudoElement(*this, pseudoElementIdentifier->type))
             return pseudoElement->computedStyle();
     }
 
@@ -4848,17 +4876,17 @@ void Element::normalizeAttributes()
         attrNode->normalize();
 }
 
-PseudoElement& Element::ensurePseudoElement(PseudoId pseudoId)
+PseudoElement& Element::ensurePseudoElement(PseudoElementType type)
 {
-    if (pseudoId == PseudoId::Before) {
+    if (type == PseudoElementType::Before) {
         if (!beforePseudoElement())
-            ensureElementRareData().setBeforePseudoElement(PseudoElement::create(*this, pseudoId));
+            ensureElementRareData().setBeforePseudoElement(PseudoElement::create(*this, type));
         return *beforePseudoElement();
     }
 
-    ASSERT(pseudoId == PseudoId::After);
+    ASSERT(type == PseudoElementType::After);
     if (!afterPseudoElement())
-        ensureElementRareData().setAfterPseudoElement(PseudoElement::create(*this, pseudoId));
+        ensureElementRareData().setAfterPseudoElement(PseudoElement::create(*this, type));
     return *afterPseudoElement();
 }
 
@@ -4874,9 +4902,9 @@ PseudoElement* Element::afterPseudoElement() const
 
 RefPtr<PseudoElement> Element::pseudoElementIfExists(Style::PseudoElementIdentifier pseudoElementIdentifier)
 {
-    if (pseudoElementIdentifier.pseudoId == PseudoId::Before)
+    if (pseudoElementIdentifier.type == PseudoElementType::Before)
         return beforePseudoElement();
-    if (pseudoElementIdentifier.pseudoId == PseudoId::After)
+    if (pseudoElementIdentifier.type == PseudoElementType::After)
         return afterPseudoElement();
     return nullptr;
 }
@@ -5061,9 +5089,48 @@ void Element::webkitRequestFullscreen()
     requestFullscreen({ }, nullptr);
 }
 
-// FIXME: Options are currently ignored.
-void Element::requestFullscreen(FullscreenOptions&&, RefPtr<DeferredPromise>&& promise)
+// FIXME: Only KeyboardLock option is currently considered.
+void Element::requestFullscreen(FullscreenOptions&& options, RefPtr<DeferredPromise>&& promise)
 {
+#if PLATFORM(IOS_FAMILY)
+    bool optionsEnabled = document().settings().fullScreenKeyboardLock() && PAL::currentUserInterfaceIdiomIsDesktop();
+#else
+    bool optionsEnabled = document().settings().fullScreenKeyboardLock();
+#endif
+
+    if (optionsEnabled) {
+#if PLATFORM(IOS_FAMILY)
+        // Registers a callback to exit fullscreen mode
+        document().page()->addHardwareKeyboardAttachmentObserver([weakThis = WeakPtr { *this }](bool attached) {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return;
+
+            if (attached)
+                return;
+
+            // Exit the fullscreen API when the hardware keyboard is detached.
+            protectedThis->protectedDocument()->postTask([weakThis](ScriptExecutionContext&) {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return;
+
+                Ref document = protectedThis->document();
+                if (document->fullscreen().fullscreenElement())
+                    document->fullscreen().fullyExitFullscreen();
+            });
+        });
+#endif
+        // Set the desired keyboard lock mode while entering fullscreen.
+        protectedDocument()->fullscreen().setKeyboardLockMode(options.keyboardLock);
+    }
+    else {
+        if (options.keyboardLock != FullscreenOptions::KeyboardLock::None) {
+            promise->reject(ExceptionCode::NotSupportedError, "options.keyboardLock is unavailable."_s);
+            return;
+        }
+    }
+
     protectedDocument()->fullscreen().requestFullscreen(*this, DocumentFullscreen::EnforceIFrameAllowFullscreenRequirement, [promise = WTFMove(promise)] (auto result) {
         if (!promise)
             return;
@@ -5153,7 +5220,7 @@ IntersectionObserverData& Element::ensureIntersectionObserverData()
     return *rareData.intersectionObserverData();
 }
 
-IntersectionObserverData* Element::intersectionObserverDataIfExists()
+IntersectionObserverData* Element::intersectionObserverDataIfExists() const
 {
     return hasRareData() ? elementRareData()->intersectionObserverData() : nullptr;
 }
@@ -5336,9 +5403,22 @@ ResizeObserverData& Element::ensureResizeObserverData()
     return *rareData.resizeObserverData();
 }
 
-ResizeObserverData* Element::resizeObserverDataIfExists()
+ResizeObserverData* Element::resizeObserverDataIfExists() const
 {
     return hasRareData() ? elementRareData()->resizeObserverData() : nullptr;
+}
+
+ElementLargestContentfulPaintData& Element::ensureLargestContentfulPaintData()
+{
+    auto& rareData = ensureElementRareData();
+    if (!rareData.largestContentfulPaintData())
+        rareData.setLargestContentfulPaintData(makeUnique<ElementLargestContentfulPaintData>());
+    return *rareData.largestContentfulPaintData();
+}
+
+ElementLargestContentfulPaintData* Element::largestContentfulPaintDataIfExists() const
+{
+    return hasRareData() ? elementRareData()->largestContentfulPaintData() : nullptr;
 }
 
 std::optional<LayoutUnit> Element::lastRememberedLogicalWidth() const
@@ -5991,7 +6071,7 @@ ExceptionOr<void> Element::insertAdjacentHTML(const String& where, const String&
 
 ExceptionOr<void> Element::insertAdjacentHTML(const String& where, Variant<RefPtr<TrustedHTML>, String>&& markup)
 {
-    auto stringValueHolder = trustedTypeCompliantString(*document().scriptExecutionContext(), WTFMove(markup), "Element insertAdjacentHTML"_s);
+    auto stringValueHolder = trustedTypeCompliantString(document().contextDocument(), WTFMove(markup), "Element insertAdjacentHTML"_s);
 
     if (stringValueHolder.hasException())
         return stringValueHolder.releaseException();
@@ -6317,7 +6397,7 @@ TextStream& operator<<(TextStream& ts, ContentRelevancy relevancy)
 // https://html.spec.whatwg.org/#topmost-popover-ancestor
 // Consider both DOM ancestors and popovers where the given popover was invoked from as ancestors.
 // Use top layer positions to disambiguate the topmost one when both exist.
-HTMLElement* Element::topmostPopoverAncestor(TopLayerElementType topLayerType)
+RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayerType)
 {
     // Store positions to avoid having to do O(n) search for every popover invoker.
     HashMap<Ref<const Element>, size_t> topLayerPositions;
@@ -6359,7 +6439,7 @@ HTMLElement* Element::topmostPopoverAncestor(TopLayerElementType topLayerType)
     if (topLayerType == TopLayerElementType::Popover)
         checkAncestor(popoverData()->invoker());
 
-    return topmostAncestor.get();
+    return topmostAncestor;
 }
 
 double Element::lookupCSSRandomBaseValue(const std::optional<Style::PseudoElementIdentifier>& pseudoElementIdentifier, const CSSCalc::RandomCachingKey& key) const
@@ -6834,6 +6914,24 @@ const AtomString& Element::ariaSort() const
     }
 
     return value.isNull() ? nullAtom() : value;
+}
+
+void Element::ariaNotify(const String& announcement)
+{
+    if (!document().settings().isARIANotifyEnabled())
+        return;
+
+    if (CheckedPtr cache = document().axObjectCache())
+        cache->postARIANotifyNotification(*this, announcement, { });
+}
+
+void Element::ariaNotify(const String& announcement, const AriaNotifyOptions& options)
+{
+    if (!document().settings().isARIANotifyEnabled())
+        return;
+
+    if (CheckedPtr cache = document().axObjectCache())
+        cache->postARIANotifyNotification(*this, announcement, options);
 }
 
 } // namespace WebCore

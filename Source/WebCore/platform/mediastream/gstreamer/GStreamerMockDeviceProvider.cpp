@@ -80,9 +80,9 @@ void webkitGstMockDeviceProviderSwitchDefaultDevice(const CaptureDevice& oldDevi
         auto device = GST_DEVICE_CAST(it->data);
         GUniquePtr<GstStructure> properties(gst_device_get_properties(device));
         auto persistentId = gstStructureGetString(properties.get(), "persistent-id"_s);
-        if (persistentId == oldDevice.persistentId())
+        if (equal(oldDevice.persistentId(), persistentId.span()))
             oldGstDevice = device;
-        else if (persistentId == newDevice.persistentId())
+        else if (equal(newDevice.persistentId(), persistentId.span()))
             newGstDevice = device;
         if (oldGstDevice && newGstDevice)
             break;

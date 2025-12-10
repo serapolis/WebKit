@@ -106,7 +106,7 @@ PlatformCALayerRemoteCustom::PlatformCALayerRemoteCustom(LayerType layerType, Pl
     m_layerHostingContext->setRootLayer(customLayer);
     [customLayer setValue:[NSValue valueWithPointer:this] forKey:platformCALayerPointer];
 
-    m_platformLayer = customLayer;
+    lazyInitialize(m_platformLayer, RetainPtr { customLayer });
     [customLayer web_disableAllActions];
 
     properties().position = FloatPoint3D(customLayer.position.x, customLayer.position.y, customLayer.zPosition);
@@ -154,7 +154,7 @@ Ref<WebCore::PlatformCALayer> PlatformCALayerRemoteCustom::clone(PlatformCALayer
 
     if (layerType() == PlatformCALayer::LayerType::LayerTypeAVPlayerLayer) {
         
-        if (PAL::isAVFoundationFrameworkAvailable() && [platformLayer() isKindOfClass:PAL::getAVPlayerLayerClassSingleton()]) {
+        if (PAL::isAVFoundationFrameworkAvailable() && [m_platformLayer isKindOfClass:PAL::getAVPlayerLayerClassSingleton()]) {
             clonedLayer = adoptNS([PAL::allocAVPlayerLayerInstance() init]);
 
             RetainPtr destinationPlayerLayer = static_cast<AVPlayerLayer *>(clonedLayer.get());
@@ -170,8 +170,9 @@ Ref<WebCore::PlatformCALayer> PlatformCALayerRemoteCustom::clone(PlatformCALayer
         copyContents = false;
     }
 
-    auto clone = adoptRef(*new PlatformCALayerRemoteCustom(layerType(), clonedLayer.get(), owner, *context()));
-    context()->layerDidEnterContext(clone.get(), clone->layerType());
+    Ref context = *this->context();
+    Ref clone = adoptRef(*new PlatformCALayerRemoteCustom(layerType(), clonedLayer.get(), owner, context));
+    context->layerDidEnterContext(clone.get(), clone->layerType());
 
     updateClonedLayerProperties(clone.get(), copyContents);
 

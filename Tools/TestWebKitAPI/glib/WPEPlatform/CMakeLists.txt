@@ -13,16 +13,15 @@ set(WPEPlatformMock_PRIVATE_INCLUDE_DIRECTORIES
     ${WTF_FRAMEWORK_HEADERS_DIR}
 )
 
-set(WPEPlatformMock_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
-)
-
 set(WPEPlatformMock_LIBRARIES
     LibDRM::LibDRM
     WTF
     WebKit
-    bmalloc
 )
+
+if (NOT USE_SYSTEM_MALLOC)
+  list(APPEND WPEPlatformMock_LIBRARIES bmalloc)
+endif ()
 
 add_library(WPEPlatformMock STATIC ${WPEPlatformMock_SOURCES})
 target_include_directories(WPEPlatformMock PRIVATE ${WPEPlatformMock_PRIVATE_INCLUDE_DIRECTORIES})
@@ -41,10 +40,6 @@ set(WPEPlatformMockModule_SOURCES
 set(WPEPlatformMockModule_PRIVATE_INCLUDE_DIRECTORIES
     ${WPEPlatform_DERIVED_SOURCES_DIR}
     ${WEBKIT_DIR}/WPEPlatform
-)
-
-set(WPEPlatformMockModule_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
 )
 
 set(WPEPlatformMockModule_LIBRARIES
@@ -77,10 +72,6 @@ set(WPEPlatformTest_PRIVATE_INCLUDE_DIRECTORIES
     ${WPEPlatform_DERIVED_SOURCES_DIR}
     ${WEBKIT_DIR}/WPEPlatform
     ${WTF_FRAMEWORK_HEADERS_DIR}
-)
-
-set(WPEPlatformTest_SYSTEM_INCLUDE_DIRECTORIES
-    ${GLIB_INCLUDE_DIRS}
 )
 
 set(WPEPlatformTest_DEFINITIONS

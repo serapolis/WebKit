@@ -29,6 +29,7 @@
 #include "InspectorEnvironment.h"
 #include "InspectorFrontendRouter.h"
 #include "Strong.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
@@ -61,15 +62,24 @@ struct JSAgentContext;
 
 class JSGlobalObjectInspectorController final
     : public InspectorEnvironment
+    , public CanMakeCheckedPtr<JSGlobalObjectInspectorController>
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
     , public AugmentableInspectorController
 #endif
 {
     WTF_MAKE_NONCOPYABLE(JSGlobalObjectInspectorController);
     WTF_MAKE_TZONE_ALLOCATED(JSGlobalObjectInspectorController);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(JSGlobalObjectInspectorController);
 public:
     JSGlobalObjectInspectorController(JSC::JSGlobalObject&);
     ~JSGlobalObjectInspectorController() final;
+
+    // AbstractCanMakeCheckedPtr overrides
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     void connectFrontend(FrontendChannel&, bool isAutomaticInspection, bool immediatelyPause);
     void disconnectFrontend(FrontendChannel&);
@@ -100,7 +110,7 @@ public:
 
     const FrontendRouter& frontendRouter() const final { return m_frontendRouter.get(); }
     BackendDispatcher& backendDispatcher() final { return m_backendDispatcher.get(); }
-    void registerAlternateAgent(std::unique_ptr<InspectorAgentBase>) final;
+    void registerAlternateAgent(UniqueRef<InspectorAgentBase>&&) final;
 #endif
 
 private:
@@ -118,7 +128,6 @@ private:
     const Ref<WTF::Stopwatch> m_executionStopwatch;
     std::unique_ptr<JSGlobalObjectDebugger> m_debugger;
 
-    AgentRegistry m_agents;
     InspectorConsoleAgent* m_consoleAgent { nullptr };
 
     // Lazy, but also on-demand agents.
@@ -127,6 +136,8 @@ private:
 
     const Ref<FrontendRouter> m_frontendRouter;
     const Ref<BackendDispatcher> m_backendDispatcher;
+
+    AgentRegistry m_agents;
 
     // Used to keep the JSGlobalObject and VM alive while we are debugging it.
     JSC::Strong<JSC::JSGlobalObject> m_strongGlobalObject;

@@ -96,6 +96,7 @@ private:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     Vector<String> m_headers;
     Vector<uint8_t> m_data;
@@ -104,7 +105,7 @@ private:
 
 class CurlMultipartHandleTests : public testing::Test {
 public:
-    CurlMultipartHandleTests() { }
+    CurlMultipartHandleTests() = default;
 };
 
 TEST(CurlMultipartHandleTests, CreateCurlMultipartHandle)

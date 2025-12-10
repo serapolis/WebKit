@@ -36,19 +36,16 @@ namespace WebKit {
 ARKitInlinePreviewModelPlayer::ARKitInlinePreviewModelPlayer(WebPage& page, WebCore::ModelPlayerClient& client)
     : m_page { page }
     , m_client { client }
+    , m_id { WebCore::ModelPlayerIdentifier::generate() }
 {
 }
 
-ARKitInlinePreviewModelPlayer::~ARKitInlinePreviewModelPlayer()
-{
-}
+ARKitInlinePreviewModelPlayer::~ARKitInlinePreviewModelPlayer() = default;
 
-#if ENABLE(MODEL_PROCESS)
 WebCore::ModelPlayerIdentifier ARKitInlinePreviewModelPlayer::identifier() const
 {
     return m_id;
 }
-#endif
 
 void ARKitInlinePreviewModelPlayer::load(WebCore::Model&, WebCore::LayoutSize)
 {
@@ -56,16 +53,6 @@ void ARKitInlinePreviewModelPlayer::load(WebCore::Model&, WebCore::LayoutSize)
 
 void ARKitInlinePreviewModelPlayer::sizeDidChange(LayoutSize)
 {
-}
-
-PlatformLayer* ARKitInlinePreviewModelPlayer::layer()
-{
-    return nullptr;
-}
-
-std::optional<WebCore::LayerHostingContextIdentifier> ARKitInlinePreviewModelPlayer::layerHostingContextIdentifier()
-{
-    return std::nullopt;
 }
 
 void ARKitInlinePreviewModelPlayer::enterFullscreen()
@@ -359,7 +346,7 @@ void ARKitInlinePreviewModelPlayer::setIsMuted(bool isMuted, CompletionHandler<v
     strongPage->sendWithAsyncReply(Messages::WebPageProxy::ModelElementSetIsMuted(*modelIdentifier, isMuted), WTFMove(remoteCompletionHandler));
 }
 
-Vector<RetainPtr<id>> ARKitInlinePreviewModelPlayer::accessibilityChildren()
+WebCore::ModelPlayerAccessibilityChildren ARKitInlinePreviewModelPlayer::accessibilityChildren()
 {
     // FIXME: https://webkit.org/b/233575 Need to return something to create a remote element connection to the InlinePreviewModel hosted in another process.
     return { };

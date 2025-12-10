@@ -128,33 +128,21 @@ void RemoteImageBuffer::getPixelBufferWithNewMemory(WebCore::SharedMemory::Handl
 void RemoteImageBuffer::putPixelBuffer(const WebCore::PixelBufferSourceView& pixelBuffer, WebCore::IntPoint srcPoint, WebCore::IntSize srcSize, WebCore::IntPoint destPoint, WebCore::AlphaPremultiplication destFormat)
 {
     assertIsCurrent(workQueue());
+
+    MESSAGE_CHECK(m_imageBuffer->resolutionScale() == 1, "putPixelBuffer() should not be called if (resolutionScale() != 1)");
+
     WebCore::IntRect srcRect(srcPoint, srcSize);
     m_imageBuffer->putPixelBuffer(pixelBuffer, srcRect, destPoint, destFormat);
 }
 
-void RemoteImageBuffer::getShareableBitmap(WebCore::PreserveResolution preserveResolution, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
+void RemoteImageBuffer::copyNativeImage(RenderingResourceIdentifier imageIdentifier)
 {
     assertIsCurrent(workQueue());
-    std::optional<WebCore::ShareableBitmap::Handle> handle = [&]() -> std::optional<WebCore::ShareableBitmap::Handle> {
-        Ref<WebCore::ImageBuffer> imageBuffer = m_imageBuffer;
-        auto backendSize = imageBuffer->backendSize();
-        auto logicalSize = imageBuffer->logicalSize();
-        auto resultSize = preserveResolution == WebCore::PreserveResolution::Yes ? backendSize : imageBuffer->truncatedLogicalSize();
-        if (resultSize.isEmpty())
-            return std::nullopt;
-        auto bitmap = WebCore::ShareableBitmap::create({ resultSize, imageBuffer->colorSpace() });
-        if (!bitmap)
-            return std::nullopt;
-        auto handle = bitmap->createHandle();
-        if (m_renderingBackend->sharedResourceCache().resourceOwner())
-            handle->setOwnershipOfMemory(m_renderingBackend->sharedResourceCache().resourceOwner(), WebCore::MemoryLedger::Graphics);
-        auto context = bitmap->createGraphicsContext();
-        if (!context)
-            return std::nullopt;
-        context->drawImageBuffer(imageBuffer.get(), WebCore::FloatRect { { }, resultSize }, WebCore::FloatRect { { }, logicalSize }, { WebCore::CompositeOperator::Copy });
-        return handle;
-    }();
-    completionHandler(WTFMove(handle));
+    RefPtr image = m_imageBuffer->copyNativeImage();
+    // FIXME: Handle OOM.
+    MESSAGE_CHECK(image, "OOM");
+    bool success = m_renderingBackend->remoteResourceCache().cacheNativeImage(imageIdentifier, image.releaseNonNull());
+    MESSAGE_CHECK(success, "NativeImage already exists");
 }
 
 void RemoteImageBuffer::filteredNativeImage(Ref<WebCore::Filter> filter, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& completionHandler)
@@ -193,10 +181,17 @@ void RemoteImageBuffer::transformToColorSpace(const WebCore::DestinationColorSpa
     m_imageBuffer->transformToColorSpace(colorSpace);
 }
 
+void RemoteImageBuffer::setFlushSignal(IPC::Signal&& signal)
+{
+    m_flushSignal = WTFMove(signal);
+}
+
 void RemoteImageBuffer::flushContext()
 {
+    MESSAGE_CHECK(m_flushSignal, "Cannot flush context without a valid flush signal. Use FlushContextSync for synchronous flushing.");
     assertIsCurrent(workQueue());
     m_imageBuffer->flushDrawingContext();
+    m_flushSignal->signal();
 }
 
 void RemoteImageBuffer::flushContextSync(CompletionHandler<void()>&& completionHandler)

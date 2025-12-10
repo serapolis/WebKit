@@ -44,7 +44,7 @@ class MemoryIDBBackingStore;
 class MemoryIndex;
 class MemoryObjectStore;
 
-typedef HashMap<IDBKeyData, ThreadSafeDataBuffer, IDBKeyDataHash, IDBKeyDataHashTraits> KeyValueMap;
+typedef HashMap<IDBKeyData, ThreadSafeDataBuffer, DefaultHash<IDBKeyData>, IDBKeyDataHashTraits> KeyValueMap;
 
 class MemoryBackingStoreTransaction final : public RefCountedAndCanMakeWeakPtr<MemoryBackingStoreTransaction> {
 public:
@@ -99,7 +99,7 @@ private:
     HashMap<String, RefPtr<MemoryObjectStore>> m_deletedObjectStores;
     HashSet<RefPtr<MemoryIndex>> m_deletedIndexes;
     HashMap<MemoryObjectStore*, String> m_originalObjectStoreNames;
-    HashMap<MemoryIndex*, String> m_originalIndexNames;
+    HashMap<RefPtr<MemoryIndex>, String> m_originalIndexNames;
 
     HashMap<IDBResourceIdentifier, WeakPtr<MemoryCursor>> m_cursors;
 };

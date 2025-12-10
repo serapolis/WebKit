@@ -41,8 +41,11 @@
 #include "Page.h"
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
+#include "RenderMediaInlines.h"
 #include "RenderObjectInlines.h"
+#include "RenderVideoInlines.h"
 #include "RenderView.h"
 #include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -231,20 +234,25 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
         return;
     }
 
-    LayoutRect rect = videoBox();
-    if (rect.isEmpty()) {
+    LayoutRect videoBoxRect = videoBox();
+    if (videoBoxRect.isEmpty()) {
         if (paintInfo.phase == PaintPhase::Foreground)
             page->addRelevantUnpaintedObject(*this, visualOverflowRect());
         return;
     }
-    rect.moveBy(paintOffset);
 
-    if (paintInfo.phase == PaintPhase::Foreground)
+    auto rect = videoBoxRect;
+    rect.moveBy(paintOffset);
+    GraphicsContext& context = paintInfo.context();
+
+    if (paintInfo.phase == PaintPhase::Foreground) {
         page->addRelevantRepaintedObject(*this, rect);
+        if (displayingPoster && !context.paintingDisabled())
+            protectedDocument()->didPaintImage(videoElement.get(), cachedImage(), videoBoxRect);
+    }
 
     LayoutRect contentRect = contentBoxRect();
     contentRect.moveBy(paintOffset);
-    GraphicsContext& context = paintInfo.context();
 
     if (context.detectingContentfulPaint()) {
         context.setContentfulPaintDetected();

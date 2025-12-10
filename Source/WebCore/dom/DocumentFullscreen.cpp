@@ -32,12 +32,14 @@
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "Element.h"
 #include "ElementInlines.h"
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "FrameDestructionObserverInlines.h"
+#include "FrameInlines.h"
 #include "HTMLDialogElement.h"
 #include "HTMLIFrameElement.h"
 #include "HTMLVideoElement.h"
@@ -50,13 +52,13 @@
 #include "Page.h"
 #include "PseudoClassChangeInvalidation.h"
 #include "QualifiedName.h"
-#include "Quirks.h"
 #include "RenderBlock.h"
-#include "RenderVideo.h"
+#include "RenderVideoInlines.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
 #include "Settings.h"
 #include "UserGestureIndicator.h"
+#include <ranges>
 #include <wtf/LoggerHelper.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -100,9 +102,9 @@ DocumentFullscreen::DocumentFullscreen(Document& document)
 
 Element* DocumentFullscreen::fullscreenElement() const
 {
-    for (Ref element : makeReversedRange(document().topLayerElements())) {
+    for (Ref element : document().topLayerElements() | std::views::reverse) {
         if (element->hasFullscreenFlag())
-            return element.ptr();
+            return element.unsafePtr();
     }
 
     return nullptr;
@@ -374,7 +376,7 @@ ExceptionOr<void> DocumentFullscreen::willEnterFullscreen(Element& element, HTML
     }
 
     bool elementWasFullscreen = &element == element.protectedDocument()->protectedFullscreen()->fullscreenElement();
-    for (auto ancestor : makeReversedRange(ancestors))
+    for (auto ancestor : ancestors | std::views::reverse)
         elementEnterFullscreen(ancestor);
 
     if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(element); iframe && !elementWasFullscreen)
@@ -635,7 +637,7 @@ void DocumentFullscreen::finishExitFullscreen(Frame& currentFrame, ExitMode mode
         }
     }
 
-    for (Ref descendantDocument : makeReversedRange(descendantDocuments)) {
+    for (Ref descendantDocument : descendantDocuments | std::views::reverse) {
         queueFullscreenChangeEventForDocument(descendantDocument);
         unfullscreenDocument(descendantDocument);
     }

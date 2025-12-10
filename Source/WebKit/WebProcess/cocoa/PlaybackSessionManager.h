@@ -30,6 +30,7 @@
 #include "MessageReceiver.h"
 #include <WebCore/EventListener.h>
 #include <WebCore/HTMLMediaElementEnums.h>
+#include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/MediaPlayerClientIdentifier.h>
 #if HAVE(PIP_SKIP_PREROLL)
 #include <WebCore/MediaSession.h>
@@ -84,6 +85,7 @@ private:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     // PlaybackSessionModelClient
     void durationChanged(double) final;

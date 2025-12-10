@@ -54,6 +54,10 @@
 #include "TextureMapperGCGLPlatformLayer.h"
 #endif
 
+#if OS(ANDROID)
+#include "GraphicsContextGLTextureMapperAndroid.h"
+#endif
+
 #if USE(GBM)
 #include "GraphicsContextGLTextureMapperGBM.h"
 #endif
@@ -103,9 +107,20 @@ GraphicsContextGLANGLE::~GraphicsContextGLANGLE()
             bool result = EGL_DestroySync(m_displayObj, sync);
             ASSERT_UNUSED(result, !!result);
         }
+#if PLATFORM(WIN)
         EGL_MakeCurrent(m_displayObj, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+#endif
         EGL_DestroyContext(m_displayObj, m_contextObj);
     }
+
+#if !PLATFORM(WIN)
+    if (m_angleSharingContextObj)
+        EGL_DestroyContext(m_displayObj, m_angleSharingContextObj);
+
+    // Ideally this should go before the m_contextObj destruction, but there are platforms where it breaks
+    // the destruction m_contextObj. Putting it here works for all the platforms that I've tested.
+    EGL_MakeCurrent(m_displayObj, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+#endif
 
     if (m_surfaceObj)
         EGL_DestroySurface(m_displayObj, m_surfaceObj);
@@ -140,16 +155,22 @@ RefPtr<PixelBuffer> GraphicsContextGLTextureMapperANGLE::readCompositedResults()
 
 RefPtr<GraphicsContextGL> createWebProcessGraphicsContextGL(const GraphicsContextGLAttributes& attributes)
 {
-#if USE(GBM)
-    auto& display = PlatformDisplay::sharedDisplay();
-    if (display.type() == PlatformDisplay::Type::GBM && display.eglExtensions().KHR_image_base && display.eglExtensions().EXT_image_dma_buf_import) {
-        static const char* disableGBM = getenv("WEBKIT_WEBGL_DISABLE_GBM");
-        if (!disableGBM || *disableGBM == '0') {
-            RefPtr delegate = GraphicsLayerContentsDisplayDelegateCoordinated::create();
-            if (auto context = GraphicsContextGLTextureMapperGBM::create(GraphicsContextGLAttributes { attributes }, WTFMove(delegate)))
-                return context;
-            WTFLogAlways("Failed to create a graphics context for WebGL using GBM, falling back to textures");
-        }
+#if OS(ANDROID) && ENABLE(WEBXR)
+    const auto& eglExtensions = PlatformDisplay::sharedDisplay().eglExtensions();
+    if (eglExtensions.ANDROID_get_native_client_buffer && eglExtensions.ANDROID_image_native_buffer) {
+        if (auto context = GraphicsContextGLTextureMapperAndroid::create(GraphicsContextGLAttributes { attributes }))
+            return context;
+        LOG_ERROR("Failed to create an Android graphics context, the fallback is not expected to work for WebXR content");
+    } else {
+        LOG_ERROR("Cannot create an Android graphics context: extension EGL_ANDROID_get_native_client_buffer %s, ANDROID_image_native_buffer %s; textures fallback not expected to work",
+            eglExtensions.ANDROID_get_native_client_buffer ? "found" : "missing", eglExtensions.ANDROID_image_native_buffer ? "found" : "missing");
+    }
+#elif USE(GBM)
+    if (GraphicsContextGLTextureMapperGBM::checkRequirements()) {
+        RefPtr delegate = GraphicsLayerContentsDisplayDelegateCoordinated::create();
+        if (auto context = GraphicsContextGLTextureMapperGBM::create(GraphicsContextGLAttributes { attributes }, WTFMove(delegate)))
+            return context;
+        WTFLogAlways("Failed to create a graphics context for WebGL using GBM, falling back to textures");
     }
 #endif
     return GraphicsContextGLTextureMapperANGLE::create(GraphicsContextGLAttributes { attributes });
@@ -290,7 +311,17 @@ bool GraphicsContextGLTextureMapperANGLE::platformInitializeContext()
     }
     eglContextAttributes.append(EGL_NONE);
 
+#if PLATFORM(WIN)
     m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, sharedDisplay.angleSharingGLContext(), eglContextAttributes.span().data());
+#else
+    m_angleSharingContextObj = sharedDisplay.angleSharingGLContext();
+    if (m_angleSharingContextObj == EGL_NO_CONTEXT) {
+        LOG(WebGL, "ANGLE sharing EGLContext Initialization failed.");
+        return false;
+    }
+
+    m_contextObj = EGL_CreateContext(m_displayObj, m_configObj, m_angleSharingContextObj, eglContextAttributes.span().data());
+#endif
     if (m_contextObj == EGL_NO_CONTEXT) {
         LOG(WebGL, "EGLContext Initialization failed.");
         return false;
@@ -468,6 +499,20 @@ void GraphicsContextGLTextureMapperANGLE::enableFoveation(GCGLuint)
 
 void GraphicsContextGLTextureMapperANGLE::disableFoveation()
 {
+}
+
+bool GraphicsContextGLTextureMapperANGLE::enableRequiredWebXRExtensions()
+{
+    if (!makeContextCurrent())
+        return false;
+
+    return enableExtensionsImpl({
+        "GL_ANGLE_framebuffer_multisample"_s,
+        "GL_ANGLE_framebuffer_blit"_s,
+        "GL_EXT_discard_framebuffer"_s,
+        "GL_OES_EGL_image"_s,
+        "GL_OES_rgb8_rgba8"_s
+    });
 }
 #endif
 

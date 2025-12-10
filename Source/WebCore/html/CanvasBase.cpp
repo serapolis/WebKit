@@ -30,7 +30,6 @@
 #include "CanvasRenderingContext.h"
 #include "Chrome.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Element.h"
 #include "GraphicsClient.h"
 #include "GraphicsContext.h"
@@ -68,6 +67,8 @@ static std::optional<uint64_t> canvasNoiseHashSaltIfNeeded(ScriptExecutionContex
     return { };
 }
 
+CanvasDisplayBufferObserver::~CanvasDisplayBufferObserver() = default;
+
 CanvasBase::CanvasBase(IntSize size, ScriptExecutionContext& context)
     : m_size { size }
     , m_canvasNoiseHashSalt { canvasNoiseHashSaltIfNeeded(context) }
@@ -91,7 +92,7 @@ ImageBuffer* CanvasBase::buffer() const
 
 RefPtr<ImageBuffer> CanvasBase::makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
-    if (auto* context = renderingContext()) {
+    if (RefPtr context = renderingContext()) {
         RefPtr buffer = context->surfaceBufferToImageBuffer(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
         if (m_canvasNoiseHashSalt && shouldApplyPostProcessingToDirtyRect == ShouldApplyPostProcessingToDirtyRect::Yes)
             m_canvasNoiseInjection.postProcessDirtyCanvasBuffer(buffer.get(), *m_canvasNoiseHashSalt, context->is2d() ? CanvasNoiseInjectionPostProcessArea::DirtyRect : CanvasNoiseInjectionPostProcessArea::FullBuffer);
@@ -209,22 +210,22 @@ void CanvasBase::removeDisplayBufferObserver(CanvasDisplayBufferObserver& observ
 
 void CanvasBase::notifyObserversCanvasDisplayBufferPrepared()
 {
-    for (auto& observer : m_displayBufferObservers)
-        observer.canvasDisplayBufferPrepared(*this);
+    for (Ref observer : m_displayBufferObservers)
+        observer->canvasDisplayBufferPrepared(*this);
 }
 
 HashSet<Element*> CanvasBase::cssCanvasClients() const
 {
     HashSet<Element*> cssCanvasClients;
     for (auto& observer : m_observers) {
-        auto* image = dynamicDowncast<StyleCanvasImage>(observer);
+        RefPtr image = dynamicDowncast<StyleCanvasImage>(observer);
         if (!image)
             continue;
 
         for (auto entry : image->clients()) {
-            auto& client = entry.key;
-            if (auto element = client.element())
-                cssCanvasClients.add(element);
+            CheckedRef client = entry.key;
+            if (RefPtr element = client->element())
+                cssCanvasClients.add(element.get());
         }
     }
     return cssCanvasClients;
@@ -232,7 +233,7 @@ HashSet<Element*> CanvasBase::cssCanvasClients() const
 
 bool CanvasBase::hasActiveInspectorCanvasCallTracer() const
 {
-    auto* context = renderingContext();
+    RefPtr context = renderingContext();
     return context && context->hasActiveInspectorCanvasCallTracer();
 }
 
@@ -243,7 +244,7 @@ void CanvasBase::setSize(const IntSize& size)
 
     m_size = size;
 
-    if (auto* context = renderingContext())
+    if (RefPtr context = renderingContext())
         InspectorInstrumentation::didChangeCanvasSize(*context);
 }
 
@@ -270,7 +271,7 @@ RefPtr<ImageBuffer> CanvasBase::setImageBuffer(RefPtr<ImageBuffer>&& buffer) con
             scriptExecutionContext->vm().heap.reportExtraMemoryAllocated(static_cast<JSCell*>(nullptr), newMemoryCost);
         }
     }
-    if (auto* context = renderingContext()) {
+    if (RefPtr context = renderingContext()) {
         if (oldSize != m_size)
             InspectorInstrumentation::didChangeCanvasSize(*context);
         if (oldMemoryCost != newMemoryCost)
@@ -315,7 +316,7 @@ RefPtr<ImageBuffer> CanvasBase::allocateImageBuffer() const
         return nullptr;
     }
 
-    auto* context = renderingContext();
+    RefPtr context = renderingContext();
     bool willReadFrequently = context ? context->willReadFrequently() : false;
 
     RenderingMode renderingMode;
@@ -345,24 +346,24 @@ void CanvasBase::recordLastFillText(const String& text)
 
 void CanvasBase::addCanvasNeedingPreparationForDisplayOrFlush()
 {
-    auto* context = renderingContext();
+    RefPtr context = renderingContext();
     if (!context)
         return;
     if (context->isInPreparationForDisplayOrFlush())
         return;
-    if (auto* document = dynamicDowncast<Document>(scriptExecutionContext()))
+    if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext()))
         document->addCanvasNeedingPreparationForDisplayOrFlush(*context);
     // FIXME: WorkerGlobalContext does not have prepare phase yet.
 }
 
 void CanvasBase::removeCanvasNeedingPreparationForDisplayOrFlush()
 {
-    auto* context = renderingContext();
+    RefPtr context = renderingContext();
     if (!context)
         return;
     if (!context->isInPreparationForDisplayOrFlush())
         return;
-    if (auto* document = dynamicDowncast<Document>(scriptExecutionContext()))
+    if (RefPtr document = dynamicDowncast<Document>(scriptExecutionContext()))
         document->removeCanvasNeedingPreparationForDisplayOrFlush(*context);
     // FIXME: WorkerGlobalContext does not have prepare phase yet.
 }

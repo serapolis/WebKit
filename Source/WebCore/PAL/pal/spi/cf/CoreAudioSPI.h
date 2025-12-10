@@ -35,6 +35,10 @@ DECLARE_SYSTEM_HEADER
 #include <CoreAudio/AudioHardwarePriv.h>
 #else
 
+enum {
+    kAudioHardwarePropertyProcessIsRunning = 'prun'
+};
+
 #if PLATFORM(MAC)
 #include <CoreAudio/AudioHardware.h>
 

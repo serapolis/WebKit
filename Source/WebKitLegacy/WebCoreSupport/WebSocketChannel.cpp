@@ -36,8 +36,8 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <WebCore/Blob.h>
 #include <WebCore/CookieJar.h>
-#include <WebCore/DocumentInlines.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/DocumentPage.h>
 #include <WebCore/ExceptionCode.h>
 #include <WebCore/FileReaderLoader.h>
 #include <WebCore/FrameDestructionObserverInlines.h>
@@ -668,7 +668,7 @@ bool WebSocketChannel::processFrame()
             }
         }
         if (frame.payload.size() >= 3)
-            m_closeEventReason = byteCast<char8_t>(frame.payload.subspan(2));
+            m_closeEventReason = String::fromUTF8({ &frame.payload[2], frame.payload.size() - 2 });
         else
             m_closeEventReason = emptyString();
         skipBuffer(frameEnd - m_buffer.begin());
@@ -772,7 +772,7 @@ void WebSocketChannel::processOutgoingFrameQueue()
                 ref(); // Will be derefed after didFinishLoading() or didFail().
                 ASSERT(!m_blobLoader);
                 ASSERT(frame->blobData);
-                m_blobLoader = makeUnique<FileReaderLoader>(FileReaderLoader::ReadAsArrayBuffer, this);
+                m_blobLoader = FileReaderLoader::create(FileReaderLoader::ReadAsArrayBuffer, this);
                 m_blobLoaderStatus = BlobLoaderStarted;
                 m_blobLoader->start(m_document.get(), *frame->blobData);
                 m_outgoingFrameQueue.prepend(WTFMove(frame));

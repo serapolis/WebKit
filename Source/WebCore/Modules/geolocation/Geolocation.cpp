@@ -31,8 +31,7 @@
 #if ENABLE(GEOLOCATION)
 
 #include "ContextDestructionObserverInlines.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EventLoop.h"
 #include "GeoNotifier.h"
 #include "GeolocationController.h"
@@ -42,7 +41,6 @@
 #include "GeolocationPositionData.h"
 #include "LocalFrame.h"
 #include "Navigator.h"
-#include "Page.h"
 #include "PermissionsPolicy.h"
 #include "ScriptExecutionContextInlines.h"
 #include "ScriptWrappableInlines.h"
@@ -254,7 +252,7 @@ void Geolocation::resetAllGeolocationPermission()
     if (m_allowGeolocation == InProgress) {
         RefPtr page = this->page();
         if (page)
-            GeolocationController::from(page.get())->cancelPermissionRequest(*this);
+            GeolocationController::checkedFrom(page.get())->cancelPermissionRequest(*this);
 
         // This return is not technically correct as GeolocationController::cancelPermissionRequest() should have cleared the active request.
         // Neither iOS nor macOS supports cancelPermissionRequest() (https://bugs.webkit.org/show_bug.cgi?id=89524), so we workaround that and let ongoing requests complete. :(
@@ -289,7 +287,7 @@ void Geolocation::stop()
 {
     RefPtr page = this->page();
     if (page && m_allowGeolocation == InProgress)
-        GeolocationController::from(page.get())->cancelPermissionRequest(*this);
+        GeolocationController::checkedFrom(page.get())->cancelPermissionRequest(*this);
     // The frame may be moving to a new page and we want to get the permissions from the new page's client.
     resetIsAllowed();
     cancelAllRequests();
@@ -305,7 +303,7 @@ GeolocationPosition* Geolocation::lastPosition()
     if (!page)
         return nullptr;
 
-    m_lastPosition = createGeolocationPosition(GeolocationController::from(page.get())->lastPosition());
+    m_lastPosition = createGeolocationPosition(GeolocationController::checkedFrom(page.get())->lastPosition());
 
     return m_lastPosition.get();
 }
@@ -658,7 +656,7 @@ void Geolocation::requestPermission()
     m_hasBeenRequested = true;
 
     // Ask the embedder: it maintains the geolocation challenge policy itself.
-    GeolocationController::from(page.get())->requestPermission(*this);
+    GeolocationController::checkedFrom(page.get())->requestPermission(*this);
 }
 
 void Geolocation::revokeAuthorizationTokenIfNecessary()
@@ -670,7 +668,7 @@ void Geolocation::revokeAuthorizationTokenIfNecessary()
     if (!page)
         return;
 
-    GeolocationController::from(page.get())->revokeAuthorizationToken(std::exchange(m_authorizationToken, String()));
+    GeolocationController::checkedFrom(page.get())->revokeAuthorizationToken(std::exchange(m_authorizationToken, String()));
 }
 
 void Geolocation::resetIsAllowed()
@@ -735,7 +733,7 @@ bool Geolocation::startUpdating(GeoNotifier* notifier)
     if (!page)
         return false;
 
-    GeolocationController::from(page.get())->addObserver(*this, notifier->options().enableHighAccuracy);
+    GeolocationController::checkedFrom(page.get())->addObserver(*this, notifier->options().enableHighAccuracy);
     return true;
 }
 
@@ -745,7 +743,7 @@ void Geolocation::stopUpdating()
     if (!page)
         return;
 
-    GeolocationController::from(page.get())->removeObserver(*this);
+    GeolocationController::checkedFrom(page.get())->removeObserver(*this);
 }
 
 void Geolocation::handlePendingPermissionNotifiers()

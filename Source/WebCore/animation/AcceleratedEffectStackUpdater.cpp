@@ -26,32 +26,27 @@
 #include "config.h"
 #include "AcceleratedEffectStackUpdater.h"
 
-#if ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(THREADED_ANIMATIONS)
 
-#include "Document.h"
-#include "LocalDOMWindow.h"
-#include "Page.h"
-#include "Performance.h"
+#include "AcceleratedTimeline.h"
+#include "KeyframeEffectStack.h"
 #include "RenderElement.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerModelObject.h"
 #include "RenderStyleConstants.h"
+#include "ScrollTimeline.h"
 #include "Styleable.h"
-#include <wtf/MonotonicTime.h>
 
 namespace WebCore {
 
-AcceleratedEffectStackUpdater::AcceleratedEffectStackUpdater(Document& document)
+void AcceleratedEffectStackUpdater::update()
 {
-    auto now = MonotonicTime::now();
-    m_timeOrigin = now.secondsSinceEpoch();
-    if (RefPtr window = document.window())
-        m_timeOrigin -= Seconds::fromMilliseconds(window->performance().relativeTimeFromTimeOriginInReducedResolution(now));
-}
+    if (!hasTargetsPendingUpdate())
+        return;
 
-void AcceleratedEffectStackUpdater::updateEffectStacks()
-{
+    HashSet<Ref<AcceleratedTimeline>> timelinesInUpdate;
+
     auto targetsPendingUpdate = std::exchange(m_targetsPendingUpdate, { });
     for (auto [element, pseudoElementIdentifier] : targetsPendingUpdate) {
         if (!element)
@@ -65,15 +60,57 @@ void AcceleratedEffectStackUpdater::updateEffectStacks()
 
         auto* renderLayer = renderer->layer();
         ASSERT(renderLayer && renderLayer->backing());
-        renderLayer->backing()->updateAcceleratedEffectsAndBaseValues();
+        renderLayer->backing()->updateAcceleratedEffectsAndBaseValues(timelinesInUpdate);
+    }
+
+    for (auto& timeline : timelinesInUpdate) {
+        auto& timelineIdentifier = timeline->identifier();
+        auto addResult = m_timelines.add(timelineIdentifier, timeline.ptr());
+        if (addResult.isNewEntry)
+            m_timelinesUpdate.created.add(timeline);
     }
 }
 
-void AcceleratedEffectStackUpdater::updateEffectStackForTarget(const Styleable& target)
+void AcceleratedEffectStackUpdater::scheduleUpdateForTarget(const Styleable& target)
 {
     m_targetsPendingUpdate.add({ &target.element, target.pseudoElementIdentifier });
 }
 
+void AcceleratedEffectStackUpdater::scrollTimelineDidChange(ScrollTimeline& timeline)
+{
+    m_scrollTimelinesPendingUpdate.add(timeline);
+}
+
+AcceleratedTimelinesUpdate AcceleratedEffectStackUpdater::takeTimelinesUpdate()
+{
+    // All known accelerated timelines that got destroyed since the last update
+    // will now be null references. Add them to the list of destroyed timelines.
+    for (auto& [timelineIdentifier, timeline] : m_timelines) {
+        if (!timeline)
+            m_timelinesUpdate.destroyed.add(timelineIdentifier);
+    }
+
+    // Prune all those destroyed timelines from our list of know accelerated timelines.
+    for (auto& identifierToRemove : m_timelinesUpdate.destroyed)
+        m_timelines.remove(identifierToRemove);
+
+    // Finally, process all timelines that were marked as requiring an update, either
+    // marking them as modified or destroyed if they no longer are accelerated.
+    auto scrollTimelinesPendingUpdate = std::exchange(m_scrollTimelinesPendingUpdate, { });
+    for (auto& scrollTimeline : scrollTimelinesPendingUpdate) {
+        auto timelineIdentifier = scrollTimeline->acceleratedTimelineIdentifier();
+        auto acceleratedTimeline = m_timelines.getOptional(timelineIdentifier);
+        if (acceleratedTimeline && scrollTimeline->canBeAccelerated()) {
+            ASSERT(*acceleratedTimeline);
+            scrollTimeline->updateAcceleratedRepresentation();
+            m_timelinesUpdate.modified.add(**acceleratedTimeline);
+        } else
+            m_timelinesUpdate.destroyed.add(timelineIdentifier);
+    }
+
+    return std::exchange(m_timelinesUpdate, { });
+}
+
 } // namespace WebCore
 
-#endif // ENABLE(THREADED_ANIMATION_RESOLUTION)
+#endif // ENABLE(THREADED_ANIMATIONS)

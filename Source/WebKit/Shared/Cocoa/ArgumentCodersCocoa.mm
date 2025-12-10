@@ -37,10 +37,7 @@
 #import "Logging.h"
 #import "MessageNames.h"
 #import "WebPreferencesKeys.h"
-#import <CoreText/CTFont.h>
-#import <CoreText/CTFontDescriptor.h>
 #import <WebCore/ColorCocoa.h>
-#import <WebCore/FontCocoa.h>
 #import <pal/spi/cocoa/NSKeyedUnarchiverSPI.h>
 #import <wtf/BlockObjCExceptions.h>
 #import <wtf/HashSet.h>
@@ -52,8 +49,6 @@
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIColor.h>
-#import <UIKit/UIFont.h>
-#import <UIKit/UIFontDescriptor.h>
 #import <UIKit/UIKit.h>
 #import <pal/ios/UIKitSoftLink.h>
 #endif
@@ -78,6 +73,9 @@
 #endif
 #if USE(PASSKIT)
 #import <pal/cocoa/ContactsSoftLink.h>
+#endif
+#if HAVE(PARENTAL_CONTROLS_WITH_UNBLOCK_HANDLER)
+#import <pal/cocoa/WebContentAnalysisSoftLink.h>
 #endif
 
 #if !HAVE(WK_SECURE_CODING_NSURLREQUEST)
@@ -340,6 +338,13 @@ template<> Class getClass<PKSecureElementPass>()
 }
 #endif
 
+#if !HAVE(WEBCONTENTRESTRICTIONS) && HAVE(PARENTAL_CONTROLS_WITH_UNBLOCK_HANDLER)
+template<> Class getClass<WebFilterEvaluator>()
+{
+    return PAL::getWebFilterEvaluatorClassSingleton();
+}
+#endif
+
 template<> Class getClass<PlatformColor>()
 {
     return PlatformColorClass;
@@ -365,8 +370,6 @@ NSType typeFromObject(id object)
         return NSType::Error;
     if ([object isKindOfClass:[NSDictionary class]])
         return NSType::Dictionary;
-    if ([object isKindOfClass:[CocoaFont class]])
-        return NSType::Font;
     if ([object isKindOfClass:[NSLocale class]])
         return NSType::Locale;
     if ([object isKindOfClass:[NSNumber class]])
@@ -380,38 +383,31 @@ NSType typeFromObject(id object)
     if ([object isKindOfClass:[NSURL class]])
         return NSType::URL;
 #if USE(PASSKIT)
-    if ([object isKindOfClass:getClass<PKPaymentMethod>()])
+    // No need to retain Class, it is immortal.
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKPaymentMethod>()])
         return NSType::PKPaymentMethod;
-    if ([object isKindOfClass:getClass<PKPaymentMerchantSession>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKPaymentMerchantSession>()])
         return NSType::PKPaymentMerchantSession;
-    if ([object isKindOfClass:getClass<PKPaymentSetupFeature>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKPaymentSetupFeature>()])
         return NSType::PKPaymentSetupFeature;
-    if ([object isKindOfClass:getClass<PKContact>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKContact>()])
         return NSType::PKContact;
-    if ([object isKindOfClass:getClass<PKSecureElementPass>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKSecureElementPass>()])
         return NSType::PKSecureElementPass;
-    if ([object isKindOfClass:getClass<PKPayment>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKPayment>()])
         return NSType::PKPayment;
-    if ([object isKindOfClass:getClass<PKPaymentToken>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKPaymentToken>()])
         return NSType::PKPaymentToken;
-    if ([object isKindOfClass:getClass<PKShippingMethod>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKShippingMethod>()])
         return NSType::PKShippingMethod;
-    if ([object isKindOfClass:getClass<PKDateComponentsRange>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<PKDateComponentsRange>()])
         return NSType::PKDateComponentsRange;
-    if ([object isKindOfClass:getClass<CNContact>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<CNContact>()])
         return NSType::CNContact;
-    if ([object isKindOfClass:getClass<CNPhoneNumber>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<CNPhoneNumber>()])
         return NSType::CNPhoneNumber;
-    if ([object isKindOfClass:getClass<CNPostalAddress>()])
+    SUPPRESS_UNRETAINED_ARG if ([object isKindOfClass:getClass<CNPostalAddress>()])
         return NSType::CNPostalAddress;
-#endif
-#if ENABLE(DATA_DETECTION) && HAVE(WK_SECURE_CODING_DATA_DETECTORS)
-    if ([object isKindOfClass:getClass<DDScannerResult>()])
-        return NSType::DDScannerResult;
-#if PLATFORM(MAC)
-    if ([object isKindOfClass:getClass<WKDDActionContext>()])
-        return NSType::WKDDActionContext;
-#endif
 #endif
     if ([object isKindOfClass:[NSDateComponents class]])
         return NSType::NSDateComponents;
@@ -433,15 +429,8 @@ NSType typeFromObject(id object)
     return NSType::Unknown;
 }
 
-static inline bool isSerializableFont(CTFontRef font)
-{
-    return !!adoptCF(CTFontCopyAttribute(font, kCTFontURLAttribute));
-}
-
 bool isSerializableValue(id value)
 {
-    if ([value isKindOfClass:[CocoaFont class]])
-        return isSerializableFont((__bridge CTFontRef)value);
     return typeFromObject(value) != NSType::Unknown;
 }
 
@@ -500,7 +489,8 @@ template<> void encodeObjectDirectly<NSObject<NSSecureCoding>>(Encoder& encoder,
     [archiver finishEncoding];
     [archiver setDelegate:nil];
 
-    encoder << (__bridge CFDataRef)[archiver encodedData];
+    RetainPtr<CFDataRef> archivedData = bridge_cast([archiver encodedData]);
+    encoder << archivedData;
 }
 
 static bool shouldEnableStrictMode(Decoder& decoder, const AllowedClassHashSet& allowedClasses)

@@ -41,6 +41,9 @@ public:
     using StoppedCallback = Function<void()>;
     void stop(StoppedCallback&&);
 
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+
     const RefPtr<MediaStreamTrackPrivate>& track() const { return m_track; }
 
     void setMediaStreamID(const String& mediaStreamId) { m_mediaStreamId = mediaStreamId; }
@@ -75,6 +78,8 @@ public:
     virtual void dispatchBitrateRequest(uint32_t bitrate) = 0;
 
     RealtimeMediaSource::Type type() const;
+
+    void setRtpHeaderExtensionMapping(RTPHeaderExtensionMapping mapping) { m_rtpHeaderExtensionMapping = mapping; }
 
 protected:
     enum Type {
@@ -112,7 +117,7 @@ protected:
     GRefPtr<GstPad> m_webrtcSinkPad;
     RefPtr<UniqueSSRCGenerator> m_ssrcGenerator;
     GUniquePtr<GstStructure> m_parameters;
-
+    RTPHeaderExtensionMapping m_rtpHeaderExtensionMapping;
     Vector<RefPtr<GStreamerRTPPacketizer>> m_packetizers;
 
 private:
@@ -145,7 +150,7 @@ private:
     void startUpdatingStats();
     void stopUpdatingStats();
 
-    RefPtr<GStreamerRTPPacketizer> getPacketizerForRid(StringView);
+    RefPtr<GStreamerRTPPacketizer> getPacketizerForRid(const String&);
 };
 
 } // namespace WebCore

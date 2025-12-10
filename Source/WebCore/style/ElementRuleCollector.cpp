@@ -247,6 +247,8 @@ void ElementRuleCollector::collectMatchingRules(const MatchRequest& matchRequest
         collectMatchingRulesForList(matchRequest.ruleSet.linkPseudoClassRules(), matchRequest);
     if (matchesFocusPseudoClass(element))
         collectMatchingRulesForList(matchRequest.ruleSet.focusPseudoClassRules(), matchRequest);
+    if (matchesFocusVisiblePseudoClass(element))
+        collectMatchingRulesForList(matchRequest.ruleSet.focusVisiblePseudoClassRules(), matchRequest);
     if (&element == element.document().documentElement())
         collectMatchingRulesForList(matchRequest.ruleSet.rootElementRules(), matchRequest);
     collectMatchingRulesForList(matchRequest.ruleSet.tagRules(element.localName(), isHTML), matchRequest);
@@ -297,7 +299,7 @@ void ElementRuleCollector::transferMatchedRules(DeclarationOrigin declarationOri
             matchedRule.styleScopeOrdinal,
             FromStyleAttribute::No,
             matchedRule.cascadeLayerPriority,
-            matchedRule.ruleData->isStartingStyle()
+            matchedRule.ruleData->usedRuleTypes()
         }, declarationOrigin);
     }
 }
@@ -541,11 +543,11 @@ inline bool ElementRuleCollector::ruleMatches(const RuleData& ruleData, unsigned
 
     SelectorChecker::CheckingContext context(m_mode);
     if (m_pseudoElementRequest) {
-        context.pseudoId = m_pseudoElementRequest->pseudoId();
-        context.pseudoElementNameArgument = m_pseudoElementRequest->nameArgument();
+        auto pseudoElementIdentifier = m_pseudoElementRequest->identifier();
+        context.setRequestedPseudoElement(pseudoElementIdentifier);
         context.scrollbarState = m_pseudoElementRequest->scrollbarState();
-        if (isNamedViewTransitionPseudoElement(m_pseudoElementRequest->identifier()))
-            context.classList = classListForNamedViewTransitionPseudoElement(element().document(), context.pseudoElementNameArgument);
+        if (isNamedViewTransitionPseudoElement(pseudoElementIdentifier))
+            context.classList = classListForNamedViewTransitionPseudoElement(element().document(), pseudoElementIdentifier.nameArgument);
     }
     context.styleScopeOrdinal = styleScopeOrdinal;
     context.selectorMatchingState = m_selectorMatchingState;
@@ -570,7 +572,7 @@ inline bool ElementRuleCollector::ruleMatches(const RuleData& ruleData, unsigned
             specificity = selector->computeSpecificity();
     }
 
-    m_matchedPseudoElementIds.merge(context.pseudoIDSet);
+    m_matchedPseudoElements.add(context.publicPseudoElements);
     m_styleRelations.appendVector(context.styleRelations);
 
     return selectorMatches;
@@ -637,7 +639,7 @@ bool ElementRuleCollector::containerQueriesMatch(const RuleData& ruleData, const
     auto selectionMode = [&] {
         if (matchRequest.matchingPartPseudoElementRules)
             return ContainerQueryEvaluator::SelectionMode::PartPseudoElement;
-        if (ruleData.canMatchPseudoElement())
+        if (ruleData.canMatchPseudoElement() && !complexSelectorMatchesElementBackedPseudoElement(*ruleData.selector()))
             return ContainerQueryEvaluator::SelectionMode::PseudoElement;
         return ContainerQueryEvaluator::SelectionMode::Element;
     }();
@@ -914,8 +916,11 @@ void ElementRuleCollector::addMatchedProperties(MatchedProperties&& matchedPrope
         // It might also be beneficial to overwrite the previous declaration (insteading of appending) if it affects the same exact properties.
         return;
     }
-    if (matchedProperties.isStartingStyle == IsStartingStyle::Yes)
-        m_result->hasStartingStyle = true;
+    if (matchedProperties.usedRuleTypes.contains(UsedRuleType::StartingStyle))
+        m_result->usedRuleTypes.add(UsedRuleType::StartingStyle);
+
+    if (matchedProperties.usedRuleTypes.contains(UsedRuleType::BaseAppearance))
+        m_result->usedRuleTypes.add(UsedRuleType::BaseAppearance);
 
     if (matchedProperties.isCacheable == IsCacheable::Partially && !m_result->isCompletelyNonCacheable) {
         for (auto property : matchedProperties.properties.get())
@@ -932,7 +937,8 @@ void ElementRuleCollector::addMatchedProperties(MatchedProperties&& matchedPrope
 void ElementRuleCollector::addAuthorKeyframeRules(const StyleRuleKeyframe& keyframe)
 {
     ASSERT(m_result->authorDeclarations.isEmpty());
-    m_result->authorDeclarations.append({ keyframe.properties(), SelectorChecker::MatchAll, propertyAllowlistForPseudoId(m_pseudoElementRequest ? m_pseudoElementRequest->pseudoId() : PseudoId::None) });
+    auto propertyAllowlist = m_pseudoElementRequest ? propertyAllowlistForPseudoElement(m_pseudoElementRequest->type()) : PropertyAllowlist::None;
+    m_result->authorDeclarations.append({ keyframe.properties(), SelectorChecker::MatchAll, propertyAllowlist });
 }
 
 }

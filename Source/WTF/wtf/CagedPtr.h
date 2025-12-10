@@ -55,14 +55,14 @@ public:
         : m_ptr(ptr)
     { }
 
-    T* get() const
+    T* get() const LIFETIME_BOUND
     {
         ASSERT(m_ptr);
         T* ptr = PtrTraits::unwrap(m_ptr);
         return Gigacage::caged(kind, ptr);
     }
 
-    T* getMayBeNull() const
+    T* getMayBeNull() const LIFETIME_BOUND
     {
         T* ptr = PtrTraits::unwrap(m_ptr);
         if (!ptr)
@@ -70,16 +70,18 @@ public:
         return Gigacage::caged(kind, ptr);
     }
 
-    T* getUnsafe() const
+    T* getUnsafe() const LIFETIME_BOUND
     {
         T* ptr = PtrTraits::unwrap(m_ptr);
         return Gigacage::cagedMayBeNull(kind, ptr);
     }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     // We need the template here so that the type of U is deduced at usage time rather than class time. U should always be T.
     template<typename U = T>
-    typename std::enable_if<!std::is_same<void, U>::value, T>::type&
-    /* T& */ at(size_t index) const { return get()[index]; }
+        requires (!std::same_as<void, U>)
+    WTF_UNSAFE_BUFFER_USAGE U& at(size_t index) const { return get()[index]; }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     CagedPtr(CagedPtr& other)
         : m_ptr(other.m_ptr)

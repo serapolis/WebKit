@@ -30,11 +30,19 @@
 #include <wtf/text/Base64.h>
 
 namespace TestWebKitAPI {
+
 using namespace WebCore::PushCrypto;
 
-static Vector<uint8_t> mustBase64URLDecode(const String& encoded)
+static Vector<uint8_t> mustBase64URLDecode(ASCIILiteral encoded)
 {
     return base64URLDecode(encoded).value();
+}
+
+static StringView stringView(const std::optional<Vector<uint8_t>>& vector)
+{
+    if (!vector)
+        return ""_s;
+    return StringView { byteCast<Latin1Character>(vector->span()) };
 }
 
 static ClientKeys makeAES128GCMClientKeys(void)
@@ -59,7 +67,7 @@ TEST(PushMessageCrypto, AES128GCMPayloadWithMinimalPadding)
     auto result = decryptAES128GCMPayload(clientKeys, payload);
     ASSERT_TRUE(result.has_value());
 
-    ASSERT_EQ("When I grow up, I want to be a watermelon"_s, result->span());
+    EXPECT_EQ("When I grow up, I want to be a watermelon"_s, stringView(result));
 }
 
 TEST(PushMessageCrypto, AES128GCMPayloadWithPadding)
@@ -70,7 +78,7 @@ TEST(PushMessageCrypto, AES128GCMPayloadWithPadding)
     auto result = decryptAES128GCMPayload(clientKeys, payload);
     ASSERT_TRUE(result.has_value());
 
-    ASSERT_EQ("foobar"_s, result->span());
+    EXPECT_EQ("foobar"_s, stringView(result));
 }
 
 TEST(PushMessageCrypto, AES128GCMPayloadWithIncorrectPadding)
@@ -116,7 +124,7 @@ TEST(PushMessageCrypto, AESGCMPayloadWithMinimalPadding)
     auto result = decryptAESGCMPayload(clientKeys, serverPublicKey, salt, payload);
     ASSERT_TRUE(result.has_value());
 
-    ASSERT_EQ("I am the walrus"_s, result->span());
+    EXPECT_EQ("I am the walrus"_s, stringView(result));
 }
 
 TEST(PushMessageCrypto, AESGCMPayloadWithPadding)
@@ -129,7 +137,7 @@ TEST(PushMessageCrypto, AESGCMPayloadWithPadding)
     auto result = decryptAESGCMPayload(clientKeys, serverPublicKey, salt, payload);
     ASSERT_TRUE(result.has_value());
 
-    ASSERT_EQ("foobar"_s, result->span());
+    EXPECT_EQ("foobar"_s, stringView(result));
 }
 
 TEST(PushMessageCrypto, AESGCMPayloadWithIncorrectPadding)

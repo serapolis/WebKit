@@ -41,6 +41,7 @@
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include "ProxyObject.h"
+#include "ResourceExhaustion.h"
 #include "TypeError.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
@@ -1307,12 +1308,8 @@ static Butterfly* createArrayStorageButterflyImpl(VM& vm, JSObject* intendedOwne
         oldButterfly, vm, intendedOwner, structure, structure->outOfLineCapacity(), false, 0,
         ArrayStorage::sizeFor(vectorLength));
     if (!newButterfly) [[unlikely]] {
-        if (mode == AllocationFailureMode::Assert)
-            RELEASE_ASSERT(newButterfly, length, vectorLength, oldButterfly);
-        else {
-            ASSERT(mode == AllocationFailureMode::ReturnNull);
-            return nullptr;
-        }
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(mode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+        return nullptr;
     }
 
     ArrayStorage* result = newButterfly->arrayStorage();
@@ -2495,7 +2492,7 @@ static ALWAYS_INLINE JSValue callToPrimitiveFunction(JSGlobalObject* globalObjec
             return JSValue();
     }
 
-    auto callData = JSC::getCallData(function);
+    auto callData = JSC::getCallDataInline(function);
     if (callData.type == CallData::Type::None) {
         if constexpr (key == CachedSpecialPropertyKey::ToPrimitive)
             throwTypeError(globalObject, scope, "Symbol.toPrimitive is not a function, undefined, or null"_s);
@@ -2611,7 +2608,7 @@ bool JSObject::hasInstance(JSGlobalObject* globalObject, JSValue value, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!hasInstanceValue.isUndefinedOrNull() && hasInstanceValue != globalObject->functionProtoHasInstanceSymbolFunction()) {
-        auto callData = JSC::getCallData(hasInstanceValue);
+        auto callData = JSC::getCallDataInline(hasInstanceValue);
         if (callData.type == CallData::Type::None) {
             throwException(globalObject, scope, createInvalidInstanceofParameterErrorHasInstanceValueNotFunction(globalObject, this));
             return false;
@@ -2687,7 +2684,7 @@ JSC_DEFINE_HOST_FUNCTION(objectPrivateFuncInstanceOf, (JSGlobalObject* globalObj
     return JSValue::encode(jsBoolean(JSObject::defaultHasInstance(globalObject, value, proto)));
 }
 
-void JSObject::getPropertyNames(JSGlobalObject* globalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void JSObject::getPropertyNames(JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2713,18 +2710,18 @@ void JSObject::getPropertyNames(JSGlobalObject* globalObject, PropertyNameArray&
     }
 }
 
-void JSObject::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void JSObject::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     object->getOwnIndexedPropertyNames(globalObject, propertyNames, mode);
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode);
 }
 
-void JSObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode)
+void JSObject::getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode)
 {
     // Structure::validateFlags() breaks if this method isn't exported, which is impossible if it's inlined.
 }
 
-void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     JSObject* object = this;
 
@@ -2778,7 +2775,7 @@ void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArray& pr
                     return std::nullopt;
                 });
                 
-                std::sort(keys.begin(), keys.end());
+                std::ranges::sort(keys);
                 for (unsigned i = 0; i < keys.size(); ++i)
                     propertyNames.add(keys[i]);
             }
@@ -2791,7 +2788,7 @@ void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArray& pr
     }
 }
 
-void JSObject::getOwnNonIndexPropertyNames(JSGlobalObject* globalObject, PropertyNameArray& propertyNames, DontEnumPropertiesMode mode)
+void JSObject::getOwnNonIndexPropertyNames(JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3205,13 +3202,8 @@ bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes(JSGlobalObject* glo
         || (i >= MIN_SPARSE_ARRAY_INDEX && !isDenseEnoughForVector(i, countElements<indexingShape>(butterfly)))
         || indexIsSufficientlyBeyondLengthForSparseMap(i, butterfly->vectorLength())) {
         ASSERT(i <= MAX_ARRAY_INDEX);
-        ensureArrayStorageSlow(vm);
-        SparseArrayValueMap* map = allocateSparseIndexMap(vm);
-        bool result = map->putEntry(globalObject, this, i, value, false);
-        RETURN_IF_EXCEPTION(scope, false);
-        ASSERT(i >= arrayStorage()->length());
-        arrayStorage()->setLength(i + 1);
-        return result;
+        ArrayStorage* storage = ensureArrayStorageSlow(vm);
+        RELEASE_AND_RETURN(scope, putByIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, false, storage));
     }
 
     if (!ensureLength(vm, i + 1)) {
@@ -3254,6 +3246,10 @@ template bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes<Contiguous
 bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned i, JSValue value, bool shouldThrow, ArrayStorage* storage)
 {
     VM& vm = globalObject->vm();
+    // We're transitioning between states here, if a termination comes in we could leave the object
+    // in an inconsistent state. We could still be in the middle a GC during termination so we could
+    // try to mark this object and crash. It's much easier to just not think about it.
+    DeferTerminationForAWhile noTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!isCopyOnWrite(indexingMode()));
@@ -3395,6 +3391,10 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
 bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned i, JSValue value, unsigned attributes, PutDirectIndexMode mode, ArrayStorage* storage)
 {
     VM& vm = globalObject->vm();
+    // We're transitioning between states here, if a termination comes in we could leave the object
+    // in an inconsistent state. We could still be in the middle a GC during termination so we could
+    // try to mark this object and crash. It's much easier to just not think about it.
+    DeferTerminationForAWhile noTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     
     // i should be a valid array index that is outside of the current vector.
@@ -4149,7 +4149,7 @@ JSValue JSObject::getMethod(JSGlobalObject* globalObject, CallData& callData, co
         return jsUndefined();
     }
 
-    callData = JSC::getCallData(method.asCell());
+    callData = JSC::getCallDataInline(method.asCell());
     if (callData.type == CallData::Type::None) {
         throwVMTypeError(globalObject, scope, errorMessage);
         return jsUndefined();

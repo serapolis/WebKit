@@ -35,6 +35,7 @@
 #include <wtf/Lock.h>
 #include <wtf/Locker.h>
 #include <wtf/LoggingAccumulator.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StackTrace.h>
 #include <wtf/StdLibExtras.h>
@@ -57,6 +58,7 @@
 #if OS(DARWIN)
 #include <sys/sysctl.h>
 #include <unistd.h>
+#include <wtf/OSObjectPtr.h>
 #endif
 
 #if !RELEASE_LOG_DISABLED && !USE(OS_LOG)
@@ -133,12 +135,8 @@ extern "C" {
 #if PLATFORM(COCOA)
 static os_log_t webkitSubsystemForGenericOSLog()
 {
-    static dispatch_once_t once;
-    static os_log_t subsystem;
-    dispatch_once(&once, ^{
-        subsystem = os_log_create(LOG_CHANNEL_WEBKIT_SUBSYSTEM, "Generic");
-    });
-    return subsystem;
+    SUPPRESS_RETAINPTR_CTOR_ADOPT static NeverDestroyed<OSObjectPtr<os_log_t>> subsystem = adoptOSObject(os_log_create(LOG_CHANNEL_WEBKIT_SUBSYSTEM, "Generic"));
+    return subsystem.get().get();
 }
 #endif
 
@@ -479,13 +477,8 @@ String WTFLoggingAccumulator::getAndResetAccumulatedLogs()
 
 static WTFLoggingAccumulator& loggingAccumulator()
 {
-    static WTFLoggingAccumulator* accumulator;
-    static std::once_flag initializeAccumulatorOnce;
-    std::call_once(initializeAccumulatorOnce, [] {
-        accumulator = new WTFLoggingAccumulator;
-    });
-
-    return *accumulator;
+    static NeverDestroyed<UniqueRef<WTFLoggingAccumulator>> accumulator = makeUniqueRef<WTFLoggingAccumulator>();
+    return accumulator.get();
 }
 
 void WTFSetLogChannelLevel(WTFLogChannel* channel, WTFLogLevel level)
@@ -664,70 +657,70 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1, uint64_t misc2, uint64_t misc3, uint64_t misc4, uint64_t misc5, uint64_t misc6)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
-    register uint64_t misc2GPR asm(CRASH_GPR2) = misc2;
-    register uint64_t misc3GPR asm(CRASH_GPR3) = misc3;
-    register uint64_t misc4GPR asm(CRASH_GPR4) = misc4;
-    register uint64_t misc5GPR asm(CRASH_GPR5) = misc5;
-    register uint64_t misc6GPR asm(CRASH_GPR6) = misc6;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
+    register uint64_t misc2GPR __asm__(CRASH_GPR2) = misc2;
+    register uint64_t misc3GPR __asm__(CRASH_GPR3) = misc3;
+    register uint64_t misc4GPR __asm__(CRASH_GPR4) = misc4;
+    register uint64_t misc5GPR __asm__(CRASH_GPR5) = misc5;
+    register uint64_t misc6GPR __asm__(CRASH_GPR6) = misc6;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR), "r"(misc2GPR), "r"(misc3GPR), "r"(misc4GPR), "r"(misc5GPR), "r"(misc6GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1, uint64_t misc2, uint64_t misc3, uint64_t misc4, uint64_t misc5)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
-    register uint64_t misc2GPR asm(CRASH_GPR2) = misc2;
-    register uint64_t misc3GPR asm(CRASH_GPR3) = misc3;
-    register uint64_t misc4GPR asm(CRASH_GPR4) = misc4;
-    register uint64_t misc5GPR asm(CRASH_GPR5) = misc5;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
+    register uint64_t misc2GPR __asm__(CRASH_GPR2) = misc2;
+    register uint64_t misc3GPR __asm__(CRASH_GPR3) = misc3;
+    register uint64_t misc4GPR __asm__(CRASH_GPR4) = misc4;
+    register uint64_t misc5GPR __asm__(CRASH_GPR5) = misc5;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR), "r"(misc2GPR), "r"(misc3GPR), "r"(misc4GPR), "r"(misc5GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1, uint64_t misc2, uint64_t misc3, uint64_t misc4)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
-    register uint64_t misc2GPR asm(CRASH_GPR2) = misc2;
-    register uint64_t misc3GPR asm(CRASH_GPR3) = misc3;
-    register uint64_t misc4GPR asm(CRASH_GPR4) = misc4;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
+    register uint64_t misc2GPR __asm__(CRASH_GPR2) = misc2;
+    register uint64_t misc3GPR __asm__(CRASH_GPR3) = misc3;
+    register uint64_t misc4GPR __asm__(CRASH_GPR4) = misc4;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR), "r"(misc2GPR), "r"(misc3GPR), "r"(misc4GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1, uint64_t misc2, uint64_t misc3)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
-    register uint64_t misc2GPR asm(CRASH_GPR2) = misc2;
-    register uint64_t misc3GPR asm(CRASH_GPR3) = misc3;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
+    register uint64_t misc2GPR __asm__(CRASH_GPR2) = misc2;
+    register uint64_t misc3GPR __asm__(CRASH_GPR3) = misc3;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR), "r"(misc2GPR), "r"(misc3GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1, uint64_t misc2)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
-    register uint64_t misc2GPR asm(CRASH_GPR2) = misc2;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
+    register uint64_t misc2GPR __asm__(CRASH_GPR2) = misc2;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR), "r"(misc2GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason, uint64_t misc1)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
-    register uint64_t misc1GPR asm(CRASH_GPR1) = misc1;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
+    register uint64_t misc1GPR __asm__(CRASH_GPR1) = misc1;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR), "r"(misc1GPR));
     __builtin_unreachable();
 }
 
 void WTFCrashWithInfoImpl(int, const char*, const char*, int, uint64_t reason)
 {
-    register uint64_t reasonGPR asm(CRASH_GPR0) = reason;
+    register uint64_t reasonGPR __asm__(CRASH_GPR0) = reason;
     __asm__ volatile (WTF_FATAL_CRASH_INST : : "r"(reasonGPR));
     __builtin_unreachable();
 }

@@ -89,6 +89,7 @@ class EventListener;
 class ExtendableEvent;
 class FetchRequest;
 class FetchResponse;
+class FileSystemHandle;
 class File;
 class GCObservation;
 class HTMLAnchorElement;
@@ -116,6 +117,7 @@ class MediaStreamTrack;
 class MemoryInfo;
 class MessagePort;
 class MockCDMFactory;
+class MockCaptionDisplaySettingsClientCallback;
 class MockContentFilterSettings;
 class MockPageOverlay;
 class MockPaymentCoordinator;
@@ -127,6 +129,7 @@ class ReadableStream;
 class Range;
 class RenderedDocumentMarker;
 class SVGSVGElement;
+class ScrollTimeline;
 class ScrollableArea;
 class SerializedScriptValue;
 class ServiceWorker;
@@ -195,7 +198,7 @@ struct MockWebAuthenticationConfiguration;
 
 class Internals final
     : public RefCounted<Internals>
-    , private ContextDestructionObserver
+    , public ContextDestructionObserver
 #if ENABLE(MEDIA_STREAM)
     , public CanMakeCheckedPtr<Internals>
     , public RealtimeMediaSourceObserver
@@ -210,6 +213,11 @@ class Internals final
 public:
     static Ref<Internals> create(Document&);
     virtual ~Internals();
+
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(ContextDestructionObserver);
 
     static void resetToConsistentState(Page&);
 
@@ -294,7 +302,9 @@ public:
     void setUserAgentPart(Element&, const AtomString&);
 
     // DOMTimers throttling testing.
+    int timerNestingLevel();
     ExceptionOr<bool> isTimerThrottled(int timeoutId);
+    ExceptionOr<bool> isTimerAligned(int timeoutId);
     String requestAnimationFrameThrottlingReasons() const;
     double requestAnimationFrameInterval() const;
     bool scriptedAnimationsAreSuspended() const;
@@ -319,8 +329,15 @@ public:
     struct AcceleratedAnimation {
         String property;
         double speed;
+        bool isThreaded;
+    };
+    struct ScrollingNodeID {
+        uint64_t nodeIdentifier;
+        uint64_t processIdentifier;
     };
     Vector<AcceleratedAnimation> acceleratedAnimationsForElement(Element&);
+    uint64_t identifierForTimeline(AnimationTimeline&) const;
+    ScrollingNodeID scrollingNodeIDForTimeline(AnimationTimeline&) const;
     unsigned numberOfAnimationTimelineInvalidations() const;
     double timeToNextAnimationTick(WebAnimation&) const;
 
@@ -335,7 +352,7 @@ public:
     String visiblePlaceholder(Element&);
     void setCanShowPlaceholder(Element&, bool);
 
-    Element* insertTextPlaceholder(int width, int height);
+    RefPtr<Element> insertTextPlaceholder(int width, int height);
     void removeTextPlaceholder(Element&);
 
     void selectColorInColorChooser(HTMLInputElement&, const String& colorValue);
@@ -534,8 +551,8 @@ public:
     ExceptionOr<String> layerTreeAsText(Document&, unsigned short flags) const;
     ExceptionOr<uint64_t> layerIDForElement(Element&);
     ExceptionOr<String> repaintRectsAsText() const;
-        
-    ExceptionOr<Vector<uint64_t>> scrollingNodeIDForNode(Node*);
+
+    ExceptionOr<ScrollingNodeID> scrollingNodeIDForNode(Node*);
 
     enum {
         // Values need to be kept in sync with Internals.idl.
@@ -800,8 +817,6 @@ public:
     void simulateAudioInterruption(HTMLMediaElement&);
     ExceptionOr<bool> mediaElementHasCharacteristic(HTMLMediaElement&, const String&);
     void enterViewerMode(HTMLVideoElement&);
-    void beginSimulatedHDCPError(HTMLMediaElement&);
-    void endSimulatedHDCPError(HTMLMediaElement&);
     ExceptionOr<bool> mediaPlayerRenderingCanBeAccelerated(HTMLMediaElement&);
 
     bool elementShouldBufferData(HTMLMediaElement&);
@@ -809,6 +824,7 @@ public:
     void setMediaElementBufferingPolicy(HTMLMediaElement&, const String&);
     double privatePlayerVolume(const HTMLMediaElement&);
     bool privatePlayerMuted(const HTMLMediaElement&);
+    double privatePlayerCurrentTime(HTMLMediaElement&);
     bool isMediaElementHidden(const HTMLMediaElement&);
     double elementEffectivePlaybackRate(const HTMLMediaElement&);
 
@@ -835,6 +851,12 @@ public:
     ExceptionOr<String> textTrackBCP47Language(TextTrack&);
     Ref<TimeRanges> createTimeRanges(Float32Array& startTimes, Float32Array& endTimes);
     double closestTimeToTimeRanges(double time, TimeRanges&);
+
+    void showCaptionDisplaySettingsPreviewForMediaElement(HTMLMediaElement&);
+    void hideCaptionDisplaySettingsPreviewForMediaElement(HTMLMediaElement&);
+
+    void setMockCaptionDisplaySettingsClientCallback(RefPtr<MockCaptionDisplaySettingsClientCallback>&&);
+    MockCaptionDisplaySettingsClientCallback* mockCaptionDisplaySettingsClientCallback() const;
 #endif
 
     ExceptionOr<Ref<DOMRect>> selectionBounds();
@@ -1024,6 +1046,7 @@ public:
     void setMediaStreamSourceInterrupted(MediaStreamTrack&, bool);
     const String& mediaStreamTrackPersistentId(const MediaStreamTrack&);
     size_t audioCaptureSourceCount() const;
+    bool supportsMultiMicrophoneCaptureWithoutEchoCancellation() const;
     bool isMediaStreamSourceInterrupted(MediaStreamTrack&) const;
     bool isMediaStreamSourceEnded(MediaStreamTrack&) const;
     bool isMockRealtimeMediaSourceCenterEnabled();
@@ -1034,8 +1057,6 @@ public:
 #endif
 
     bool isHardwareVP9DecoderExpected();
-
-    bool enhancedSecurityEnabled() const;
 
 #if USE(AUDIO_SESSION)
     using AudioSessionCategory = WebCore::AudioSessionCategory;
@@ -1461,6 +1482,10 @@ public:
 
     String windowLocationHost(DOMWindow&);
 
+    // Navigation API rate limiter testing
+    void setNavigationRateLimiterParameters(DOMWindow&, unsigned maxNavigations, double windowDurationSeconds);
+    void resetNavigationRateLimiter(DOMWindow&);
+
     ExceptionOr<String> systemColorForCSSValue(const String& cssValue, bool useDarkModeAppearance, bool useElevatedUserInterfaceLevel);
 
     bool systemHasBattery() const;
@@ -1490,6 +1515,8 @@ public:
     Vector<String> appHighlightContextMenuItemTitles() const;
     unsigned numberOfAppHighlights();
 #endif
+
+    Vector<Ref<AbstractRange>> textExtractionHighlightRanges() const;
 
 #if ENABLE(WEBXR)
     ExceptionOr<RefPtr<WebXRTest>> xrTest();
@@ -1591,7 +1618,7 @@ public:
     bool sendEditingCommandToPDFForTesting(Element&, const String& commandName, const String& argument) const;
     void registerPDFTest(Ref<VoidCallback>&&, Element&);
 
-    const String& defaultSpatialTrackingLabel() const;
+    String defaultSpatialTrackingLabel() const;
 
 #if ENABLE(VIDEO)
     bool isEffectivelyMuted(const HTMLMediaElement&);
@@ -1629,6 +1656,12 @@ public:
     bool isModelElementIntersectingViewport(HTMLModelElement&);
 #endif
 
+    ExceptionOr<void> copyImageAtLocation(int x, int y);
+
+    bool hasMediaSessionManager() const;
+
+    size_t fileConnectionHandleCount(const FileSystemHandle&) const;
+
 private:
     explicit Internals(Document&);
 
@@ -1638,6 +1671,7 @@ private:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 #endif // ENABLE(MEDIA_STREAM)
 
     Document* contextDocument() const;
@@ -1679,7 +1713,7 @@ private:
     int m_trackVideoRotation { 0 };
 #endif
 #if ENABLE(MEDIA_SESSION) && ENABLE(WEB_CODECS)
-    std::unique_ptr<ArtworkImageLoader> m_artworkLoader;
+    RefPtr<ArtworkImageLoader> m_artworkLoader;
     std::unique_ptr<ArtworkImagePromise> m_artworkImagePromise;
 #endif
     std::unique_ptr<InspectorStubFrontend> m_inspectorFrontend;
@@ -1701,6 +1735,7 @@ private:
 #endif
 #if ENABLE(VIDEO)
     std::unique_ptr<CaptionUserPreferencesTestingModeToken> m_testingModeToken;
+    RefPtr<MockCaptionDisplaySettingsClientCallback> m_mockCaptionDisplaySettingsClientCallback;
 #endif
 };
 

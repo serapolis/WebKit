@@ -201,6 +201,8 @@ void OneLineShaper::finish(const Block& block, SkScalar height, SkScalar& advanc
         const SkShaper::RunHandler::RunInfo info = {
                 run->fFont,
                 run->fBidiLevel,
+                run->fScript,
+                run->fLanguage.c_str(),
                 runAdvance,
                 glyphs.width(),
                 SkShaper::RunHandler::Range(text.start - run->fClusterStart, text.width())
@@ -476,7 +478,7 @@ void OneLineShaper::matchResolvedFonts(const TextStyle& textStyle,
                 sk_sp<SkTypeface> typeface = nullptr;
                 if (emojiStart == -1) {
                     // First try to find in in a cache
-                    FontKey fontKey(codepoint, textStyle.getFontStyle(), textStyle.getLocale());
+                    FontKey fontKey(codepoint, textStyle.getFontStyle(), textStyle.getLocale(), textStyle.getFontArguments());
                     auto found = fFallbackFonts.find(fontKey);
                     if (found != nullptr) {
                         typeface = *found;
@@ -485,7 +487,8 @@ void OneLineShaper::matchResolvedFonts(const TextStyle& textStyle,
                         typeface = fParagraph->fFontCollection->defaultFallback(
                                                     codepoint,
                                                     textStyle.getFontStyle(),
-                                                    textStyle.getLocale());
+                                                    textStyle.getLocale(),
+                                                    textStyle.getFontArguments());
                         if (typeface != nullptr) {
                             fFallbackFonts.set(fontKey, typeface);
                         }
@@ -596,6 +599,8 @@ bool OneLineShaper::iterateThroughShapingRegions(const ShapeVisitor& shape) {
         const SkShaper::RunHandler::RunInfo runInfo = {
             font,
             bidiLevel,
+            0,
+            "",
             SkPoint::Make(placeholder.fStyle.fWidth, placeholder.fStyle.fHeight),
             1,
             SkShaper::RunHandler::Range(0, placeholder.fRange.width())
@@ -789,13 +794,14 @@ TextRange OneLineShaper::clusteredText(GlyphRange& glyphs) {
 }
 
 bool OneLineShaper::FontKey::operator==(const OneLineShaper::FontKey& other) const {
-    return fUnicode == other.fUnicode && fFontStyle == other.fFontStyle && fLocale == other.fLocale;
+    return fUnicode == other.fUnicode && fFontStyle == other.fFontStyle && fLocale == other.fLocale && fFontArgs == other.fFontArgs;
 }
 
 uint32_t OneLineShaper::FontKey::Hasher::operator()(const OneLineShaper::FontKey& key) const {
     return SkGoodHash()(key.fUnicode) ^
            SkGoodHash()(key.fFontStyle) ^
-           SkGoodHash()(key.fLocale);
+           SkGoodHash()(key.fLocale) ^
+           std::hash<std::optional<FontArguments>>()(key.fFontArgs);
 }
 
 

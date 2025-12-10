@@ -39,15 +39,6 @@
 #include <wtf/TypeCasts.h>
 
 namespace WebCore {
-class MediaElementSession;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::MediaElementSession> : std::true_type { };
-}
-
-namespace WebCore {
 
 enum class MediaSessionMainContentPurpose { MediaControls, Autoplay };
 enum class MediaPlaybackState { Playing, Paused };
@@ -87,7 +78,7 @@ public:
     void unregisterWithDocument(Document&);
 
     void clientWillBeginAutoplaying() final;
-    bool clientWillBeginPlayback() final;
+    void clientWillBeginPlayback(CompletionHandler<void(bool)>&&) final;
     bool clientWillPausePlayback() final;
     void clientCharacteristicsChanged(bool) final;
 
@@ -115,6 +106,8 @@ public:
     bool isPlayingToWirelessPlaybackTarget() const override;
 
     void mediaStateDidChange(MediaProducerMediaStateFlags);
+
+    MediaPlaybackTargetType playbackTargetType() const;
 #endif
 
     bool requiresFullscreenForVideoPlayback() const;
@@ -264,7 +257,7 @@ private:
     
 #if ENABLE(MEDIA_SESSION)
     bool m_isScrubbing { false };
-    std::unique_ptr<MediaElementSessionObserver> m_observer;
+    RefPtr<MediaElementSessionObserver> m_observer;
 #endif
 };
 

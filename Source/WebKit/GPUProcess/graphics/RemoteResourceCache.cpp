@@ -42,10 +42,9 @@ RemoteResourceCache::RemoteResourceCache() = default;
 
 RemoteResourceCache::~RemoteResourceCache() = default;
 
-void RemoteResourceCache::cacheNativeImage(Ref<NativeImage>&& image)
+bool RemoteResourceCache::cacheNativeImage(WebCore::RenderingResourceIdentifier identifier, Ref<NativeImage>&& image)
 {
-    auto identifier = image->renderingResourceIdentifier();
-    m_nativeImages.add(identifier, WTFMove(image));
+    return m_nativeImages.add(identifier, WTFMove(image)).isNewEntry;
 }
 
 bool RemoteResourceCache::releaseNativeImage(RenderingResourceIdentifier identifier)
@@ -139,22 +138,17 @@ bool RemoteResourceCache::releaseDisplayList(RemoteDisplayListIdentifier identif
 void RemoteResourceCache::releaseAllResources()
 {
     m_imageBuffers.clear();
+    m_nativeImages.clear();
     releaseMemory();
 }
 
 void RemoteResourceCache::releaseMemory()
 {
-    m_nativeImages.clear();
     m_gradients.clear();
     m_filters.clear();
     m_fonts.clear();
     m_fontCustomPlatformDatas.clear();
     m_displayLists.clear();
-}
-
-void RemoteResourceCache::releaseNativeImages()
-{
-    m_nativeImages.clear();
 }
 
 } // namespace WebKit

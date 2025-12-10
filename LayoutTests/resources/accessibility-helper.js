@@ -70,6 +70,15 @@ function dumpAXSearchTraversal(axElement, options = { }) {
     return output;
 }
 
+function platformStaticTextValue(axElement) {
+    if (!axElement)
+        return "";
+
+    if (!axElement.role.toLowerCase().includes("statictext"))
+        return "FAIL: platformStaticTextValue called on a non-text object.\n";
+    return accessibilityController.platformName === "ios" ? axElement.description : axElement.stringValue;
+}
+
 // Dumps the accessibility tree hierarchy for the given accessibilityObject into
 // an element with id="tree", e.g., <pre id="tree"></pre>. In addition, it
 // returns a two element array with the first element [0] being false if the
@@ -189,11 +198,6 @@ function platformRoleForStaticText() {
     return accessibilityController.platformName == "atspi" ? "AXRole: AXStatic" : "AXRole: AXStaticText";
 }
 
-function spinnerForTextInput(accessibilityObject) {
-    var index = accessibilityController.platformName == "atspi" ? 0 : 1;
-    return accessibilityObject.childAtIndex(index);
-}
-
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -201,20 +205,23 @@ function sleep(ms) {
 function waitFor(condition)
 {
     return new Promise((resolve, reject) => {
-        let interval = setInterval(() => {
-            // Trigger timeout after 3 seconds if promise could not be resolved.
-            let timeoutInterval = setInterval(() => {
-                resolve(false);
-            }, 3000);
+        // Schedule a timeout after 3 seconds if condition is never met.
+        let timeoutID = setTimeout(() => {
+            clearInterval(intervalID);
+            resolve(false);
+        }, 3000);
+
+	// Repeatedly poll for the condition to be true.
+        let intervalID = setInterval(() => {
             try {
                 if (condition()) {
-                    clearInterval(timeoutInterval);
-                    clearInterval(interval);
+                    clearTimeout(timeoutID);
+                    clearInterval(intervalID);
                     resolve(true);
                 }
             } catch (error) {
-                clearInterval(timeoutInterval);
-                clearInterval(interval);
+                clearTimeout(timeoutID);
+                clearInterval(intervalID);
                 reject(error);
             }
         }, 0);
@@ -259,6 +266,16 @@ function expect(expression, expectedValue) {
     if (eval(evalExpression))
         return `PASS: ${evalExpression}\n`;
     return `FAIL: ${expression} !== ${expectedValue}, was ${eval(expression)}\n`;
+}
+
+function expectNumber(expression, expectedValue, allowedVariance = 0) {
+    if (typeof expression !== "string")
+        debug("WARN: The expression arg in expect() should be a string.");
+
+    const actualValue = eval(expression);
+    if (Math.abs(actualValue - expectedValue) <= allowedVariance)
+        return `PASS: ${expression} was ${allowedVariance === 0 ? "equal" : "equal or approximately equal"} to ${expectedValue}.\n`;
+    return `FAIL: ${expression} varied more than allowed variance ${allowedVariance}. Was: ${actualValue}, expected ${expectedValue}\n`;
 }
 
 function expectRectWithVariance(expression, x, y, width, height, allowedVariance) {
@@ -445,3 +462,21 @@ function traverseChildrenToFirstStaticText(startObject) {
     }
     return null;
 }
+
+function formatAriaNotifyUserInfo(userInfo) {
+    var result = "";
+    result += `AnnouncementKey: ${userInfo["AXAnnouncementKey"]}\n`;
+    result += `AXARIAAnnouncementInterruptBehavior: ${userInfo["AXARIAAnnouncementInterruptBehavior"]}\n`;
+    result += `AXARIAAnnouncementPriority: ${userInfo["AXARIAAnnouncementPriority"]}\n`;
+    result += `AXAnnouncementLanguageKey: ${userInfo["AXAnnouncementLanguageKey"]}\n\n`
+    return result;
+}
+
+function formatAnnouncementUserInfo(userInfo) {
+    var result = "";
+    result += `AnnouncementKey: ${userInfo["AXAnnouncementKey"]}\n`;
+    result += `AXPriorityKey: ${userInfo["AXPriorityKey"]}\n`;
+    result += `AXAnnouncementIsLiveRegionKey: ${userInfo["AXAnnouncementIsLiveRegionKey"]}\n`;
+    return result;
+}
+

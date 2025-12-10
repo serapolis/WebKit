@@ -45,6 +45,12 @@ public:
         setType(type);
     }
 
+    CompactRefPtrTuple(RefPtr<T>&& pointer, Type type)
+    {
+        setPointer(WTFMove(pointer));
+        setType(type);
+    }
+
     CompactRefPtrTuple(const CompactRefPtrTuple& other)
     {
         setPointer(other.pointer());
@@ -78,7 +84,7 @@ public:
         WTF::DefaultRefDerefTraits<T>::derefIfNotNull(m_data.pointer());
     }
 
-    T* pointer() const
+    T* pointer() const LIFETIME_BOUND
     {
         return m_data.pointer();
     }

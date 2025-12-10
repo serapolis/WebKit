@@ -26,6 +26,7 @@
 #pragma once
 
 #include "APIObject.h"
+#include "MessageReceiver.h"
 #include "WebBackForwardListItem.h"
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <wtf/Ref.h>
@@ -43,20 +44,22 @@ class WebPageProxy;
 struct BackForwardListState;
 struct WebBackForwardListCounts;
 
-class WebBackForwardList : public API::ObjectImpl<API::Object::Type::BackForwardList> {
+class WebBackForwardList : public API::ObjectImpl<API::Object::Type::BackForwardList>, public IPC::MessageReceiver {
 public:
     static Ref<WebBackForwardList> create(WebPageProxy& page)
     {
         return adoptRef(*new WebBackForwardList(page));
     }
+
+    void ref() const final { API::ObjectImpl<API::Object::Type::BackForwardList>::ref(); }
+    void deref() const final { API::ObjectImpl<API::Object::Type::BackForwardList>::deref(); }
+
     void pageClosed();
 
     virtual ~WebBackForwardList();
 
     WebBackForwardListItem* itemForID(WebCore::BackForwardItemIdentifier);
 
-    void addItem(Ref<WebBackForwardListItem>&&);
-    void addChildItem(WebCore::FrameIdentifier, Ref<FrameState>&&);
     void goToItem(WebBackForwardListItem&);
     void removeAllItems();
     void clear();
@@ -69,16 +72,11 @@ public:
     RefPtr<WebBackForwardListItem> protectedForwardItem() const;
     WebBackForwardListItem* itemAtIndex(int) const;
     RefPtr<WebBackForwardListItem> protectedItemAtIndex(int) const;
-    BackForwardListItemVector allItems() const { return m_entries; }
 
     RefPtr<WebBackForwardListItem> goBackItemSkippingItemsWithoutUserGesture() const;
     RefPtr<WebBackForwardListItem> goForwardItemSkippingItemsWithoutUserGesture() const;
-
-    const BackForwardListItemVector& entries() const { return m_entries; }
-
     unsigned backListCount() const;
     unsigned forwardListCount() const;
-    WebBackForwardListCounts counts() const;
 
     Ref<API::Array> backList() const;
     Ref<API::Array> forwardList() const;
@@ -92,18 +90,39 @@ public:
     void setItemsAsRestoredFromSession();
     void setItemsAsRestoredFromSessionIf(NOESCAPE Function<bool(WebBackForwardListItem&)>&&);
 
-    Ref<FrameState> completeFrameStateForNavigation(Ref<FrameState>&&);
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
+    void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-#if !LOG_DISABLED
+    void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, LoadedWebArchive);
+    void backForwardGoToItemShared(WebCore::BackForwardItemIdentifier, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
+
     String loggingString();
-#endif
 
 private:
     explicit WebBackForwardList(WebPageProxy&);
 
+    void addItem(Ref<WebBackForwardListItem>&&);
+    void addChildItem(WebCore::FrameIdentifier, Ref<FrameState>&&);
     void didRemoveItem(WebBackForwardListItem&);
+    const BackForwardListItemVector& entries() const { return m_entries; }
+    BackForwardListItemVector allItems() const { return m_entries; }
+    WebBackForwardListCounts counts() const;
+    Ref<FrameState> completeFrameStateForNavigation(Ref<FrameState>&&);
 
     RefPtr<WebPageProxy> protectedPage();
+
+    // IPC messages
+    void backForwardAddItem(IPC::Connection&, Ref<FrameState>&&);
+    void backForwardSetChildItem(WebCore::BackForwardFrameItemIdentifier, Ref<FrameState>&&);
+    void backForwardClearChildren(WebCore::BackForwardItemIdentifier, WebCore::BackForwardFrameItemIdentifier);
+    void backForwardUpdateItem(IPC::Connection&, Ref<FrameState>&&);
+    void backForwardGoToItem(WebCore::BackForwardItemIdentifier, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
+    void backForwardAllItems(WebCore::FrameIdentifier, CompletionHandler<void(Vector<Ref<FrameState>>&&)>&&);
+    void backForwardItemAtIndex(int32_t index, WebCore::FrameIdentifier, CompletionHandler<void(RefPtr<FrameState>&&)>&&);
+    void backForwardListContainsItem(WebCore::BackForwardItemIdentifier, CompletionHandler<void(bool)>&&);
+    void backForwardListCounts(CompletionHandler<void(WebBackForwardListCounts&&)>&&);
+    void shouldGoToBackForwardListItem(WebCore::BackForwardItemIdentifier, bool inBackForwardCache, CompletionHandler<void(WebCore::ShouldGoToHistoryItem)>&&);
+    void shouldGoToBackForwardListItemSync(WebCore::BackForwardItemIdentifier, CompletionHandler<void(WebCore::ShouldGoToHistoryItem)>&&);
 
     WeakPtr<WebPageProxy> m_page;
     BackForwardListItemVector m_entries;

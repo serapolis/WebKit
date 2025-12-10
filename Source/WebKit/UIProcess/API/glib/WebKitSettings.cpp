@@ -343,7 +343,9 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
             webkit_settings_set_draw_compositing_indicators(settings, g_value_get_boolean(value));
         else {
             char* debugVisualsEnvironment = getenv("WEBKIT_SHOW_COMPOSITING_DEBUG_VISUALS");
+            IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
             bool showDebugVisuals = debugVisualsEnvironment && !strcmp(debugVisualsEnvironment, "1");
+            IGNORE_CLANG_WARNINGS_END
             webkit_settings_set_draw_compositing_indicators(settings, showDebugVisuals);
         }
         break;
@@ -4445,13 +4447,13 @@ gboolean webkit_settings_apply_from_key_file(WebKitSettings* settings, GKeyFile*
     }
 
     GUniqueOutPtr<GError> getKeysError;
-    auto allKeys = gKeyFileGetKeys(keyFile, groupName, getKeysError);
-    if (getKeysError) [[unlikely]] {
-        g_propagate_error(error, getKeysError.release());
+    auto allKeys = gKeyFileGetKeys(keyFile, CStringView::unsafeFromUTF8(groupName));
+    if (!allKeys) [[unlikely]] {
+        g_propagate_error(error, allKeys.error().release());
         return FALSE;
     }
 
-    for (const char* key : allKeys.span()) {
+    for (const char* key : allKeys->span()) {
         if (!g_ptr_array_find_with_equal_func(propertyNames.get(), static_cast<gconstpointer>(key), g_str_equal, nullptr)) {
             g_set_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE, "The %s group contains an invalid setting: %s", groupName, key);
             return FALSE;

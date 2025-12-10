@@ -236,7 +236,7 @@ void WebVTTParser::parse()
 void WebVTTParser::fileFinished()
 {
     ASSERT(m_state != Finished);
-    parseBytes(byteCast<uint8_t>("\n\n"_span8));
+    parseBytes(byteCast<uint8_t>("\n\n"_span));
     m_state = Finished;
 }
 
@@ -288,7 +288,7 @@ WebVTTParser::ParseState WebVTTParser::collectWebVTTBlock(const String& line)
         if (!m_styleSheets.isEmpty())
             m_client.newStyleSheetsParsed();
         if (!m_previousLine.isEmpty() && !m_previousLine.contains("-->"_s))
-            m_currentId = AtomString { m_previousLine };
+            m_currentId = m_previousLine;
         
         return state;
     }
@@ -332,7 +332,7 @@ bool WebVTTParser::checkAndCreateRegion(StringView line)
     // zero or more U+0020 SPACE characters or U+0009 CHARACTER TABULATION
     // (tab) characters expected other than these characters it is invalid.
     if (line.startsWith("REGION"_s) && line.substring(regionIdentifierLength).containsOnly<isASCIIWhitespace>()) {
-        m_currentRegion = VTTRegion::create(m_document.get());
+        m_currentRegion = VTTRegion::create(protectedDocument().get());
         return true;
     }
     return false;
@@ -421,11 +421,16 @@ bool WebVTTParser::checkAndStoreStyleSheet(StringView line)
     return true;
 }
 
+Ref<Document> WebVTTParser::protectedDocument() const
+{
+    return m_document.get();
+}
+
 WebVTTParser::ParseState WebVTTParser::collectCueId(const String& line)
 {
     if (line.contains("-->"_s))
         return collectTimingsAndSettings(line);
-    m_currentId = AtomString { line };
+    m_currentId = line;
     return TimingsAndSettings;
 }
 
@@ -568,7 +573,7 @@ void WebVTTParser::createNewCue()
 
 void WebVTTParser::resetCueValues()
 {
-    m_currentId = emptyAtom();
+    m_currentId = emptyString();
     m_currentSettings = emptyString();
     m_currentStartTime = MediaTime::zeroTime();
     m_currentEndTime = MediaTime::zeroTime();

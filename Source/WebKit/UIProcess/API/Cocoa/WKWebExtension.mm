@@ -127,7 +127,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
     return [self initWithAppExtensionBundle:nil resourceBaseURL:resourceBaseURL error:error];
 }
 
-- (instancetype)initWithAppExtensionBundle:(nullable NSBundle *)appExtensionBundle resourceBaseURL:(nullable NSURL *)resourceBaseURL error:(NSError **)error
+- (instancetype)initWithAppExtensionBundle:(NSBundle *)appExtensionBundle resourceBaseURL:(NSURL *)resourceBaseURL error:(NSError **)error
 {
     NSParameterAssert(appExtensionBundle || resourceBaseURL);
 
@@ -205,39 +205,39 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 
 - (NSLocale *)defaultLocale
 {
-    if (auto *defaultLocale = nsStringNilIfEmpty(self._protectedWebExtension->defaultLocale()))
-        return [NSLocale localeWithLocaleIdentifier:defaultLocale];
+    if (RetainPtr defaultLocale = nsStringNilIfEmpty(self._protectedWebExtension->defaultLocale()))
+        return [NSLocale localeWithLocaleIdentifier:defaultLocale.get()];
     return nil;
 }
 
 - (NSString *)displayName
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayName());
+    return nsStringNilIfEmpty(self._protectedWebExtension->displayName()).autorelease();
 }
 
 - (NSString *)displayShortName
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayShortName());
+    return nsStringNilIfEmpty(self._protectedWebExtension->displayShortName()).autorelease();
 }
 
 - (NSString *)displayVersion
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayVersion());
+    return nsStringNilIfEmpty(self._protectedWebExtension->displayVersion()).autorelease();
 }
 
 - (NSString *)displayDescription
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayDescription());
+    return nsStringNilIfEmpty(self._protectedWebExtension->displayDescription()).autorelease();
 }
 
 - (NSString *)displayActionLabel
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->displayActionLabel());
+    return nsStringNilIfEmpty(self._protectedWebExtension->displayActionLabel()).autorelease();
 }
 
 - (NSString *)version
 {
-    return nsStringNilIfEmpty(self._protectedWebExtension->version());
+    return nsStringNilIfEmpty(self._protectedWebExtension->version()).autorelease();
 }
 
 - (CocoaImage *)iconForSize:(CGSize)size
@@ -408,7 +408,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
     return [self initWithAppExtensionBundle:nil resourceBaseURL:resourceBaseURL error:error];
 }
 
-- (instancetype)initWithAppExtensionBundle:(nullable NSBundle *)bundle resourceBaseURL:(nullable NSURL *)resourceBaseURL error:(NSError **)error
+- (instancetype)initWithAppExtensionBundle:(NSBundle *)bundle resourceBaseURL:(NSURL *)resourceBaseURL error:(NSError **)error
 {
     if (error)
         *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFeatureUnsupportedError userInfo:nil];

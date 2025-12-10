@@ -56,11 +56,9 @@
 #include "SVGGraphicsElement.h"
 #include "SVGMarkerElement.h"
 #include "SVGMaskElement.h"
-#include "SVGRenderStyle.h"
 #include "SVGTextElement.h"
 #include "SVGURIReference.h"
 #include "Settings.h"
-#include "StyleScrollSnapPoints.h"
 #include "TransformOperationData.h"
 #include "TransformState.h"
 #include <wtf/MathExtras.h>
@@ -145,7 +143,7 @@ void RenderLayerModelObject::styleDidChange(StyleDifference diff, const RenderSt
     // LayoutPositionedObjects, which skips laying out the element's parent.
     // The element's parent needs to relayout so that it calls
     // RenderBlockFlow::setStaticInlinePositionForChild with the out-of-flow-positioned child, so
-    // that when it's laid out, its RenderBox::computePositionedLogicalWidth/Height takes into
+    // that when it's laid out, its RenderBox::computeOutOfFlowPositionedLogicalWidth/Height takes into
     // account its new inline/block position rather than its old block/inline position.
     // Position changes and other types of display changes are handled elsewhere.
     if ((oldStyle && isOutOfFlowPositioned() && parent() && (parent() != containingBlock()))
@@ -508,12 +506,11 @@ RenderSVGResourceMasker* RenderLayerModelObject::svgMaskerResourceFromStyle() co
     if (!document().settings().layerBasedSVGEngineEnabled())
         return nullptr;
 
-    RefPtr maskImage = style().maskLayers().first().image().tryStyleImage();
-    auto maskImageURL = maskImage ? maskImage->url() : Style::URL::none();
-    if (maskImageURL.isNone())
+    RefPtr maskImage = style().maskLayers().usedFirst().image().tryStyleImage();
+    if (!maskImage)
         return nullptr;
 
-    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(maskImageURL, protectedDocument());
+    auto resourceID = SVGURIReference::fragmentIdentifierFromIRIString(maskImage->url(), protectedDocument());
 
     if (RefPtr referencedMaskElement = ReferencedSVGResources::referencedMaskElement(treeScopeForSVGReferences(), *maskImage)) {
         if (auto* referencedMaskerRenderer = dynamicDowncast<RenderSVGResourceMasker>(referencedMaskElement->renderer()))
@@ -528,31 +525,35 @@ RenderSVGResourceMasker* RenderLayerModelObject::svgMaskerResourceFromStyle() co
 
 RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerStartResourceFromStyle() const
 {
-    return svgMarkerResourceFromStyle(style().svgStyle().markerStartResource());
+    return svgMarkerResourceFromStyle(style().markerStart());
 }
 
 RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerMidResourceFromStyle() const
 {
-    return svgMarkerResourceFromStyle(style().svgStyle().markerMidResource());
+    return svgMarkerResourceFromStyle(style().markerMid());
 }
 
 RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerEndResourceFromStyle() const
 {
-    return svgMarkerResourceFromStyle(style().svgStyle().markerEndResource());
+    return svgMarkerResourceFromStyle(style().markerEnd());
 }
 
-RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerResourceFromStyle(const Style::URL& markerResource) const
+RenderSVGResourceMarker* RenderLayerModelObject::svgMarkerResourceFromStyle(const Style::SVGMarkerResource& markerResource) const
 {
-    if (markerResource.isNone() || !document().settings().layerBasedSVGEngineEnabled())
+    if (!document().settings().layerBasedSVGEngineEnabled())
         return nullptr;
 
-    if (RefPtr referencedMarkerElement = ReferencedSVGResources::referencedMarkerElement(treeScopeForSVGReferences(), markerResource)) {
+    auto markerResourceURL = markerResource.tryURL();
+    if (!markerResourceURL)
+        return nullptr;
+
+    if (RefPtr referencedMarkerElement = ReferencedSVGResources::referencedMarkerElement(treeScopeForSVGReferences(), *markerResourceURL)) {
         if (auto* referencedMarkerRenderer = dynamicDowncast<RenderSVGResourceMarker>(referencedMarkerElement->renderer()))
             return referencedMarkerRenderer;
     }
 
     if (auto* element = dynamicDowncast<SVGElement>(this->element()))
-        document().addPendingSVGResource(AtomString(markerResource.resolved.string()), *element);
+        document().addPendingSVGResource(AtomString(markerResourceURL->resolved.string()), *element);
 
     return nullptr;
 }
@@ -562,7 +563,7 @@ RenderSVGResourcePaintServer* RenderLayerModelObject::svgFillPaintServerResource
     if (!document().settings().layerBasedSVGEngineEnabled())
         return nullptr;
 
-    auto fillURL = style.svgStyle().fill().tryAnyURL();
+    auto fillURL = style.fill().tryAnyURL();
     if (!fillURL)
         return nullptr;
 
@@ -582,7 +583,7 @@ RenderSVGResourcePaintServer* RenderLayerModelObject::svgStrokePaintServerResour
     if (!document().settings().layerBasedSVGEngineEnabled())
         return nullptr;
 
-    auto strokeURL = style.svgStyle().stroke().tryAnyURL();
+    auto strokeURL = style.stroke().tryAnyURL();
     if (!strokeURL)
         return nullptr;
 

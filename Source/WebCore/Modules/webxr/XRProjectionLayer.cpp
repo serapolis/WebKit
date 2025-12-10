@@ -29,15 +29,15 @@
 #if ENABLE(WEBXR_LAYERS)
 
 #include "PlatformXR.h"
+#include "XRLayerBacking.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(XRProjectionLayer);
 
-XRProjectionLayer::XRProjectionLayer(ScriptExecutionContext& scriptExecutionContext, Ref<WebCore::WebGPU::XRProjectionLayer>&& backing)
-    : XRCompositionLayer(&scriptExecutionContext)
-    , m_backing(WTFMove(backing))
+XRProjectionLayer::XRProjectionLayer(ScriptExecutionContext& scriptExecutionContext, Ref<XRLayerBacking>&& backing)
+    : XRCompositionLayer(&scriptExecutionContext, WTFMove(backing))
 {
 }
 
@@ -45,6 +45,7 @@ XRProjectionLayer::~XRProjectionLayer() = default;
 
 void XRProjectionLayer::startFrame(PlatformXR::FrameData& data)
 {
+#if ENABLE(WEBGPU)
     static constexpr auto defaultLayerHandle = 1;
     auto it = data.layers.find(defaultLayerHandle);
     if (it == data.layers.end()) {
@@ -59,12 +60,17 @@ void XRProjectionLayer::startFrame(PlatformXR::FrameData& data)
         auto& textureData = frameData->textureData;
         m_backing->startFrame(frameData->renderingFrameIndex, WTFMove(textureData->colorTexture.handle), WTFMove(textureData->depthStencilBuffer.handle), WTFMove(frameData->layerSetup->completionSyncEvent), textureData->reusableTextureIndex, WTFMove(frameData->layerSetup->foveationRateMapDesc));
     }
+#else
+    UNUSED_PARAM(data);
+#endif
 }
 
+#if ENABLE(WEBGPU)
 std::optional<PlatformXR::FrameData::LayerData> XRProjectionLayer::layerData() const
 {
     return m_layerData;
 }
+#endif
 
 PlatformXR::Device::Layer XRProjectionLayer::endFrame()
 {
@@ -73,6 +79,9 @@ PlatformXR::Device::Layer XRProjectionLayer::endFrame()
         .handle = 0,
         .visible = true,
         .views = { },
+#if PLATFORM(GTK) || PLATFORM(WPE)
+        .fenceFD = { }
+#endif
     };
 }
 
@@ -118,11 +127,6 @@ WebXRRigidTransform* XRProjectionLayer::deltaPose() const
 void XRProjectionLayer::setDeltaPose(WebXRRigidTransform* deltaPose)
 {
     m_transform = deltaPose;
-}
-
-WebCore::WebGPU::XRProjectionLayer& XRProjectionLayer::backing()
-{
-    return m_backing;
 }
 
 } // namespace WebCore

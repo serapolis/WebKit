@@ -95,15 +95,14 @@
 #include <wtf/text/StringBuilder.h>
 
 #if PLATFORM(GTK)
+#include "GUniquePtrGtk.h"
+#include "GtkUtilities.h"
 #include "WebKitFaviconDatabasePrivate.h"
 #include "WebKitInputMethodContextImplGtk.h"
 #include "WebKitPointerLockPermissionRequest.h"
 #include "WebKitPrintOperationPrivate.h"
 #include "WebKitWebInspectorPrivate.h"
 #include "WebKitWebViewBasePrivate.h"
-#include <WebCore/GUniquePtrGtk.h>
-#include <WebCore/GdkCairoUtilities.h>
-#include <WebCore/GdkSkiaUtilities.h>
 #include <WebCore/RefPtrCairo.h>
 #endif
 
@@ -111,6 +110,9 @@
 #include "WPEUtilities.h"
 #include "WPEWebViewLegacy.h"
 #include "WPEWebViewPlatform.h"
+#if ENABLE(2022_GLIB_API)
+#include "WebKitImagePrivate.h"
+#endif
 #include "WebKitOptionMenuPrivate.h"
 #include "WebKitWebViewBackendPrivate.h"
 #include "WebKitWebViewClient.h"
@@ -3483,7 +3485,7 @@ void webkit_web_view_load_alternate_html(WebKitWebView* webView, const gchar* co
     g_return_if_fail(contentURI);
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
-    getPage(webView).loadAlternateHTML(WebCore::DataSegment::create(Vector(std::span { reinterpret_cast<const uint8_t*>(content), content ? strlen(content) : 0 })), "UTF-8"_s, URL { String::fromUTF8(baseURI) }, URL { String::fromUTF8(contentURI) });
+    getPage(webView).loadAlternateHTML(WebCore::DataSegment::create(Vector(std::span { reinterpret_cast<const uint8_t*>(content), content ? strlen(content) : 0 })), "UTF-8"_s, URL { String::fromUTF8(baseURI) }, URL { String::fromUTF8(contentURI) }, nullptr);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
@@ -3502,7 +3504,7 @@ void webkit_web_view_load_plain_text(WebKitWebView* webView, const gchar* plainT
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
     g_return_if_fail(plainText);
 
-    getPage(webView).loadData(WebCore::SharedBuffer::create(unsafeSpan8(plainText)), "text/plain"_s, "UTF-8"_s, aboutBlankURL().string());
+    getPage(webView).loadData(WebCore::SharedBuffer::create(byteCast<uint8_t>(unsafeSpan(plainText))), "text/plain"_s, "UTF-8"_s, aboutBlankURL().string());
 }
 
 /**
@@ -4292,9 +4294,14 @@ void webkitWebViewRunJavascriptWithoutForcedUserGestures(WebKitWebView* webView,
 {
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
     g_return_if_fail(script);
-
+    GRefPtr task = adoptGRef(g_task_new(webView, cancellable, callback, userData));
+    auto string = IPC::TransferString::create(String::fromUTF8(script));
+    if (!string) {
+        g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED, "Out of memory");
+        return;
+    }
     WebKit::RunJavaScriptParameters params {
-        String::fromUTF8(script),
+        WTFMove(*string),
         JSC::SourceTaintedOrigin::Untainted,
         URL { },
         RunAsAsyncFunction::No,
@@ -4302,17 +4309,22 @@ void webkitWebViewRunJavascriptWithoutForcedUserGestures(WebKitWebView* webView,
         ForceUserGesture::No,
         RemoveTransientActivation::Yes
     };
-    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), nullptr, RunJavascriptReturnType::JSCValue, adoptGRef(g_task_new(webView, cancellable, callback, userData)));
+    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), nullptr, RunJavascriptReturnType::JSCValue, WTFMove(task));
 }
 
 static void webkitWebViewEvaluateJavascriptInternal(WebKitWebView* webView, const char* script, gssize length, const char* worldName, const char* sourceURI, RunJavascriptReturnType returnType, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer userData)
 {
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
     g_return_if_fail(script);
-
+    GRefPtr task = adoptGRef(g_task_new(webView, cancellable, callback, userData));
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
+    auto string = IPC::TransferString::create(String::fromUTF8(std::span(script, length < 0 ? strlen(script) : length)));
+    if (!string) {
+        g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED, "Out of memory");
+        return;
+    }
     WebKit::RunJavaScriptParameters params {
-        String::fromUTF8(std::span(script, length < 0 ? strlen(script) : length)),
+        WTFMove(*string),
         JSC::SourceTaintedOrigin::Untainted,
         URL({ }, String::fromUTF8(sourceURI)),
         RunAsAsyncFunction::No,
@@ -4321,7 +4333,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
         RemoveTransientActivation::Yes
     };
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), worldName, returnType, adoptGRef(g_task_new(webView, cancellable, callback, userData)));
+    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), worldName, returnType, WTFMove(task));
 }
 
 /**
@@ -4449,17 +4461,21 @@ static void webkitWebViewCallAsyncJavascriptFunctionInternal(WebKitWebView* webV
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
     g_return_if_fail(body);
     g_return_if_fail(!arguments || g_variant_is_of_type(arguments, G_VARIANT_TYPE("a{sv}")));
-
+    GRefPtr task = adoptGRef(g_task_new(webView, cancellable, callback, userData));
     GError* error = nullptr;
     auto argumentsVector = parseAsyncFunctionArguments(arguments, &error);
     if (error) {
-        g_task_report_error(webView, callback, userData, nullptr, error);
+        g_task_return_error(task.get(), error);
         return;
     }
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
+    auto string = IPC::TransferString::create(String::fromUTF8(std::span(body, length < 0 ? strlen(body) : length)));
+    if (!string) {
+        g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED, "Out of memory");
+        return;
+    }
     WebKit::RunJavaScriptParameters params {
-        String::fromUTF8(std::span(body, length < 0 ? strlen(body) : length)),
+        WTFMove(*string),
         JSC::SourceTaintedOrigin::Untainted,
         URL({ }, String::fromUTF8(sourceURI)),
         RunAsAsyncFunction::Yes,
@@ -4468,7 +4484,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GTK/WPE port
         RemoveTransientActivation::Yes
     };
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), worldName, returnType, adoptGRef(g_task_new(webView, cancellable, callback, userData)));
+    webkitWebViewRunJavaScriptWithParams(webView, WTFMove(params), worldName, returnType, WTFMove(task));
 }
 
 /**
@@ -4728,8 +4744,13 @@ static void resourcesStreamReadCallback(GObject* object, GAsyncResult* result, g
 
     WebKitWebView* webView = WEBKIT_WEB_VIEW(g_task_get_source_object(task.get()));
     gpointer outputStreamData = g_memory_output_stream_get_data(G_MEMORY_OUTPUT_STREAM(object));
+    auto string = IPC::TransferString::create(String::fromUTF8(reinterpret_cast<const gchar*>(outputStreamData)));
+    if (!string) {
+        g_task_return_new_error(task.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED, "Out of memory");
+        return;
+    }
     WebKit::RunJavaScriptParameters params {
-        String::fromUTF8(reinterpret_cast<const gchar*>(outputStreamData)),
+        WTFMove(*string),
         JSC::SourceTaintedOrigin::Untainted,
         URL { },
         RunAsAsyncFunction::No,
@@ -5111,7 +5132,7 @@ gboolean webkit_web_view_get_tls_info(WebKitWebView* webView, GTlsCertificate** 
     return !!certificateInfo.certificate();
 }
 
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
 #if USE(GTK4)
 #define SNAPSHOT_TYPE GdkTexture*
 #if USE(CAIRO)
@@ -5119,8 +5140,10 @@ gboolean webkit_web_view_get_tls_info(WebKitWebView* webView, GTlsCertificate** 
 #else
 #define PLATFORM_IMAGE_TO_TEXTURE(image) skiaImageToGdkTexture(*image)
 #endif
-#else
+#elif PLATFORM(GTK) && !USE(GTK4)
 #define SNAPSHOT_TYPE cairo_surface_t*
+#else
+#define SNAPSHOT_TYPE WebKitImage*
 #endif
 
 /**
@@ -5163,6 +5186,7 @@ void webkit_web_view_get_snapshot(WebKitWebView* webView, WebKitSnapshotRegion r
     getPage(webView).takeSnapshotLegacy({ }, { }, snapshotOptions, [task = WTFMove(task)](std::optional<ShareableBitmap::Handle>&& handle) {
         if (handle) {
             if (auto bitmap = ShareableBitmap::create(WTFMove(*handle), SharedMemory::Protection::ReadOnly)) {
+#if PLATFORM(GTK)
 #if USE(GTK4)
                 if (auto texture = PLATFORM_IMAGE_TO_TEXTURE(bitmap->createPlatformImage(BackingStoreCopy::DontCopyBackingStore).get())) {
                     g_task_return_pointer(task.get(), texture.leakRef(), g_object_unref);
@@ -5179,6 +5203,16 @@ void webkit_web_view_get_snapshot(WebKitWebView* webView, WebKitSnapshotRegion r
                     return;
                 }
 #endif
+#else
+                RELEASE_ASSERT(bitmap->bytesPerRow() <= std::numeric_limits<guint>::max());
+                bitmap->ref();
+                auto imageBytes = adoptGRef(g_bytes_new_with_free_func(bitmap->span().data(), bitmap->span().size(), [](void* data) {
+                    static_cast<ShareableBitmap*>(data)->deref();
+                }, bitmap.get()));
+                auto* image = webkitImageNew(bitmap->size().width(), bitmap->size().height(), bitmap->bytesPerRow(), WTFMove(imageBytes));
+                g_task_return_pointer(task.get(), image, g_object_unref);
+                return;
+#endif
             }
         }
         g_task_return_new_error(task.get(), WEBKIT_SNAPSHOT_ERROR, WEBKIT_SNAPSHOT_ERROR_FAILED_TO_CREATE, _("There was an error creating the snapshot"));
@@ -5191,7 +5225,8 @@ void webkit_web_view_get_snapshot(WebKitWebView* webView, WebKitSnapshotRegion r
  * @result: a #GAsyncResult
  * @error: return location for error or %NULL to ignore
  *
- * Finishes an asynchronous operation started with webkit_web_view_get_snapshot().
+ * Finishes an asynchronous operation started with webkit_web_view_get_snapshot(), producing
+ * an image of the snapshot using the BGRA8888 pixel format.
  *
  * Returns: (transfer full): an image with the retrieved snapshot, or %NULL in case of error.
  */
@@ -5208,7 +5243,7 @@ SNAPSHOT_TYPE webkit_web_view_get_snapshot_finish(WebKitWebView* webView, GAsync
         g_set_error_literal(error, WEBKIT_SNAPSHOT_ERROR, WEBKIT_SNAPSHOT_ERROR_FAILED_TO_CREATE, _("There was an error creating the snapshot"));
     return nullptr;
 }
-#endif // PLATFORM(GTK)
+#endif // PLATFORM(GTK) || ENABLE(2022_GLIB_API)
 
 void webkitWebViewWebProcessTerminated(WebKitWebView* webView, WebKitWebProcessTerminationReason reason)
 {

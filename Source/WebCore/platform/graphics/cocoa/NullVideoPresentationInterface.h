@@ -72,7 +72,7 @@ public:
     void preparedToReturnToStandby() { }
     bool mayAutomaticallyShowVideoPictureInPicture() const { return false; }
     void applicationDidBecomeActive() { }
-    void setMode(HTMLMediaElementEnums::VideoFullscreenMode, bool) { }
+    void setMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement) { }
     HTMLMediaElementEnums::VideoFullscreenMode mode() const { return HTMLMediaElementEnums::VideoFullscreenModeNone; }
     bool hasMode(HTMLMediaElementEnums::VideoFullscreenMode) const { return false; }
     bool pictureInPictureWasStartedWhenEnteringBackground() const { return false; }
@@ -103,6 +103,7 @@ private:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
     const Ref<NullPlaybackSessionInterface> m_playbackSessionInterface;
     ThreadSafeWeakPtr<VideoPresentationModel> m_videoPresentationModel;

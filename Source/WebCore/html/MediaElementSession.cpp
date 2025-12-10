@@ -35,8 +35,9 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "DocumentFullscreen.h"
-#include "DocumentInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentQuirks.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
 #include "HTMLAudioElement.h"
 #include "HTMLMediaElement.h"
@@ -51,8 +52,7 @@
 #include "NowPlayingInfo.h"
 #include "Page.h"
 #include "PlatformMediaSessionManager.h"
-#include "Quirks.h"
-#include "RenderMedia.h"
+#include "RenderMediaInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "ScriptController.h"
@@ -136,18 +136,22 @@ static bool pageExplicitlyAllowsElementToAutoplayInline(const HTMLMediaElement& 
 }
 
 #if ENABLE(MEDIA_SESSION)
-class MediaElementSessionObserver : public MediaSessionObserver {
+class MediaElementSessionObserver : public MediaSessionObserver, public RefCounted<MediaElementSessionObserver> {
     WTF_MAKE_TZONE_ALLOCATED(MediaElementSessionObserver);
 public:
-    MediaElementSessionObserver(MediaElementSession& session, const Ref<MediaSession>& mediaSession)
-        : m_session(session), m_mediaSession(mediaSession)
+    static Ref<MediaElementSessionObserver> create(MediaElementSession& session, const Ref<MediaSession>& mediaSession)
     {
-        m_mediaSession->addObserver(*this);
+        return adoptRef(*new MediaElementSessionObserver(session, mediaSession));
     }
+
     ~MediaElementSessionObserver()
     {
         m_mediaSession->removeObserver(*this);
     }
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void metadataChanged(const RefPtr<MediaMetadata>& metadata) final
     {
         if (m_session)
@@ -169,6 +173,12 @@ public:
             m_session->actionHandlersChanged();
     }
 private:
+    MediaElementSessionObserver(MediaElementSession& session, const Ref<MediaSession>& mediaSession)
+        : m_session(session), m_mediaSession(mediaSession)
+    {
+        m_mediaSession->addObserver(*this);
+    }
+
     WeakPtr<MediaElementSession> m_session;
     const Ref<MediaSession> m_mediaSession;
 };
@@ -257,20 +267,25 @@ void MediaElementSession::clientWillBeginAutoplaying()
     updateClientDataBuffering();
 }
 
-bool MediaElementSession::clientWillBeginPlayback()
+void MediaElementSession::clientWillBeginPlayback(CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (!PlatformMediaSession::clientWillBeginPlayback())
-        return false;
+    PlatformMediaSession::clientWillBeginPlayback([weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)](bool willBegin) mutable {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || !willBegin) {
+            completionHandler(false);
+            return;
+        }
 
-    m_elementIsHiddenBecauseItWasRemovedFromDOM = false;
-    updateClientDataBuffering();
+        protectedThis->m_elementIsHiddenBecauseItWasRemovedFromDOM = false;
+        protectedThis->updateClientDataBuffering();
 
 #if ENABLE(MEDIA_SESSION)
-    if (auto* session = mediaSession())
-        session->willBeginPlayback();
+        if (auto* session = protectedThis->mediaSession())
+            session->willBeginPlayback();
 #endif
 
-    return true;
+        completionHandler(true);
+    });
 }
 
 bool MediaElementSession::clientWillPausePlayback()
@@ -569,27 +584,37 @@ MediaPlayer::BufferingPolicy MediaElementSession::preferredBufferingPolicy() con
     if (!element)
         return MediaPlayer::BufferingPolicy::Default;
 
-    if (isSuspended())
-        return MediaPlayer::BufferingPolicy::MakeResourcesPurgeable;
+    auto currentPolicy = element->bufferingPolicy();
+    auto isPlaying = state() == PlatformMediaSession::State::Playing;
+    MediaPlayer::BufferingPolicy newPolicy = [&] {
 
-    if (bufferingSuspended())
-        return MediaPlayer::BufferingPolicy::LimitReadAhead;
+        if (isSuspended())
+            return MediaPlayer::BufferingPolicy::MakeResourcesPurgeable;
 
-    if (state() == PlatformMediaSession::State::Playing)
-        return MediaPlayer::BufferingPolicy::Default;
+        if (bufferingSuspended())
+            return MediaPlayer::BufferingPolicy::LimitReadAhead;
 
-    if (shouldOverrideBackgroundLoadingRestriction())
-        return MediaPlayer::BufferingPolicy::Default;
+        if (isPlaying)
+            return MediaPlayer::BufferingPolicy::Default;
+
+        if (shouldOverrideBackgroundLoadingRestriction())
+            return MediaPlayer::BufferingPolicy::Default;
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
-    if (m_shouldPlayToPlaybackTarget)
-        return MediaPlayer::BufferingPolicy::Default;
+        if (m_shouldPlayToPlaybackTarget)
+            return MediaPlayer::BufferingPolicy::Default;
 #endif
 
-    if (m_elementIsHiddenUntilVisibleInViewport || m_elementIsHiddenBecauseItWasRemovedFromDOM || element->elementIsHidden())
-        return MediaPlayer::BufferingPolicy::MakeResourcesPurgeable;
+        if (m_elementIsHiddenUntilVisibleInViewport || m_elementIsHiddenBecauseItWasRemovedFromDOM || element->elementIsHidden())
+            return MediaPlayer::BufferingPolicy::MakeResourcesPurgeable;
 
-    return MediaPlayer::BufferingPolicy::Default;
+        return currentPolicy;
+    }();
+
+    if (currentPolicy == MediaPlayer::BufferingPolicy::PurgeResources && !isPlaying && newPolicy != MediaPlayer::BufferingPolicy::Default)
+        return MediaPlayer::BufferingPolicy::PurgeResources;
+
+    return newPolicy;
 }
 
 bool MediaElementSession::fullscreenPermitted() const
@@ -982,7 +1007,15 @@ void MediaElementSession::mediaStateDidChange(MediaProducerMediaStateFlags state
     if (RefPtr element = m_element.get())
         element->document().playbackTargetPickerClientStateDidChange(*this, state);
 }
-#endif
+
+MediaPlaybackTargetType MediaElementSession::playbackTargetType() const
+{
+    if (RefPtr playbackTarget = m_playbackTarget)
+        return playbackTarget->targetType();
+    return MediaPlaybackTargetType::None;
+}
+
+#endif // ENABLE(WIRELESS_PLAYBACK_TARGET)
 
 MediaPlayer::Preload MediaElementSession::effectivePreloadForElement() const
 {
@@ -1621,7 +1654,7 @@ void MediaElementSession::ensureIsObservingMediaSession()
     auto* session = mediaSession();
     if (!session || m_observer)
         return;
-    m_observer = makeUnique<MediaElementSessionObserver>(*this, *session);
+    m_observer = MediaElementSessionObserver::create(*this, *session);
 #endif
 }
 
@@ -1661,6 +1694,8 @@ void MediaElementSession::clientCharacteristicsChanged(bool positionChanged)
 #if !RELEASE_LOG_DISABLED
 String MediaElementSession::descriptionForTrack(const AudioTrack& track)
 {
+    if (track.configuration().isProtected())
+        return makeString(track.configuration().codec(), " protected"_s);
     return track.configuration().codec();
 }
 
@@ -1671,6 +1706,8 @@ String MediaElementSession::descriptionForTrack(const VideoTrack& track)
     builder.append(track.configuration().width(), 'x', track.configuration().height());
     if (!track.configuration().codec().isEmpty())
         builder.append(' ', track.configuration().codec());
+    if (track.configuration().isProtected())
+        builder.append(" protected"_s);
     if (track.configuration().spatialVideoMetadata())
         builder.append(" spatial"_s);
     if (auto metadata = track.configuration().videoProjectionMetadata())

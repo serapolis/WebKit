@@ -55,11 +55,11 @@ public:
     RetainPtr<id> toID() const;
 
 private:
-    friend struct IPC::ArgumentCoder<CoreIPCAVOutputContext, void>;
+    friend struct IPC::ArgumentCoder<CoreIPCAVOutputContext>;
 
     CoreIPCAVOutputContextData m_data;
 };
 
 } // namespace WebKit
 
-#endif // USE(AVFOUNDATION) && HAVE(HAVE_WK_SECURE_CODING_AVOUTPUTCONTEXT)
+#endif // USE(AVFOUNDATION) && HAVE(WK_SECURE_CODING_AVOUTPUTCONTEXT)

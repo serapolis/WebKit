@@ -30,11 +30,10 @@
 #include "Connection.h"
 #include "LibWebRTCProvider.h"
 #include "LibWebRTCSocketFactory.h"
-#include "WebMDNSRegister.h"
 #include "WebRTCMonitor.h"
+#include "WebRTCNetworkBase.h"
 #include "WebRTCResolver.h"
 #include <WebCore/LibWebRTCSocketIdentifier.h>
-#include <wtf/CheckedRef.h>
 #include <wtf/FunctionDispatcher.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
@@ -42,34 +41,26 @@
 namespace WebKit {
 class WebProcess;
 
-class LibWebRTCNetwork final : private FunctionDispatcher, public IPC::MessageReceiver {
+class LibWebRTCNetwork final : public WebRTCNetworkBase, private FunctionDispatcher {
     WTF_MAKE_TZONE_ALLOCATED(LibWebRTCNetwork);
 public:
     explicit LibWebRTCNetwork(WebProcess&);
     ~LibWebRTCNetwork();
 
-    void ref() const final;
-    void deref() const final;
-
     IPC::Connection* connection() { return m_connection.get(); }
     void setConnection(RefPtr<IPC::Connection>&&);
 
-    void networkProcessCrashed();
-
-    bool isActive() const { return m_isActive; }
+    void networkProcessCrashed() final;
+    void setAsActive() final;
 
     WebRTCMonitor& monitor() { return m_webNetworkMonitor; }
     Ref<WebRTCMonitor> protectedMonitor() { return m_webNetworkMonitor; }
     LibWebRTCSocketFactory& socketFactory() { return m_socketFactory; }
+    CheckedRef<LibWebRTCSocketFactory> checkedSocketFactory() { return m_socketFactory; }
 
     void disableNonLocalhostConnections() { socketFactory().disableNonLocalhostConnections(); }
 
-    Ref<WebRTCResolver> resolver(LibWebRTCResolverIdentifier identifier) { return WebRTCResolver::create(socketFactory(), identifier); }
-
-    WebMDNSRegister& mdnsRegister() { return m_mdnsRegister; }
-    Ref<WebMDNSRegister> protectedMDNSRegister() { return m_mdnsRegister; }
-
-    void setAsActive();
+    Ref<WebRTCResolver> resolver(LibWebRTCResolverIdentifier identifier) { return WebRTCResolver::create(checkedSocketFactory(), identifier); }
 
 private:
     void setSocketFactoryConnection();
@@ -87,14 +78,9 @@ private:
     // IPC::MessageReceiver
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    const CheckedRef<WebProcess> m_webProcess;
-
     LibWebRTCSocketFactory m_socketFactory;
     WebRTCMonitor m_webNetworkMonitor;
 
-    WebMDNSRegister m_mdnsRegister;
-
-    bool m_isActive { false };
     RefPtr<IPC::Connection> m_connection;
 };
 

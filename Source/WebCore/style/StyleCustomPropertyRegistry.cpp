@@ -31,6 +31,7 @@
 #include "Document.h"
 #include "Element.h"
 #include "KeyframeEffect.h"
+#include "NodeDocument.h"
 #include "RenderStyle.h"
 #include "StyleBuilder.h"
 #include "StyleCustomProperty.h"
@@ -179,8 +180,8 @@ void CustomPropertyRegistry::invalidate(const AtomString& customProperty)
 void CustomPropertyRegistry::notifyAnimationsOfCustomPropertyRegistration(const AtomString& customProperty)
 {
     auto& document = m_scope.document();
-    for (auto* animation : WebAnimation::instances()) {
-        if (auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(animation->effect())) {
+    for (auto& animation : WebAnimation::instances()) {
+        if (RefPtr keyframeEffect = animation->keyframeEffect()) {
             if (auto* target = keyframeEffect->target()) {
                 if (&target->document() == &document)
                     keyframeEffect->customPropertyRegistrationDidChange(customProperty);
@@ -198,7 +199,7 @@ auto CustomPropertyRegistry::parseInitialValue(const Document& document, const A
 
     // We don't need to provide a real context style since only computationally independent values are allowed (no 'em' etc).
     auto placeholderStyle = RenderStyle::create();
-    Style::BuilderState dummyState { placeholderStyle, { &document } };
+    auto dummyState = Style::BuilderState::create(placeholderStyle, { &document });
 
     auto initialValue = CSSPropertyParser::parseTypedCustomPropertyInitialValue(propertyName, syntax, tokenRange, dummyState, { document });
     if (!initialValue)

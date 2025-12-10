@@ -247,7 +247,10 @@ namespace Inspector {
 #pragma once
 
 #include "TestProtocolObjects.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/JSONValues.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/Nonmovable.h>
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -380,17 +383,25 @@ public:
         AllFieldsSet = (TypeSet)
     };
 
+    using JSON::ObjectBase::setBoolean;
+    using JSON::ObjectBase::setInteger;
+    using JSON::ObjectBase::setDouble;
+    using JSON::ObjectBase::setString;
+    using JSON::ObjectBase::setValue;
+    using JSON::ObjectBase::setObject;
+    using JSON::ObjectBase::setArray;
+
     template<int STATE>
     class Builder {
     private:
-        RefPtr<JSON::Object> m_result;
+        RefPtr<KeyPath> m_result;
 
         template<int STEP> Builder<STATE | STEP>& castState()
         {
-            return *reinterpret_cast<Builder<STATE | STEP>*>(this);
+            SUPPRESS_MEMORY_UNSAFE_CAST return *reinterpret_cast<Builder<STATE | STEP>*>(this);
         }
 
-        Builder(Ref</*KeyPath*/JSON::Object>&& object)
+        Builder(Ref<KeyPath>&& object)
             : m_result(WTFMove(object))
         {
             static_assert(STATE == NoFieldsSet, "builder created in non init state");
@@ -401,7 +412,7 @@ public:
         Builder<STATE | TypeSet>& setType(Type in_type)
         {
             static_assert(!(STATE & TypeSet), "property type already set");
-            m_result->setString("type"_s, Protocol::TestHelpers::getEnumConstantValue(in_type));
+            Ref { *m_result }->setString("type"_s, Protocol::TestHelpers::getEnumConstantValue(in_type));
             return castState<TypeSet>();
         }
 
@@ -410,12 +421,14 @@ public:
             static_assert(STATE == AllFieldsSet, "result is not ready");
             static_assert(sizeof(KeyPath) == sizeof(JSON::Object), "cannot cast");
 
-            Ref<JSON::Object> jsonResult = m_result.releaseNonNull();
-            auto result = WTFMove(*reinterpret_cast<Ref<KeyPath>*>(&jsonResult));
-            return result;
+            return m_result.releaseNonNull();
         }
     };
 
+private:
+    KeyPath() = default;
+
+public:
     /*
      * Synthetic constructor:
      * Ref<KeyPath> result = KeyPath::create()
@@ -424,7 +437,7 @@ public:
      */
     static Builder<NoFieldsSet> create()
     {
-        return Builder<NoFieldsSet>(JSON::Object::create());
+        return Builder<NoFieldsSet>(adoptRef(*new KeyPath));
     }
 
     void setString(const String& in_opt_string)

@@ -71,7 +71,7 @@ public:
 
     static constexpr GPRReg wasmScratchGPR = GPRInfo::nonPreservedNonArgumentGPR0; // Scratch registers to hold temporaries in operations.
 #if USE(JSVALUE32_64)
-    static constexpr GPRReg wasmScratchGPR2 = GPRInfo::nonPreservedNonArgumentGPR1;
+    static constexpr GPRReg wasmScratchGPR2 = GPRInfo::nonPreservedNonArgumentGPR2;
 #else
     static constexpr GPRReg wasmScratchGPR2 = InvalidGPRReg;
 #endif
@@ -681,6 +681,7 @@ public:
 
     struct ControlData {
         static bool isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
+        static bool isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
         static bool isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
         static bool isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
         static bool isCatch(const ControlData& control) { return isAnyCatch(control) && control.catchKind() == CatchKind::Catch; }
@@ -1078,8 +1079,8 @@ private:
 #define LOG_DEDENT() do { if (Options::verboseBBQJITInstructions()) [[unlikely]] { m_loggingIndent -= 2; } } while (false);
 
 public:
-    // FIXME: Support fused branch compare on 32-bit platforms.
-    static constexpr bool shouldFuseBranchCompare = is64Bit();
+    // Enable fused branch compare for all platforms
+    static constexpr bool shouldFuseBranchCompare = true;
 
     static constexpr bool tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
@@ -2047,8 +2048,8 @@ public:
     void emitTailCall(FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments);
     PartialResult WARN_UNUSED_RETURN addCall(unsigned, FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results, CallType = CallType::Call);
 
-    void emitIndirectCall(const char* opcode, unsigned callProfileIndex, const Value& callee, GPRReg boxedCallee, GPRReg calleeInstance, GPRReg calleeCode, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results);
-    void emitIndirectTailCall(const char* opcode, const Value& callee, GPRReg calleeInstance, GPRReg calleeCode, const TypeDefinition& signature, ArgumentList& arguments);
+    void emitIndirectCall(const char* opcode, unsigned callProfileIndex, const Value& callee, GPRReg importableFunction, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results);
+    void emitIndirectTailCall(const char* opcode, const Value& callee, GPRReg importableFunction, const TypeDefinition& signature, ArgumentList& arguments);
 
     PartialResult WARN_UNUSED_RETURN addCallIndirect(unsigned, unsigned tableIndex, const TypeDefinition& originalSignature, ArgumentList& args, ResultList& results, CallType = CallType::Call);
 
@@ -2216,21 +2217,14 @@ private:
 
     constexpr static int tempSlotSize = 16; // Size of the stack slot for a stack temporary. Currently the size of the largest possible temporary (a v128).
 
-    enum class ShiftI64HelperOp { Lshift, Urshift, Rshift };
-    void shiftI64Helper(ShiftI64HelperOp op, Location lhsLocation, Location rhsLocation, Location resultLocation);
-
     enum class RotI64HelperOp { Left, Right };
     void rotI64Helper(RotI64HelperOp op, Location lhsLocation, Location rhsLocation, Location resultLocation);
-
-    void compareI64Helper(RelationalCondition condition, Location lhsLocation, Location rhsLocation, Location resultLocation);
-
-    void F64CopysignHelper(Location lhsLocation, Location rhsLocation, Location resultLocation);
 
     bool canTierUpToOMG() const;
 
     void emitIncrementCallProfileCount(unsigned callProfileIndex);
 
-    void emitSaveCalleeSaves();
+    void emitPushCalleeSaves();
     void emitRestoreCalleeSaves();
 
     WasmOrigin origin();

@@ -51,27 +51,22 @@ namespace WebKit {
 bool checkSandboxRequirementForType(MediaPermissionType type)
 {
 #if PLATFORM(MAC)
-    static std::once_flag audioFlag;
-    static std::once_flag videoFlag;
-    static bool isAudioEntitled = true;
-    static bool isVideoEntitled = true;
-    
-    auto checkFunction = [](ASCIILiteral operation, bool* entitled) {
+    auto checkFunction = [](ASCIILiteral operation) {
         if (!currentProcessIsSandboxed())
-            return;
+            return true;
 
         int result = sandbox_check(getpid(), operation, static_cast<enum sandbox_filter_type>(SANDBOX_CHECK_NO_REPORT | SANDBOX_FILTER_NONE));
         if (result == -1)
             WTFLogAlways("Error checking '%s' sandbox access, errno=%ld", operation.characters(), (long)errno);
-        *entitled = !result;
+        return !result;
     };
 
     switch (type) {
     case MediaPermissionType::Audio:
-        std::call_once(audioFlag, checkFunction, "device-microphone"_s, &isAudioEntitled);
+        static bool isAudioEntitled = checkFunction("device-microphone"_s);
         return isAudioEntitled;
     case MediaPermissionType::Video:
-        std::call_once(videoFlag, checkFunction, "device-camera"_s, &isVideoEntitled);
+        static bool isVideoEntitled = checkFunction("device-camera"_s);
         return isVideoEntitled;
     }
 #endif
@@ -80,27 +75,18 @@ bool checkSandboxRequirementForType(MediaPermissionType type)
 
 bool checkUsageDescriptionStringForType(MediaPermissionType type)
 {
-    static std::once_flag audioDescriptionFlag;
-    static std::once_flag videoDescriptionFlag;
-    static bool hasMicrophoneDescriptionString = false;
-    static bool hasCameraDescriptionString = false;
-
     switch (type) {
     case MediaPermissionType::Audio:
         static TCCAccessPreflightResult audioAccess = TCCAccessPreflight(get_TCC_kTCCServiceMicrophoneSingleton(), NULL);
         if (audioAccess == kTCCAccessPreflightGranted)
             return true;
-        std::call_once(audioDescriptionFlag, [] {
-            hasMicrophoneDescriptionString = dynamic_objc_cast<NSString>(NSBundle.mainBundle.infoDictionary[@"NSMicrophoneUsageDescription"]).length > 0;
-        });
+        static bool hasMicrophoneDescriptionString= dynamic_objc_cast<NSString>(NSBundle.mainBundle.infoDictionary[@"NSMicrophoneUsageDescription"]).length > 0;
         return hasMicrophoneDescriptionString;
     case MediaPermissionType::Video:
         static TCCAccessPreflightResult videoAccess = TCCAccessPreflight(get_TCC_kTCCServiceCameraSingleton(), NULL);
         if (videoAccess == kTCCAccessPreflightGranted)
             return true;
-        std::call_once(videoDescriptionFlag, [] {
-            hasCameraDescriptionString = dynamic_objc_cast<NSString>(NSBundle.mainBundle.infoDictionary[@"NSCameraUsageDescription"]).length > 0;
-        });
+        static bool hasCameraDescriptionString = dynamic_objc_cast<NSString>(NSBundle.mainBundle.infoDictionary[@"NSCameraUsageDescription"]).length > 0;
         return hasCameraDescriptionString;
     }
 }
@@ -140,19 +126,19 @@ static RetainPtr<NSString> alertMessageText(MediaPermissionReason reason, const 
 
     switch (reason) {
     case MediaPermissionReason::Camera:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your camera?", @"Message for user camera access prompt"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your camera?", @"Message for user camera access prompt"), visibleOrigin.get()]);
     case MediaPermissionReason::CameraAndMicrophone:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your camera and microphone?", @"Message for user media prompt"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your camera and microphone?", @"Message for user media prompt"), visibleOrigin.get()]);
     case MediaPermissionReason::Microphone:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your microphone?", @"Message for user microphone access prompt"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your microphone?", @"Message for user microphone access prompt"), visibleOrigin.get()]);
     case MediaPermissionReason::ScreenCapture:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to observe your screen?", @"Message for screen sharing prompt"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to observe your screen?", @"Message for screen sharing prompt"), visibleOrigin.get()]);
     case MediaPermissionReason::DeviceOrientation:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"“%@” Would Like to Access Motion and Orientation", @"Message for requesting access to the device motion and orientation"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"“%@” Would Like to Access Motion and Orientation", @"Message for requesting access to the device motion and orientation"), visibleOrigin.get()]);
     case MediaPermissionReason::Geolocation:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your current location?", @"Message for geolocation prompt"), visibleOrigin.get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to use your current location?", @"Message for geolocation prompt"), visibleOrigin.get()]);
     case MediaPermissionReason::SpeechRecognition:
-        return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to capture your audio and use it for speech recognition?", @"Message for spechrecognition prompt"), visibleDomain(origin.host()).get()]);
+        SUPPRESS_UNRETAINED_ARG return adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"Allow “%@” to capture your audio and use it for speech recognition?", @"Message for spechrecognition prompt"), visibleDomain(origin.host()).get()]);
     }
 }
 
@@ -226,7 +212,7 @@ void alertForPermission(WebPageProxy& page, MediaPermissionReason reason, const 
     button.get().keyEquivalent = @"";
     button = [alert addButtonWithTitle:doNotAllowButtonString.get()];
     button.get().keyEquivalent = @"\E";
-    [alert beginSheetModalForWindow:[webView window] completionHandler:[completionBlock](NSModalResponse returnCode) {
+    [alert beginSheetModalForWindow:retainPtr([webView window]).get() completionHandler:[completionBlock](NSModalResponse returnCode) {
         auto shouldAllow = returnCode == NSAlertFirstButtonReturn;
         completionBlock(shouldAllow);
     }];

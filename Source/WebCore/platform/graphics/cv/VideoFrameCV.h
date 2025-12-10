@@ -50,11 +50,12 @@ public:
     // VideoFrame overrides.
     WEBCORE_EXPORT WebCore::IntSize presentationSize() const final;
     WEBCORE_EXPORT uint32_t pixelFormat() const final;
+    WEBCORE_EXPORT RefPtr<NativeImage> copyNativeImage() const final;
     WEBCORE_EXPORT void setOwnershipIdentity(const ProcessIdentity&) final;
     bool isCV() const final { return true; }
 
 private:
-    friend struct IPC::ArgumentCoder<VideoFrameCV, void>;
+    friend struct IPC::ArgumentCoder<VideoFrameCV>;
     WEBCORE_EXPORT VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, std::optional<PlatformVideoColorSpace>&&);
     VideoFrameCV(MediaTime presentationTime, bool isMirrored, Rotation, RetainPtr<CVPixelBufferRef>&&, PlatformVideoColorSpace&&);
 

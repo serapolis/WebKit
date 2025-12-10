@@ -42,12 +42,13 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAudioSession);
 
-Ref<RemoteAudioSession> RemoteAudioSession::create()
+Ref<RemoteAudioSession> RemoteAudioSession::create(WebProcess& webProcess)
 {
-    return adoptRef(*new RemoteAudioSession);
+    return adoptRef(*new RemoteAudioSession(webProcess));
 }
 
-RemoteAudioSession::RemoteAudioSession()
+RemoteAudioSession::RemoteAudioSession(WebProcess& webProcess)
+    : m_webProcess(webProcess)
 {
     AudioSession::addInterruptionObserver(*this);
 }
@@ -169,6 +170,7 @@ void RemoteAudioSession::configurationChanged(RemoteAudioSessionConfiguration&& 
     bool bufferSizeChanged = !m_configuration || configuration.bufferSize != (*m_configuration).bufferSize;
     bool sampleRateChanged = !m_configuration || configuration.sampleRate != (*m_configuration).sampleRate;
     bool isActiveChanged = !m_configuration || configuration.isActive != (*m_configuration).isActive;
+    bool routingContextUIDChanged = !m_configuration || configuration.routingContextUID != (*m_configuration).routingContextUID;
 
     m_configuration = WTFMove(configuration);
 
@@ -181,9 +183,24 @@ void RemoteAudioSession::configurationChanged(RemoteAudioSessionConfiguration&& 
 
         if (sampleRateChanged)
             observer.sampleRateDidChange(*this);
+
+        if (routingContextUIDChanged)
+            observer.routingContextUIDDidChange(*this);
     });
     if (isActiveChanged)
         activeStateChanged();
+
+    if (!mutedStateChanged && !bufferSizeChanged && !sampleRateChanged && !isActiveChanged && !routingContextUIDChanged)
+        return;
+
+    RefPtr protectedProcess = m_webProcess.get();
+    if (!protectedProcess)
+        return;
+
+    if (!protectedProcess->sharedPreferencesForWebProcessValue().remoteMediaSessionManagerEnabled)
+        return;
+
+    protectedProcess->remoteAudioSessionConfigurationChanged(*m_configuration);
 }
 
 void RemoteAudioSession::beginInterruptionRemote()

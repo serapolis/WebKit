@@ -85,7 +85,7 @@ private:
     const void* m_inputBegin { nullptr };
 
     static constexpr size_t defaultInlineBufferSize = 2048;
-    using LCharBuffer = Vector<Latin1Character, defaultInlineBufferSize>;
+    using Latin1Buffer = Vector<Latin1Character, defaultInlineBufferSize>;
 
     template<typename CharacterType> void parse(std::span<const CharacterType>, const URL&, const URLTextEncoding*);
     template<typename CharacterType> void parseAuthority(CodePointIterator<CharacterType>);
@@ -116,10 +116,10 @@ private:
     template<typename UnsignedIntegerType> void appendNumberToASCIIBuffer(UnsignedIntegerType);
     template<bool(*isInCodeSet)(char32_t), typename CharacterType> void utf8PercentEncode(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> void utf8QueryEncode(const CodePointIterator<CharacterType>&);
-    template<typename CharacterType> std::optional<LCharBuffer> domainToASCII(StringImpl&, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
-    template<typename CharacterType> LCharBuffer percentDecode(std::span<const Latin1Character>, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
-    static LCharBuffer percentDecode(std::span<const Latin1Character>);
-    bool hasForbiddenHostCodePoint(const LCharBuffer&);
+    template<typename CharacterType> std::optional<Latin1Buffer> domainToASCII(StringImpl&, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
+    template<typename CharacterType> Latin1Buffer percentDecode(std::span<const Latin1Character>, const CodePointIterator<CharacterType>& iteratorForSyntaxViolationPosition);
+    static Latin1Buffer percentDecode(std::span<const Latin1Character>);
+    bool hasForbiddenHostCodePoint(const Latin1Buffer&);
     void percentEncodeByte(uint8_t);
     void appendToASCIIBuffer(char32_t);
     void appendToASCIIBuffer(std::span<const Latin1Character>);

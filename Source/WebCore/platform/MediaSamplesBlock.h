@@ -31,6 +31,10 @@
 #include <WebCore/TrackInfo.h>
 #include <wtf/MediaTime.h>
 
+namespace IPC {
+template<typename> struct ArgumentCoder;
+}
+
 namespace WebCore {
 
 class MediaSamplesBlock {
@@ -47,6 +51,11 @@ public:
         std::optional<HdrMetadataType> hdrMetadataType { std::nullopt };
         uint32_t flags { };
         bool isSync() const { return flags & MediaSample::IsSync; }
+#if ENABLE(ENCRYPTED_MEDIA)
+        int32_t bytesOfClearDataCount { 0 };
+        RefPtr<SharedBuffer> cryptorIV { };
+        RefPtr<SharedBuffer> cryptorSubsampleAuxiliaryData { };
+#endif
     };
 
     using MediaSampleDataType = MediaSampleItem::MediaSampleDataType;
@@ -94,7 +103,19 @@ public:
     SamplesVector::const_iterator begin() const LIFETIME_BOUND { return m_samples.begin(); }
     SamplesVector::const_iterator end() const LIFETIME_BOUND { return m_samples.end(); }
 
+    WEBCORE_EXPORT RefPtr<MediaSample> toMediaSample() const;
+    WEBCORE_EXPORT static UniqueRef<MediaSamplesBlock> fromMediaSample(const MediaSample&, const TrackInfo* = nullptr);
+
 private:
+    // Used by IPC generator
+    friend struct IPC::ArgumentCoder<MediaSamplesBlock>;
+    MediaSamplesBlock(RefPtr<const TrackInfo>&& info, SamplesVector&& items, std::optional<bool> discontinuity)
+        : m_info(WTFMove(info))
+        , m_samples(WTFMove(items))
+        , m_discontinuity(discontinuity)
+    {
+    }
+
     RefPtr<const TrackInfo> m_info;
     SamplesVector m_samples;
     std::optional<bool> m_discontinuity;

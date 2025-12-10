@@ -71,13 +71,17 @@ public:
     AnchorScrollAdjuster(RenderBox& anchored, const RenderBoxModelObject& defaultAnchor);
     RenderBox* anchored() const;
 
-    bool mayNeedAdjustment() const { return m_needsXAdjustment | m_needsYAdjustment; }
     inline bool isEmpty() const;
+    bool mayNeedAdjustment() const { return m_needsXAdjustment | m_needsYAdjustment; }
+    bool mayNeedXAdjustment() const { return m_needsXAdjustment; }
+    bool mayNeedYAdjustment() const { return m_needsYAdjustment; }
+
     bool isHidden() const { return m_isHidden; }
     void setHidden(bool hide) { m_isHidden = hide; }
 
     inline void addSnapshot(const RenderBox& scroller);
     inline void addViewportSnapshot(const RenderView&);
+    bool hasViewportSnapshot() const { return m_adjustForViewport; }
 
     enum Diff : uint8_t { New, SnapshotsDiffer, SnapshotsMatch };
     bool recaptureDiffers(const AnchorScrollAdjuster&) const; // Snapshot differences can require invalidation.
@@ -148,9 +152,10 @@ struct ResolvedAnchor {
 };
 
 struct AnchorPositionedToAnchorEntry {
-    // This key can be used to access the AnchorPositionedState struct of the current element
-    // in an AnchorPositionedStates map.
-    AnchorPositionedKey key;
+    // The pseudo-element identifier can be used to access the AnchorPositionedState struct
+    // of the current element in an AnchorPositionedStates map, in combination with the relevant
+    // Element object.
+    std::optional<PseudoElementIdentifier> pseudoElementIdentifier;
 
     Vector<ResolvedAnchor> anchors;
 
@@ -179,9 +184,11 @@ public:
     static AnchorToAnchorPositionedMap makeAnchorPositionedForAnchorMap(AnchorPositionedToAnchorMap&);
 
     static bool isAnchorPositioned(const RenderStyle&);
+    static bool isStyleTimeAnchorPositioned(const RenderStyle&);
     static bool isLayoutTimeAnchorPositioned(const RenderStyle&);
 
     static CSSPropertyID resolvePositionTryFallbackProperty(CSSPropertyID, WritingMode, const BuilderPositionTryFallback&);
+    static CSSValueID resolvePositionTryFallbackValueForSelfPosition(CSSPropertyID, CSSValueID, WritingMode, const BuilderPositionTryFallback&);
 
     static bool overflowsInsetModifiedContainingBlock(const RenderBox& anchoredBox);
     static bool isDefaultAnchorInvisibleOrClippedByInterveningBoxes(const RenderBox& anchoredBox);
@@ -191,6 +198,8 @@ public:
     static bool isImplicitAnchor(const RenderStyle&);
 
     static CheckedPtr<RenderBoxModelObject> defaultAnchorForBox(const RenderBox&);
+
+    static HashMap<AnchorPositionedKey, size_t> recordLastSuccessfulPositionOptions(const SingleThreadWeakHashSet<const RenderBox>& positionTryBoxes);
 
 private:
     static CheckedPtr<RenderBoxModelObject> findAnchorForAnchorFunctionAndAttemptResolution(BuilderState&, std::optional<ScopedName> elementName);

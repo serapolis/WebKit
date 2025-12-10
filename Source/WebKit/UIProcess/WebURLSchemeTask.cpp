@@ -217,7 +217,7 @@ auto WebURLSchemeTask::didComplete(const ResourceError& error) -> ExceptionType
     m_completed = true;
 
     if (isSync()) {
-        Vector<uint8_t> data = m_syncData.takeAsContiguous()->span();
+        Vector<uint8_t> data = m_syncData.takeBufferAsContiguous()->span();
         m_syncCompletionHandler(m_syncResponse, error, WTFMove(data));
     }
 
@@ -244,7 +244,12 @@ void WebURLSchemeTask::stop()
 NSURLRequest *WebURLSchemeTask::nsRequest() const
 {
     Locker locker { m_requestLock };
-    return m_request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
+    return m_request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).autorelease();
+}
+
+RetainPtr<NSURLRequest> WebURLSchemeTask::protectedNSRequest() const
+{
+    return nsRequest();
 }
 #endif
 

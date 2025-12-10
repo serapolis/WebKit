@@ -467,6 +467,35 @@ inline bool isControlOp(OpType op)
     return false;
 }
 
+inline bool isControlFlowInstruction(OpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, ...) case OpType::name:
+    FOR_EACH_WASM_CONTROL_FLOW_OP(CREATE_CASE)
+        return true;
+#undef CREATE_CASE
+    default:
+        break;
+    }
+    return false;
+}
+
+// Enhanced version that includes ExtGC branch operations
+// This function requires access to the current extended opcode for ExtGC operations
+template<typename ExtendedOpcodeProvider>
+inline bool isControlFlowInstructionWithExtGC(OpType op, ExtendedOpcodeProvider&& getExtendedOpcode)
+{
+    if (isControlFlowInstruction(op))
+        return true;
+
+    if (op == OpType::ExtGC) {
+        uint32_t extOp = getExtendedOpcode();
+        return extOp == static_cast<uint32_t>(ExtGCOpType::BrOnCast) || extOp == static_cast<uint32_t>(ExtGCOpType::BrOnCastFail);
+    }
+
+    return false;
+}
+
 inline uint32_t memoryLog2Alignment(OpType op)
 {
     switch (op) {

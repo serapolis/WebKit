@@ -29,6 +29,7 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSWebAssemblyInstance.h"
+#include "WasmDebugServer.h"
 #include "WasmIPIntPlan.h"
 #include "WasmInstanceAnchor.h"
 #include "WasmMergedProfile.h"
@@ -44,9 +45,15 @@ Module::Module(IPIntPlan& plan)
     , m_ipintCallees(IPIntCallees::createFromVector(plan.takeCallees()))
     , m_wasmToJSExitStubs(plan.takeWasmToJSExitStubs())
 {
+    if (Options::enableWasmDebugger()) [[unlikely]]
+        Wasm::DebugServer::singleton().trackModule(*this);
 }
 
-Module::~Module() = default;
+Module::~Module()
+{
+    if (Options::enableWasmDebugger()) [[unlikely]]
+        Wasm::DebugServer::singleton().untrackModule(*this);
+}
 
 Wasm::TypeIndex Module::typeIndexFromFunctionIndexSpace(FunctionSpaceIndex functionIndexSpace) const
 {
@@ -141,7 +148,7 @@ Ref<Wasm::InstanceAnchor> Module::registerAnchor(JSWebAssemblyInstance* instance
     return anchor;
 }
 
-std::unique_ptr<MergedProfile> Module::createMergedProfile(IPIntCallee& callee)
+std::unique_ptr<MergedProfile> Module::createMergedProfile(const IPIntCallee& callee)
 {
     auto result = makeUnique<MergedProfile>(callee);
     for (Ref anchor : m_anchors) {
@@ -153,14 +160,13 @@ std::unique_ptr<MergedProfile> Module::createMergedProfile(IPIntCallee& callee)
         }
         if (!data)
             continue;
-
-        auto span = result->mutableSpan();
-        RELEASE_ASSERT(data->size() == result->mutableSpan().size());
-        for (unsigned i = 0; i < data->size(); ++i)
-            span[i].merge(data->at(i));
+        result->merge(*this, callee, *data);
     }
     return result;
 }
+
+uint32_t Module::debugId() const { return m_moduleInformation->debugInfo->id; }
+void Module::setDebugId(uint32_t id) { m_moduleInformation->debugInfo->id = id; }
 
 } } // namespace JSC::Wasm
 

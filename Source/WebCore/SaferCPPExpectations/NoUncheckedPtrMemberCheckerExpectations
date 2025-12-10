@@ -1,23 +1,15 @@
 Modules/websockets/WorkerThreadableWebSocketChannel.h
+[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.h
 bindings/js/JSLazyEventListener.cpp
 css/CSSToLengthConversionData.h
 css/SelectorChecker.h
 css/SelectorFilter.h
-css/calc/CSSCalcTree+CalculationValue.cpp
 css/query/MediaQueryEvaluator.h
 dom/CollectionIndexCache.h
 dom/Node.cpp
 dom/Node.h
 editing/TextCheckingHelper.h
-editing/VisiblePosition.h
-html/HTMLLinkElement.h
-html/parser/HTMLTreeBuilder.h
-inspector/DOMPatchSupport.cpp
-inspector/InspectorController.h
-inspector/InspectorStyleSheet.cpp
 inspector/InstrumentingAgents.h
-inspector/agents/InspectorCSSAgent.h
-inspector/agents/InspectorDOMAgent.cpp
 inspector/agents/WebHeapAgent.cpp
 layout/formattingContexts/inline/AbstractLineBuilder.h
 layout/formattingContexts/inline/InlineContentBreaker.h
@@ -37,20 +29,15 @@ layout/layouttree/LayoutIterator.h
 loader/DocumentThreadableLoader.h
 loader/WorkerThreadableLoader.h
 page/FrameSnapshotting.cpp
-page/UndoManager.h
-platform/ScrollAnimator.h
-platform/Scrollbar.h
-platform/ScrollbarsController.h
+[ iOS ] page/ios/ContentChangeObserver.h
 platform/graphics/TextRunIterator.h
 platform/graphics/ca/TileCoverageMap.h
-platform/mac/VideoPresentationInterfaceMac.mm
-platform/mock/DeviceOrientationClientMock.h
+[ iOS ] platform/ios/DeviceMotionClientIOS.h
+[ iOS ] platform/ios/DeviceOrientationClientIOS.h
 rendering/BackgroundPainter.h
 rendering/GlyphDisplayListCache.cpp
 rendering/GridTrackSizingAlgorithm.h
 rendering/InlineBoxPainter.h
-rendering/LayerOverlapMap.cpp
-rendering/LayerOverlapMap.h
 rendering/LayoutRepainter.h
 rendering/LegacyInlineIterator.h
 rendering/LegacyLineLayout.h
@@ -65,7 +52,6 @@ rendering/RenderDescendantIterator.h
 rendering/RenderFlexibleBox.cpp
 rendering/RenderFragmentContainer.h
 rendering/RenderGeometryMap.h
-rendering/RenderHighlight.h
 rendering/RenderIterator.h
 rendering/RenderLayer.h
 rendering/RenderLayerBacking.cpp
@@ -74,18 +60,12 @@ rendering/RenderLayerCompositor.cpp
 rendering/RenderLayerCompositor.h
 rendering/RenderLayerScrollableArea.h
 rendering/RenderLayoutState.h
-rendering/RenderSelection.h
 rendering/RenderSelectionGeometry.h
 rendering/RenderTableSection.h
 rendering/RenderText.cpp
-rendering/TableLayout.h
-rendering/TextBoxPainter.h
 rendering/TextDecorationPainter.h
+[ iOS ] rendering/ios/RenderThemeIOS.mm
 rendering/line/BreakingContext.h
-rendering/line/LineBreaker.h
-rendering/line/LineWidth.h
-rendering/line/TrailingObjects.h
-rendering/line/WordTrailingSpace.h
 rendering/mathml/RenderMathMLScripts.h
 rendering/shapes/ShapeOutsideInfo.h
 rendering/svg/SVGRenderingContext.h
@@ -106,5 +86,6 @@ style/StyleResolver.h
 style/StyleScope.h
 style/StyleTreeResolver.h
 style/Styleable.h
+style/calc/StyleCalculationTree+Conversion.h
 style/values/color/StyleColorResolutionState.h
 svg/properties/SVGPropertyOwnerRegistry.h

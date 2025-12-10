@@ -436,17 +436,20 @@ public:
     FunctionCodeIndex functionIndex() const { return m_functionIndex; }
     void setEntrypoint(CodePtr<WasmEntryPtrTag>);
     const uint8_t* bytecode() const { return m_bytecode; }
+    const uint8_t* bytecodeEnd() const { return m_bytecodeEnd; }
     const uint8_t* metadata() const { return m_metadata.span().data(); }
 
     unsigned numLocals() const { return m_numLocals; }
     unsigned localSizeToAlloc() const { return m_localSizeToAlloc; }
     unsigned rethrowSlots() const { return m_numRethrowSlotsToAlloc; }
 
-    unsigned numCallProfiles() const { return m_numCallProfiles; }
-
-    bool needsProfiling() const;
+    const Vector<FunctionSpaceIndex>& callTargets() const { return m_callTargets; }
+    unsigned numCallProfiles() const { return m_callTargets.size(); }
 
     IPIntTierUpCounter& tierUpCounter() { return m_tierUpCounter; }
+    const IPIntTierUpCounter& tierUpCounter() const { return m_tierUpCounter; }
+
+    FunctionSpaceIndex callTarget(unsigned callProfileIndex) const { return m_callTargets[callProfileIndex]; }
 
     using OutOfLineJumpTargets = UncheckedKeyHashMap<unsigned, int>;
 
@@ -465,15 +468,15 @@ private:
     Vector<uint8_t> m_metadata;
     Vector<uint8_t> m_argumINTBytecode;
     Vector<uint8_t> m_uINTBytecode;
+    Vector<FunctionSpaceIndex> m_callTargets;
 
-    unsigned m_highestReturnStackOffset;
+    unsigned m_topOfReturnStackFPOffset;
 
     unsigned m_localSizeToAlloc;
     unsigned m_numRethrowSlotsToAlloc;
     unsigned m_numLocals;
     unsigned m_numArgumentsOnStack;
     unsigned m_maxFrameSizeInV128;
-    unsigned m_numCallProfiles;
 
     IPIntTierUpCounter m_tierUpCounter;
 };
@@ -513,5 +516,79 @@ private:
 };
 
 } } // namespace JSC::Wasm
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::Callee)
+    static bool isType(const JSC::NativeCallee& callee)
+    {
+        return callee.category() == JSC::NativeCallee::Category::Wasm;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::IPIntCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::IPIntMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+#if ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::OptimizingJITCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::OMGMode
+            || callee.compilationMode() == JSC::Wasm::CompilationMode::OMGForOSREntryMode
+            || callee.compilationMode() == JSC::Wasm::CompilationMode::BBQMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::BBQCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::BBQMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::OMGCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::OMGMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::OMGOSREntryCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::OMGForOSREntryMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+#endif // ENABLE(WEBASSEMBLY_BBQJIT) || ENABLE(WEBASSEMBLY_OMGJIT)
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::JSToWasmCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::JSToWasmMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::JSToWasmICCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::JSToWasmICMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::WasmToJSCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::WasmToJSMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(JSC::Wasm::WasmBuiltinCallee)
+    static bool isType(const JSC::Wasm::Callee& callee)
+    {
+        return callee.compilationMode() == JSC::Wasm::CompilationMode::WasmBuiltinMode;
+    }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(WEBASSEMBLY)

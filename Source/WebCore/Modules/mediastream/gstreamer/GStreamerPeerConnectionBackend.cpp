@@ -105,7 +105,7 @@ GStreamerPeerConnectionBackend::GStreamerPeerConnectionBackend(RTCPeerConnection
     auto& logObserver = webrtcLogObserverSingleton();
     logObserver.addWatch(logger());
 
-    auto identifier = makeString(hex(LOGIDENTIFIER.objectIdentifier));
+    auto identifier = makeString(LOGIDENTIFIER.objectIdentifier);
     GST_INFO_OBJECT(m_endpoint->pipeline(), "WebCore logs identifier for this pipeline is: %s", identifier.convertToASCIIUppercase().ascii().data());
 #endif
 }
@@ -362,7 +362,7 @@ ExceptionOr<Ref<RTCRtpSender>> GStreamerPeerConnectionBackend::addTrack(MediaStr
     auto transceiverBackend = m_endpoint->transceiverBackendFromSender(*senderBackend);
 
     Ref peerConnection = m_peerConnection.get();
-    auto newSender = RTCRtpSender::create(peerConnection, track, WTFMove(senderBackend));
+    auto newSender = RTCRtpSender::create(peerConnection, track, senderBackend.releaseNonNull());
     newSender->setMediaStreamIds(mediaStreamIds);
     auto receiver = createReceiver(transceiverBackend->createReceiverBackend(), track.kind(), track.id());
     auto transceiver = RTCRtpTransceiver::create(newSender.copyRef(), WTFMove(receiver), WTFMove(transceiverBackend));
@@ -381,7 +381,7 @@ ExceptionOr<Ref<RTCRtpTransceiver>> GStreamerPeerConnectionBackend::addTransceiv
     GST_DEBUG_OBJECT(m_endpoint->pipeline(), "Creating new transceiver.");
     auto backends = result.releaseReturnValue();
     Ref peerConnection = m_peerConnection.get();
-    auto sender = RTCRtpSender::create(peerConnection, WTFMove(trackOrKind), WTFMove(backends.senderBackend));
+    auto sender = RTCRtpSender::create(peerConnection, WTFMove(trackOrKind), backends.senderBackend.releaseNonNull());
     auto receiver = createReceiver(WTFMove(backends.receiverBackend), sender->trackKind(), sender->trackId());
     auto transceiver = RTCRtpTransceiver::create(WTFMove(sender), WTFMove(receiver), WTFMove(backends.transceiverBackend));
     peerConnection->addInternalTransceiver(transceiver.copyRef());
@@ -408,16 +408,16 @@ static inline GStreamerRtpTransceiverBackend& backendFromRTPTransceiver(RTCRtpTr
     return static_cast<GStreamerRtpTransceiverBackend&>(*transceiver.backend());
 }
 
-RTCRtpTransceiver* GStreamerPeerConnectionBackend::existingTransceiver(WTF::Function<bool(GStreamerRtpTransceiverBackend&)>&& matchingFunction)
+RefPtr<RTCRtpTransceiver> GStreamerPeerConnectionBackend::existingTransceiver(WTF::Function<bool(GStreamerRtpTransceiverBackend&)>&& matchingFunction)
 {
     for (auto& transceiver : protectedPeerConnection()->currentTransceivers()) {
         if (matchingFunction(backendFromRTPTransceiver(*transceiver)))
-            return transceiver.get();
+            return transceiver;
     }
     return nullptr;
 }
 
-RTCRtpTransceiver& GStreamerPeerConnectionBackend::newRemoteTransceiver(std::unique_ptr<GStreamerRtpTransceiverBackend>&& transceiverBackend, RealtimeMediaSource::Type type, String&& receiverTrackId)
+Ref<RTCRtpTransceiver> GStreamerPeerConnectionBackend::newRemoteTransceiver(std::unique_ptr<GStreamerRtpTransceiverBackend>&& transceiverBackend, RealtimeMediaSource::Type type, String&& receiverTrackId)
 {
     auto trackKind = type == RealtimeMediaSource::Type::Audio ? "audio"_s : "video"_s;
     Ref peerConnection = m_peerConnection.get();
@@ -425,9 +425,9 @@ RTCRtpTransceiver& GStreamerPeerConnectionBackend::newRemoteTransceiver(std::uni
     auto trackId = receiverTrackId.isEmpty() ? sender->trackId() : WTFMove(receiverTrackId);
     GST_DEBUG_OBJECT(m_endpoint->pipeline(), "New remote transceiver with receiver track ID: %s", trackId.utf8().data());
     auto receiver = createReceiver(transceiverBackend->createReceiverBackend(), trackKind, trackId);
-    auto transceiver = RTCRtpTransceiver::create(WTFMove(sender), WTFMove(receiver), WTFMove(transceiverBackend));
+    Ref transceiver = RTCRtpTransceiver::create(WTFMove(sender), WTFMove(receiver), WTFMove(transceiverBackend));
     peerConnection->addInternalTransceiver(transceiver.copyRef());
-    return transceiver.get();
+    return transceiver;
 }
 
 void GStreamerPeerConnectionBackend::collectTransceivers()

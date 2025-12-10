@@ -142,8 +142,6 @@ void WorkerScriptLoader::loadAsynchronously(ScriptExecutionContext& scriptExecut
     ASSERT(scriptRequest.httpMethod() == "GET"_s);
 
     auto request = makeUnique<ResourceRequest>(WTFMove(scriptRequest));
-    if (!request)
-        return;
 
     ThreadableLoaderOptions options { WTFMove(fetchOptions) };
     options.sendLoadCallbacks = SendCallbackPolicy::SendCallbacks;
@@ -265,18 +263,16 @@ void WorkerScriptLoader::didReceiveResponse(ScriptExecutionContextIdentifier mai
             if (registrationData && registrationData->activeWorker)
                 setControllingServiceWorker(WTFMove(*registrationData->activeWorker));
 
-            if (!m_client)
-                return;
-
-            m_client->didReceiveResponse(mainContext, identifier, response);
-            if (m_client && m_finishing)
-                m_client->notifyFinished(mainContext);
+            if (RefPtr client = m_client.get())
+                client->didReceiveResponse(mainContext, identifier, response);
+            if (RefPtr client = m_client.get(); client && m_finishing)
+                client->notifyFinished(mainContext);
         });
         return;
     }
 
-    if (m_client)
-        m_client->didReceiveResponse(mainContext, identifier, response);
+    if (RefPtr client = m_client.get())
+        client->didReceiveResponse(mainContext, identifier, response);
 }
 
 void WorkerScriptLoader::didReceiveData(const SharedBuffer& buffer)
@@ -336,14 +332,15 @@ void WorkerScriptLoader::notifyError(std::optional<ScriptExecutionContextIdentif
 void WorkerScriptLoader::notifyFinished(std::optional<ScriptExecutionContextIdentifier> mainContext)
 {
     m_threadableLoader = nullptr;
-    if (!m_client || m_finishing)
+    RefPtr client = m_client.get();
+    if (!client || m_finishing)
         return;
 
     m_finishing = true;
     if (m_isMatchingServiceWorkerRegistration)
         return;
 
-    m_client->notifyFinished(mainContext);
+    client->notifyFinished(mainContext);
 }
 
 void WorkerScriptLoader::cancel()

@@ -28,6 +28,7 @@
 
 #import "APIConversions.h"
 #import "Adapter.h"
+#import "DDMesh.h"
 #import "HardwareCapabilities.h"
 #import "PresentationContext.h"
 #import <cstring>
@@ -37,9 +38,25 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
+#if ENABLE(WEBGPU_SWIFT)
+#import "WebGPUSwiftInternal.h"
+#endif
+
 namespace WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Instance);
+
+static NSArray<id<MTLDevice>>* getDevices()
+{
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+    NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
+#else
+    NSMutableArray<id<MTLDevice>> *devices = [NSMutableArray array];
+    if (id<MTLDevice> device = MTLCreateSystemDefaultDevice())
+        [devices addObject:device];
+#endif
+    return devices;
+}
 
 Ref<Instance> Instance::create(const WGPUInstanceDescriptor& descriptor)
 {
@@ -137,13 +154,7 @@ static NSArray<id<MTLDevice>> *sortedDevices(NSArray<id<MTLDevice>> *devices, WG
 
 void Instance::requestAdapter(const WGPURequestAdapterOptions& options, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback)
 {
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
-#else
-    NSMutableArray<id<MTLDevice>> *devices = [NSMutableArray array];
-    if (id<MTLDevice> device = MTLCreateSystemDefaultDevice())
-        [devices addObject:device];
-#endif
+    auto devices = getDevices();
 
     // FIXME: Deal with options.compatibleSurface.
 
@@ -201,6 +212,11 @@ void Instance::retainDevice(Device& device, id<MTLCommandBuffer> commandBuffer)
     retainedDeviceInstances.removeIf([&] (auto& pair) {
         return !pair.value.size();
     });
+}
+
+id<MTLDevice> Instance::device() const
+{
+    return getDevices().firstObject;
 }
 
 } // namespace WebGPU
@@ -390,4 +406,9 @@ WGPUBool wgpuXRProjectionLayerIsValid(WGPUXRProjectionLayer layer)
 WGPUBool wgpuXRViewIsValid(WGPUXRView view)
 {
     return WebGPU::protectedFromAPI(view)->isValid();
+}
+
+WGPUDDMesh wgpuDDMeshCreate(WGPUInstance instance, const WGPUDDCreateMeshDescriptor* descriptor)
+{
+    return WebGPU::releaseToAPI(WebGPU::protectedFromAPI(instance)->createModelBacking(*descriptor));
 }

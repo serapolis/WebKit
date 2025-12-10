@@ -63,9 +63,6 @@ imported/w3c/web-platform-tests/pointerevents [ Pass ]
 
 imported/w3c/web-platform-tests/speech-api [ Pass ]
 
-http/tests/media/fairplay [ Pass ]
-http/tests/media/fairplay/fps-mse-attach-cdm-after-key-exchange.html [ Skip ] # Requires SampleBufferContentKeySessionSupportEnabled
-
 media/track/track-description-cue.html [ Pass ]
 media/track/track-extended-descriptions.html [ Pass ]
 media/media-source/remoteplayback-from-source-element.html [ Pass ]
@@ -259,15 +256,6 @@ fast/events/autoscroll-when-input-is-offscreen.html [ Skip ]
 # JSC does not support setIsolatedWorldSecurityOrigin
 webkit.org/b/61540 http/tests/security/isolatedWorld/cross-origin-xhr.html
 
-# https://bugs.webkit.org/show_bug.cgi?id=63282 layerTreeAsText doesn't work for iframes
-compositing/rtl/rtl-iframe-absolute-overflow-scrolled.html [ Skip ]
-compositing/rtl/rtl-iframe-fixed-overflow-scrolled.html [ Skip ]
-compositing/rtl/rtl-iframe-absolute-overflow.html [ Skip ]
-compositing/rtl/rtl-iframe-absolute.html [ Skip ]
-compositing/rtl/rtl-iframe-fixed-overflow.html [ Skip ]
-compositing/rtl/rtl-iframe-fixed.html [ Skip ]
-compositing/rtl/rtl-iframe-relative.html [ Skip ]
-
 # ENABLE(DRAGGABLE_REGION) is disabled
 fast/css/draggable-region-parser.html
 
@@ -376,7 +364,6 @@ webkit.org/b/107118 fast/canvas/canvas-quadratic-same-endpoint.html [ Failure ]
 webkit.org/b/142258 fast/css/object-fit/object-fit-canvas.html [ Pass ImageOnlyFailure ]
 
 # --- Compositing ----
-css3/filters/composited-during-transition-layertree.html
 
 platform/mac/fast/text/combining-character-sequence-fallback.html [ Pass Failure ]
 
@@ -624,6 +611,9 @@ webkit.org/b/91611 media/media-higher-prio-audio-stream.html [ Skip ]
 webkit.org/b/158836 imported/w3c/web-platform-tests/encrypted-media [ Skip ]
 ## --- End unimplemeted media tests ---
 
+## --- This tests fails, the values for width and the height of the video are zero
+webkit.org/b/299529 media/video-large-pixel-aspect-ratio.html [ Skip ]
+
 # HTML sandboxing produces two or three messages flakily.
 webkit.org/b/137368 media/video-controls-no-scripting.html [ Pass Failure ]
 
@@ -670,7 +660,7 @@ webkit.org/b/61487 http/tests/media/video-cross-site.html [ Failure ]
 webkit.org/b/230708 [ Debug ] media/video-ended-seek-crash.html [ Pass Timeout ]
 
 # https://bugs.webkit.org/show_bug.cgi?id=236113 mathml/presentation/fenced-mi.html is flakey when run with STIX Two
-mathml/presentation/fenced-mi.html [ Pass ImageOnlyFailure ]
+mathml/non-core/fenced-mi.html [ Pass ImageOnlyFailure ]
 
 # rdar://88981242 ([ Ventura ] media/accessibility-describes-video.html is a constant timeout)
 media/accessibility-describes-video.html [ Timeout ]
@@ -733,26 +723,14 @@ imported/w3c/web-platform-tests/media-source/ [ Pass ]
 imported/w3c/web-platform-tests/media-source/dedicated-worker/ [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/URL-createObjectURL-revoke.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-append-buffer.html [ Skip ]
-webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-appendbuffer-quota-exceeded.html [ Skip ]
-webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-config-change-mp4-av-framesize.html [ Skip ]
-webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-endofstream.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-errors.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-is-type-supported.html [ Skip ]
-webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-removesourcebuffer.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-seek-beyond-duration.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-sequencemode-append-buffer.html [ Skip ]
-webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-sourcebuffer-mode-timestamps.html [ Skip ]
 webkit.org/b/161725 imported/w3c/web-platform-tests/media-source/mediasource-sourcebuffer-mode.html [ Skip ]
 webkit.org/b/214166 imported/w3c/web-platform-tests/media-source/idlharness.window.html [ Skip ]
 
-# Requires WebM
-imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-a-bitrate.html [ Skip ]
-imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-av-audio-bitrate.html [ Skip ]
-imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-av-framesize.html [ Skip ]
-imported/w3c/web-platform-tests/media-source/mediasource-config-change-webm-av-video-bitrate.html [ Skip ]
-
 # Skipped in W3C Web Platform Test manifest
-imported/w3c/web-platform-tests/media-source/mediasource-getvideoplaybackquality.html [ Skip ]
 imported/w3c/web-platform-tests/media-source/mediasource-sourcebuffer-trackdefaults.html [ Skip ]
 imported/w3c/web-platform-tests/media-source/mediasource-trackdefault.html [ Skip ]
 imported/w3c/web-platform-tests/media-source/mediasource-trackdefaultlist.html [ Skip ]
@@ -1073,10 +1051,6 @@ webkit.org/b/168087 media/video-zoom.html [ Pass Failure ]
 # rdar://problem/23643423
 [ Debug ] fast/frames/exponential-frames.html [ Skip ]
 
-webkit.org/b/168094 imported/w3c/web-platform-tests/media-source/SourceBuffer-abort.html [ Pass Failure ]
-webkit.org/b/167975 imported/w3c/web-platform-tests/media-source/SourceBuffer-abort-removed.html [ Pass Failure ]
-webkit.org/b/187911 imported/w3c/web-platform-tests/media-source/SourceBuffer-abort-readyState.html [ Pass Failure ]
-
 [ Debug ] imported/w3c/web-platform-tests/hr-time/idlharness.any.html [ Slow ]
 
 webkit.org/b/168503 editing/pasteboard/drag-drop-copy-content.html [ Failure ]
@@ -1260,8 +1234,6 @@ webkit.org/b/173946 [ Debug ] media/modern-media-controls/fullscreen-support/ful
 
 webkit.org/b/183490 media/modern-media-controls/start-support/start-support-fullscreen.html [ Failure ]
 
-webkit.org/b/183764 fast/css/apple-system-control-colors.html [ Pass ]
-
 webkit.org/b/177616 http/tests/media/video-buffered-range-contains-currentTime.html [ Pass Timeout ]
 
 webkit.org/b/184612 media/audio-concurrent-supported.html [ Pass Failure ]
@@ -1309,8 +1281,6 @@ webkit.org/b/190724 [ Debug ] http/tests/misc/large-js-program.py [ Pass Timeout
 
 
 webkit.org/b/239405 fast/css/counters/element-removal-crash.xhtml [ Pass Failure ]
-
-webkit.org/b/190976 imported/w3c/web-platform-tests/media-source/mediasource-changetype-play.html [ Pass Failure ]
 
 webkit.org/b/189680 platform/mac/media/audio-session-category-video-paused.html [ Pass Timeout ]
 
@@ -1397,6 +1367,7 @@ imported/w3c/web-platform-tests/pointerevents/pointerevent_releasepointercapture
 imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_override_pending_capture_element.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_to_same_element_twice.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_pointerrawupdate_changes_pointer_capture.https.html [ Skip ]
+imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-propagates-when-target-is-video_touch.html [ Skip ]
 
 webkit.org/b/274686 imported/w3c/web-platform-tests/pointerevents/pointerevent_capture_mouse_and_release_and_capture_again.html [ Skip ]
 
@@ -1433,9 +1404,6 @@ webkit.org/b/200128 imported/w3c/web-platform-tests/html/semantics/embedded-cont
 
 # See bug 232916; this test can't pass as we do not support mid-stream resolution change.
 webkit.org/b/231084 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-video-element/resize-during-playback.html [ Skip ]
-
-# The test runner is failing in an unrelated, unexplained, invisible to the human eye, 2 pixels difference.
-webkit.org/b/201401 imported/w3c/web-platform-tests/media-source/mediasource-video-is-visible.html [ Skip ]
 
 webkit.org/b/198867 webgl/many-contexts.html [ Skip ]
 
@@ -1578,8 +1546,6 @@ webkit.org/b/209353 [ Release ] media/video-background-tab-playback.html [ Pass 
 
 webkit.org/b/215110 [ Release ] imported/w3c/web-platform-tests/css/css-animations/webkit-writing-mode-crash.html [ Pass Failure ]
 
-webkit.org/b/215450 imported/w3c/web-platform-tests/media-source/mediasource-changetype-play-negative.html [ Pass Failure ]
-
 # <rdar://problem/31017631> Stress GC bot failing LayoutTest step with timeout while running WebCryptoAPI/derive_bits_keys tests
 [ Debug ] imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys [ Skip ]
 
@@ -1606,10 +1572,6 @@ imported/w3c/web-platform-tests/css/css-sizing/percentage-height-in-flexbox.html
 
 # <rdar://problem/62860846> REGRESSION [ Mac Debug ] accessibility/roles-exposed.html is flaky timing out.
 [ Debug ] accessibility/roles-exposed.html [ Pass Timeout ]
-
-# rdar://66910555 ([ Layout Tests ] REGRESSION (r264345): [ macOS ] 2 media-source/mediasource-changetype-play are a flaky failure)
-imported/w3c/web-platform-tests/media-source/mediasource-changetype-play-implicit.html [ Pass Failure ]
-imported/w3c/web-platform-tests/media-source/mediasource-changetype-play-without-codecs-parameter.html [ Crash Pass Failure ]
 
 # WebP images
 fast/images/webp-as-image.html [ Pass ]
@@ -1644,6 +1606,7 @@ media/media-source/media-source-unnecessary-seek-seeked.html [ Pass Failure ]
 webkit.org/b/228094 imported/w3c/web-platform-tests/mathml/presentation-markup/operators/mo-stretch-properties-dynamic-001.html [ Pass Failure ]
 
 imported/w3c/web-platform-tests/mathml/relations/css-styling/table-width-1.xhtml [ ImageOnlyFailure Pass ]
+imported/w3c/web-platform-tests/mathml/presentation-markup/scripts/subsup-legacy-scriptshift-attributes-001.tentative.html [ ImageOnlyFailure ]
 
 media/media-source/media-source-webm-vp8-malformed-header.html [ Pass ]
 
@@ -1723,8 +1686,6 @@ webkit.org/b/221152 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-a
 
 webkit.org/b/221491 animations/keyframe-pseudo-shadow.html [ Pass ImageOnlyFailure ]
 
-webkit.org/b/221973 media/media-webm-no-duration.html [ Failure ]
-
 webkit.org/b/221100 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-channel-count.https.html [ Pass Failure ]
 
 webkit.org/b/222205 css3/calc/transforms-translate.html [ Pass ImageOnlyFailure ]
@@ -1732,10 +1693,6 @@ webkit.org/b/222205 css3/calc/transforms-translate.html [ Pass ImageOnlyFailure 
 webkit.org/b/222422 imported/w3c/web-platform-tests/media-source/mediasource-duration.html [ Pass Failure Slow ]
 
 webkit.org/b/222573 media/media-fullscreen-pause-inline.html [ Pass Failure ]
-
-# webkit.org/b/255294  2 http/tests/media/FairPlay tests are flakey.
-http/tests/media/fairplay/legacy-fairplay-mse-v2.html [ Pass Failure ]
-http/tests/media/fairplay/legacy-fairplay-mse-v3.html [ Pass Failure ]
 
 webkit.org/b/222692 inspector/page/empty-or-missing-resources.html [ Pass Timeout ]
 
@@ -1776,8 +1733,6 @@ webkit.org/b/223973 [ Debug ] imported/w3c/web-platform-tests/xhr/xhr-timeout-lo
 webkit.org/b/223975 inspector/protocol/condition.html [ Pass Timeout ]
 
 webkit.org/b/223976 [ Debug ] imported/w3c/web-platform-tests/cors/redirect-preflight.htm [ Pass Failure ]
-
-webkit.org/b/224123 media/modern-media-controls/macos-inline-media-controls/macos-inline-media-dropping-controls.html [ Pass Failure ]
 
 webkit.org/b/224212 [ arm64 ] compositing/background-color/no-composited-background-color-when-perspective.html [ Pass ImageOnlyFailure ]
 
@@ -1851,7 +1806,6 @@ webkit.org/b/228642 imported/w3c/web-platform-tests/html/cross-origin-opener-pol
 fast/css/accent-color/checkbox.html [ Pass ]
 fast/css/accent-color/progress.html [ Pass ]
 fast/css/accent-color/radio.html [ Pass ]
-fast/css/accent-color/select.html [ Pass ]
 fast/css/accent-color/text.html [ Pass ]
 
 # The following controls are not tintable on macOS
@@ -1859,7 +1813,6 @@ fast/css/accent-color/button.html [ Skip ]
 fast/css/accent-color/date.html [ Skip ]
 fast/css/accent-color/submit.html [ Skip ]
 
-webkit.org/b/199350 fast/css/accent-color/datalist.html [ ImageOnlyFailure ]
 webkit.org/b/231463 fast/css/accent-color/range.html [ ImageOnlyFailure ]
 
 # display-p3 canvas and ImageData are Cocoa only for now.
@@ -1909,7 +1862,6 @@ webkit.org/b/237172 imported/w3c/web-platform-tests/speech-api/SpeechSynthesis-s
 
 # Note: These tests were previously marked as flaky failures for Big Sur Release WK2 for webkit.org/b/235681, this may need to be re-added once webkit.org/b/248067 is resolved
 webkit.org/b/248067 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-drawImage.html [ Pass Failure ]
-webkit.org/b/248067 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-flipY.html [ Pass Failure ]
 
 # Plugins
 # FIXME: Remove these tests.
@@ -1994,7 +1946,6 @@ imported/w3c/web-platform-tests/websockets/cookies/007.html?wss&wpt_flags=https 
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/autoplay-disabled-by-feature-policy.https.sub.html [ Pass Failure ]
 animations/stop-animation-on-suspend.html [ Pass Failure ]
 fast/images/animated-avif.html [ ImageOnlyFailure ]
-http/tests/media/fairplay/fps-mse-unmuxed-key-rotation.html [ Failure ]
 [ x86_64 ] imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-video.html [ Pass Failure Timeout ]
 [ Debug ] imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/javascript-url-security-check-failure.sub.html [ Pass Failure ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/autoplay-allowed-by-feature-policy-attribute-redirect-on-load.https.sub.html [ Pass Failure ]
@@ -2110,7 +2061,6 @@ webkit.org/b/157589 fast/text-autosizing/ios/text-autosizing-after-back.html [ P
 [ Debug ] media/video-concurrent-playback.html [ Pass Failure ]
 
 # webkit.org/b/261308 Batch mark expectations for flaky imported/w3c/web-platform-tests
-imported/w3c/web-platform-tests/workers/WorkerGlobalScope_ErrorEvent_colno.htm [ Pass Failure ]
 [ Debug ] imported/w3c/web-platform-tests/encoding/streams/realms.window.html [ Pass Failure ]
 imported/w3c/web-platform-tests/workers/WorkerGlobalScope_ErrorEvent_filename.htm [ Pass Failure ]
 imported/w3c/web-platform-tests/css/css-writing-modes/forms/text-input-vertical-overflow-no-scroll.html [ Pass Failure Timeout ]
@@ -2141,6 +2091,8 @@ webkit.org/b/274628 [ Sonoma+ ] imported/w3c/web-platform-tests/css/css-text/wor
 webkit.org/b/257698 [ Sonoma+ ] imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase/word-break-auto-phrase-overflow-001.html [ ImageOnlyFailure ]
 webkit.org/b/257698 [ Sonoma+ ] imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase/word-break-auto-phrase-wbr-nobr-001.html [ ImageOnlyFailure ]
 webkit.org/b/257698 [ Sonoma+ ] imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase/word-break-auto-phrase-wbr-nobr-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase/word-break-auto-phrase-fallback-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-text/word-break/auto-phrase/word-break-auto-phrase-007.html [ ImageOnlyFailure ]
 
 # Deprecated CSS System Colors https://drafts.csswg.org/css-color-4/#deprecated-system-colors
 webkit.org/b/245347 imported/w3c/web-platform-tests/css/css-color/deprecated-sameas-001.html [ ImageOnlyFailure ]
@@ -2185,9 +2137,6 @@ fast/gradients/conic-stop-with-offset-zero-in-middle.html [ ImageOnlyFailure ]
 
 # Requires (ACCESSIBILITY_NON_BLINKING_CURSOR)
 accessibility/mac/prefers-non-blinking-cursor.html [ Skip ]
-
-# Enable after rdar://120859525 is available on bots
-http/tests/media/fairplay/fps-mse-unmuxed-mpts.html [ Skip ]
 
 # web-platform-tests/svg/painting/reftests failures
 imported/w3c/web-platform-tests/svg/painting/reftests/marker-path-021.svg [ ImageOnlyFailure ]
@@ -2313,21 +2262,7 @@ imported/w3c/web-platform-tests/css/css-writing-modes/text-orientation-upright-s
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/decode/image-decode-path-changes-svg.tentative.html [ Pass Failure ]
 
 # webkit.org/b/280193 [ Sequoia ] fast/inline/justify-emphasi s-inline-box.html is a constant failure. 
-[ Sequoia ] fast/inline/justify-emphasis-inline-box.html [ Failure ]
-
-# webkit.org/b/280378 [ Sequoia arm64 ] 14x http/tests/media/fairplay/* are constant failures
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-hls-key-rotation.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-hls-update-reject.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-hls.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-cenc.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-sinf.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-skd.html [ Failure ]
-http/tests/media/fairplay/fps-mse-play-while-not-in-dom.html [ Pass Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-audio-only.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-key-renewal.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-multiple-keys.html [ Failure ]
-[ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-same-key.html [ Failure ]
-http/tests/media/fairplay/fps-mse-multi-key-renewal.html [ Pass Failure ] 
+fast/inline/justify-emphasis-inline-box.html [ Failure ]
 
 webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphenate-character-002.html [ ImageOnlyFailure ]
 
@@ -2349,9 +2284,6 @@ webanimations/scroll-timeline-clamped-current-time-while-rubber-banding-mac.html
 # macOS-only test.
 media/webkit-media-controls-not-visible-after-exiting-fullscreen.html [ Pass ]
 
-# Modern AVContentKeySession is only available on Sonoma
-[ Sonoma ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Skip ]
-
 # webkit.org/b/280304 [ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html is a constant image only failure.
 [ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html [ ImageOnlyFailure ]
 
@@ -2361,8 +2293,6 @@ media/modern-media-controls/scrubber-support/scrubber-support-seek-back.html [ S
 # webkit.org/b/280792 [macOS] ASSERTION FAILED: Unsafe to ref/deref from different threads (flaky in EWS)
 inspector/worker/debugger-pause-subworker.html [ Skip ]
 inspector/worker/console-basic-subworker.html [ Skip ]
-
-webkit.org/b/284082 [ Sequoia+ ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Timeout Failure ]
 
 webkit.org/b/284597 http/tests/misc/repeat-open-cancel.html [ Slow ]
 
@@ -2394,7 +2324,7 @@ webkit.org/b/288546 imported/w3c/web-platform-tests/fullscreen/api/element-ready
 
 webkit.org/b/260320 imported/w3c/web-platform-tests/css/selectors/invalidation/nth-child-in-shadow-root.html [ ImageOnlyFailure ]
 
-webkit.org/b/289275 [ Release ] media/media-garbage-collection.html [ Pass Failure Timeout ]
+webkit.org/b/289275 media/media-garbage-collection.html [ Pass Failure Timeout ]
 
 # webkit.org/b/289392 REGRESSION(291726@main): 7x imported/w3c/web-platform-tests/svg/pservers/reftests/meshgradient-*.svg are constant failures. 
 imported/w3c/web-platform-tests/svg/pservers/reftests/meshgradient-basic-001.svg [ Failure ]
@@ -2457,13 +2387,6 @@ webkit.org/b/295435 compositing/layer-creation/overlap-animation-container.html 
 # The padding for native select controls is overridden on macOS Sequoia and earlier.
 imported/w3c/web-platform-tests/css/css-ui/select-author-level-padding-applies.html [ Skip ]
 
-# rdar://154886047 (REGRESSION(Liquid Glass): Rebaseline? [ OS 26 ] 5X imported/w3c/web-platform-tests/css/css-view-transitions/ (Layout-Tests) are constant ImageOnlyFailures)
-imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-below-and-on-top-of-viewport-partially-onscreen-new.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-left-of-viewport-offscreen-new.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-on-top-of-viewport-offscreen-new.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-right-and-left-of-viewport-partially-onscreen-new.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-view-transitions/new-content-transform-position-fixed.html [ ImageOnlyFailure ]
-
 # rdar://154889639 (REGRESSION(Liquid Glass): [ OS 26 ] fast/forms/datalist/datalist-fallback-content.html is a constant ImageOnlyFailure)
 fast/forms/datalist/datalist-fallback-content.html [ ImageOnlyFailure ]
 
@@ -2507,11 +2430,7 @@ imported/w3c/web-platform-tests/css/css-text-decor/text-emphasis-position-under-
 
 [ Debug ] imported/w3c/web-platform-tests/html/semantics/the-button-element/command-and-commandfor/interface.html [ Skip ]
 
-webkit.org/b/297434 imported/w3c/web-platform-tests/event-timing/retrievability.html [ Pass Failure ]
-
 webkit.org/b/294931 ipc/LocalSampleBufferDisplayLayer-LogIdentifier-data-race-uaf.html [ Skip ]
-
-webkit.org/b/297551 imported/w3c/web-platform-tests/event-timing/buffered-and-duration-threshold.html [ Pass Failure ] 
 
 webkit.org/b/297609 compositing/backing/backing-store-attachment-empty-keyframe.html [ Pass Failure ]
 
@@ -2528,3 +2447,97 @@ webkit.org/b/298476 gamepad/gamepad-visibility-1.html [ Crash ]
 webkit.org/b/280234 imported/w3c/web-platform-tests/html/dom/idlharness.https.html? [ Skip ]
 
 webkit.org/b/299131 [ Release ] inspector/unit-tests/target-manager.html [ Pass Crash ]
+
+webkit.org/b/299322 imported/w3c/web-platform-tests/uievents/mouse/mouse_boundary_events_after_reappending_last_over_target.tentative.html [ Pass Failure ]
+
+[ x86_64 ] imported/w3c/web-platform-tests/svg/fonts/font-size-adjust-scale-text.svg [ Failure Pass ]
+
+webkit.org/b/300137 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/repeated-imports.any.sharedworker.html [ Pass Failure ]
+
+webkit.org/b/300337 fast/images/imagebitmap-memory.html [ Pass ImageOnlyFailure ]
+
+# webkit.org/b/300715
+media/media-source/media-managedmse-video-with-poster.html [ Pass ImageOnlyFailure ]
+media/media-hevc-video-as-img.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/html/rendering/widgets/input-checkbox-switch-rtl.tentative.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-below-viewport-offscreen-old.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-scrollbars/textarea-scrollbar-width-none.html [ Pass ImageOnlyFailure ]
+fast/scrolling/mac/scrollbars/scrollbar-width-dynamic-none-to-auto.html [ Pass ImageOnlyFailure ]
+webgl/1.0.x/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the-canvas/drawimage_canvas.html [ Pass ImageOnlyFailure Failure ]
+imported/w3c/web-platform-tests/fetch/h1-parsing/lone-cr.window.html [ Pass Failure ]
+imported/w3c/web-platform-tests/digital-credentials/allow-attribute-with-get.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/digital-credentials/get.tentative.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/digital-credentials/user-activation.https.html [ Pass Failure ]
+imported/w3c/web-platform-tests/cookies/name/name-ctl.html [ Pass Failure ]
+imported/w3c/web-platform-tests/cookies/value/value-ctl.html [ Pass Failure ]
+http/tests/inspector/network/xhr-response-body.html [ Pass Failure ]
+accessibility/checkbox-radio-element-rect.html [ Pass Failure ]
+fast/forms/select/mac-wk2/inactive-appearance.html [ Pass Failure ImageOnlyFailure ]
+workers/btoa-oom.html [ Pass Timeout ]
+fast/canvas/offscreen-giant.html [ Pass ImageOnlyFailure ]
+fast/images/pagewide-play-pause-offscreen-animations.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/cross-origin-top-navigation-with-user-activation-in-parent.window.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/image-loading-lazy-in-scroller-horizontal-far.html [ Pass Failure ]
+imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/track/track-element/track-cues-enter-exit.html [ Pass Failure ]
+fast/forms/number/number-min-max-spinbutton-appearance-none-percentage-width.html [ Pass Failure ]
+fast/multicol/flexbox-rows.html [ Pass ImageOnlyFailure ]
+fast/forms/hidpi-textarea-on-subpixel-position.html [ Pass ImageOnlyFailure ]
+platform/mac/fast/forms/switch-repaint-size-vertical.html [ Pass Failure ]
+fast/forms/color/color-input-set-attribute-value.html [ Pass ImageOnlyFailure ]
+fast/css/accent-color/select.html [ Pass ImageOnlyFailure ]
+media/modern-media-controls/css/visibility-hidden.html [ Pass ImageOnlyFailure ]
+pdf/images/jpeg2000-embed-pdf.html [ Pass ImageOnlyFailure ]
+media/track/track-css-visible-stroke.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/transparent-accent-color-002.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-no-fallback-props-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-contain/contain-layout-suppress-baseline-002.html [ Pass ImageOnlyFailure ]
+media/modern-media-controls/volume-support/volume-support-drag-to-mute.html [ Pass Timeout ]
+fast/forms/input-appearance-spinbutton-up.html [ Pass Failure ]
+fast/forms/input-appearance-spinbutton.html [ Pass Failure ]
+fast/forms/number/number-appearance-rtl.html [ Pass Failure ]
+fast/forms/001.html [ Pass Failure ]
+fast/forms/basic-selects.html [ Pass Failure ]
+fast/forms/basic-textareas-quirks.html [ Pass Failure ]
+fast/forms/basic-textareas.html [ Pass Failure ]
+fast/forms/menulist-narrow-width.html [ Pass Failure ]
+fast/forms/menulist-style-color.html [ Pass Failure ]
+fast/forms/number/number-appearance-spinbutton-disabled-readonly.html [ Pass Failure ]
+fast/forms/select-style.html [ Pass Failure ]
+http/tests/workers/service/shownotification-allowed.html [ Pass Failure ]
+webgl/2.0.y/conformance/glsl/bugs/sampler-array-using-loop-index.html [ Pass Failure ]
+webgl/2.0.y/conformance/ogles/GL/greaterThan/greaterThan_001_to_008.html [ Pass Failure ]
+inspector/timeline/timeline-event-CancelAnimationFrame.html [ Pass Crash ]
+
+webkit.org/b/300994 fast/animation/request-animation-frame-throttling-aggressiveThermalMitigation.html [ Pass Failure ]
+
+webkit.org/b/300997 webrtc/filtering-ice-candidate-after-reload.html [ Pass Failure ]
+
+# https://bugs.webkit.org/show_bug.cgi?id=300996 [ macOS Tahoe ] 4 fast/forms tests (layout-tests) are constant image failures
+[ Tahoe ] fast/forms/switch/pointer-tracking.html [ ImageOnlyFailure ]
+[ Tahoe ] fast/forms/switch/click-animation.html [ ImageOnlyFailure ]
+[ Tahoe ] fast/forms/switch/click-animation-redundant-disabled.html [ ImageOnlyFailure ]
+[ Tahoe ] fast/forms/switch/click-animation-redundant-checked.html  [ ImageOnlyFailure ]
+
+# https://bugs.webkit.org/show_bug.cgi?id=301002 [ macOS Tahoe ] fast/css/apple-system-control-colors.html is a constant text failure
+[ Tahoe Debug ] fast/css/apple-system-control-colors.html [ Failure ]
+
+# https://bugs.webkit.org/show_bug.cgi?id=301143# [ macOS Tahoe ] fast/html/text-field-input-types.html is a constant text failure 
+[ Tahoe Debug ] fast/html/text-field-input-types.html [ Failure ]
+
+webkit.org/b/301668 fast/repaint/iframe-avoid-redundant-repaint.html [ Pass Failure ]
+
+# List buttons no longer have tint color after the form control refresh.
+fast/css/accent-color/datalist.html [ Skip ]
+
+webkit.org/b/302273 accessibility/mac/focus-setting-selection-syncronizing-not-clearing.html [ Pass Timeout ]
+
+webkit.org/b/302331 imported/w3c/web-platform-tests/css/css-viewport/zoom/iframe-zoom-nested.html [ Pass Failure ]
+
+webkit.org/b/302364 http/tests/site-isolation/window-open-with-name-cross-site.html [ Pass Crash ]
+
+webkit.org/b/301013 http/tests/workers/service/registerServiceWorkerClient-after-network-process-crash.html [ Pass Failure ]
+
+# webkit.org/b/301655 Internals animation toggle causes the Image global preference to change, unpausing animations in tests
+fast/images/page-wide-animation-toggle.html [ Pass Timeout ]
+fast/images/individual-animation-toggle.html [ Pass Timeout ]

@@ -156,9 +156,9 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     SetControlledByAutomation(bool controlled)
 
-    ConnectInspector(String targetId, Inspector::FrontendChannel::ConnectionType connectionType)
-    DisconnectInspector(String targetId)
-    SendMessageToTargetBackend(String targetId, String message)
+    ConnectInspector(Inspector::FrontendChannel::ConnectionType connectionType)
+    DisconnectInspector()
+    SendMessageToTargetBackend(String message)
 
 #if ENABLE(REMOTE_INSPECTOR)
     SetIndicating(bool indicating);
@@ -168,7 +168,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     DidBeginTouchPoint(WebCore::FloatPoint locationInRootView)
 #endif
 #if !ENABLE(IOS_TOUCH_EVENTS) && ENABLE(TOUCH_EVENTS)
-    TouchEvent(WebKit::WebTouchEvent event) -> (enum:uint8_t std::optional<WebKit::WebEventType> eventType, bool handled)
+    TouchEvent(WebKit::WebTouchEvent event) -> (enum:uint32_t std::optional<WebKit::WebEventType> eventType, bool handled)
 #endif
 
     CancelPointer(WebCore::PointerID pointerId, WebCore::IntPoint documentPoint)
@@ -203,10 +203,12 @@ messages -> WebPage WantsAsyncDispatchMessage {
     GetFrameTree() -> (struct std::optional<WebKit::FrameTreeNodeData> data)
     DidFinishLoadInAnotherProcess(WebCore::FrameIdentifier frameID)
     FrameWasRemovedInAnotherProcess(WebCore::FrameIdentifier frameID)
-    UpdateFrameTreeSyncData(WebCore::FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData> frameTreeSyncData)
 
-    ProcessSyncDataChangedInAnotherProcess(struct WebCore::ProcessSyncData processSyncData)
-    TopDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData> documentSyncData)
+    TopDocumentSyncDataChangedInAnotherProcess(struct WebCore::DocumentSyncSerializationData documentSyncData)
+    AllTopDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData> documentSyncData)
+
+    FrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier frameID, struct WebCore::FrameTreeSyncSerializationData frameTreeSyncData)
+    AllFrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData> frameTreeSyncData)
 
     NavigateToPDFLinkWithSimulatedClick(String url, WebCore::IntPoint documentPoint, WebCore::IntPoint screenPoint)
     GetPDFFirstPageSize(WebCore::FrameIdentifier frameID) -> (WebCore::FloatSize size)
@@ -237,7 +239,6 @@ messages -> WebPage WantsAsyncDispatchMessage {
     GetRenderTreeExternalRepresentation() -> (String string)
     GetSelectionOrContentsAsString() -> (String string)
     GetSourceForFrame(WebCore::FrameIdentifier frameID) -> (String string)
-    GetWebArchiveOfFrame(std::optional<WebCore::FrameIdentifier> frameID) -> (std::optional<IPC::SharedBufferReference> dataReference)
     GetWebArchiveOfFrameWithFileName(WebCore::FrameIdentifier frameID, Vector<WebCore::MarkupExclusionRule> markupExclusionRules, String fileName) -> (std::optional<IPC::SharedBufferReference> dataReference)
 #if PLATFORM(COCOA)
     GetWebArchiveData() -> (std::optional<IPC::SharedBufferReference> dataReference)
@@ -344,9 +345,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     CountStringMatches(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (uint32_t matchCount)
     ReplaceMatches(Vector<uint32_t> matchIndices, String replacementText, bool selectionOnly) -> (uint64_t numberOfReplacements)
 
-    FindRectsForStringMatches(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (Vector<WebCore::FloatRect> matches)
-
-    FindTextRangesForStringMatches(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (Vector<WebKit::WebFoundTextRange> ranges)
+    FindTextRangesForStringMatches(String string, OptionSet<WebKit::FindOptions> findOptions, unsigned maxMatchCount) -> (HashMap<WebCore::FrameIdentifier, Vector<WebKit::WebFoundTextRange>> frameOrderMap)
     ReplaceFoundTextRangeWithString(struct WebKit::WebFoundTextRange range, String string)
     DecorateTextRangeWithStyle(struct WebKit::WebFoundTextRange range, enum:uint8_t WebKit::FindDecorationStyle style)
     ScrollTextRangeToVisible(struct WebKit::WebFoundTextRange range)
@@ -475,18 +474,28 @@ messages -> WebPage WantsAsyncDispatchMessage {
     DrawRectToImageDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (std::optional<WebCore::ShareableBitmapHandle> image) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
     DrawPagesToPDF(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data)
     DrawPagesToPDFDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
+
+    DrawPrintingRectToSnapshot(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (bool success) ReplyCanDispatchOutOfOrder
+    DrawPrintingRectToSnapshotDuringDOMPrintOperation(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (bool success) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
+    DrawPrintingPagesToSnapshot(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (std::optional<WebCore::FloatSize> result)
+    DrawPrintingPagesToSnapshotDuringDOMPrintOperation(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (std::optional<WebCore::FloatSize> result) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
 #if PLATFORM(IOS_FAMILY)
     ComputePagesForPrintingiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (uint64_t pageCount) Synchronous
     DrawToPDFiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint64_t pageCount) -> (RefPtr<WebCore::SharedBuffer> data) ReplyCanDispatchOutOfOrder
     DrawToImage(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebCore::ShareableBitmapHandle> data) ReplyCanDispatchOutOfOrder
+
+    DrawPrintingPagesToSnapshotiOS(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint64_t pageCount) -> (std::optional<WebCore::FloatSize> result) ReplyCanDispatchOutOfOrder
+    DrawPrintingToSnapshotiOS(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebCore::FloatSize> result) ReplyCanDispatchOutOfOrder
 #endif
-    DrawToPDF(WebCore::FrameIdentifier frameID, std::optional<WebCore::FloatRect> rect, bool allowTransparentBackground) -> (RefPtr<WebCore::SharedBuffer> data)
-    DrawRemoteToPDF(WebCore::FrameIdentifier frameID, std::optional<WebCore::FloatRect> rect, bool allowTransparentBackground, WebCore::SnapshotIdentifier snapshotIdentifier)
+    DrawToPDF(std::optional<WebCore::FloatRect> rect, bool allowTransparentBackground) -> (RefPtr<WebCore::SharedBuffer> data)
 #endif
 #if PLATFORM(GTK)
     DrawPagesForPrinting(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebCore::SharedMemory::Handle> data, WebCore::ResourceError error)
     DrawPagesForPrintingDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebCore::SharedMemory::Handle> data, WebCore::ResourceError error) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
 #endif
+
+    DrawToSnapshot(std::optional<WebCore::FloatRect> rect, bool allowTransparentBackground, WebKit::RemoteSnapshotIdentifier snapshotIdentifier) -> (std::optional<WebCore::IntSize> result)
+    DrawFrameToSnapshot(WebCore::FrameIdentifier frameID, WebCore::IntRect rect, WebKit::RemoteSnapshotIdentifier snapshotIdentifier) -> (bool success)
 
     # Media
     SetMediaVolume(float volume)
@@ -619,6 +628,9 @@ messages -> WebPage WantsAsyncDispatchMessage {
     StartDeferringScrollEvents();
     FlushDeferredScrollEvents();
 
+    StartDeferringIntersectionObservations();
+    FlushDeferredIntersectionObservations();
+
     FlushDeferredDidReceiveMouseEvent()
 
     PerformHitTestForMouseEvent(WebKit::WebMouseEvent event) -> (struct WebKit::WebHitTestResultData hitTestResult, OptionSet<WebKit::WebEventModifier> modifiers)
@@ -655,7 +667,6 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SetUserInterfaceLayoutDirection(uint32_t direction)
 
     DidGetLoadDecisionForIcon(bool decision, WebKit::CallbackID loadIdentifier) -> (IPC::SharedBufferReference iconData)
-    SetUseIconLoadingClient(bool useIconLoadingClient)
 
 #if ENABLE(GAMEPAD)
     GamepadActivity(Vector<std::optional<WebKit::GamepadData>> gamepadDatas, enum:bool WebCore::EventMakesGamepadsVisible eventVisibility)
@@ -694,6 +705,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
     UpdateCurrentModifierState(OptionSet<WebCore::PlatformEventModifier> modifiers)
+
+    SimulateDeviceMotionChange(double xAcceleration, double yAcceleration, double zAcceleration, double xAccelerationIncludingGravity, double yAccelerationIncludingGravity, double zAccelerationIncludingGravity, double xRotationRate, double yRotationRate, double zRotationRate)
     SimulateDeviceOrientationChange(double alpha, double beta, double gamma)
 
 #if ENABLE(SPEECH_SYNTHESIS)
@@ -715,6 +728,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if PLATFORM(GTK) || PLATFORM(WPE)
     SendMessageToWebProcessExtension(struct WebKit::UserMessage userMessage)
     SendMessageToWebProcessExtensionWithReply(struct WebKit::UserMessage userMessage) -> (struct WebKit::UserMessage replyMessage)
+
+    GetRenderProcessInfo() -> (struct WebKit::RenderProcessInfo info)
 #endif
 
 #if PLATFORM(WPE) && USE(GBM) && ENABLE(WPE_PLATFORM)
@@ -800,9 +815,10 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     DispatchLoadEventToFrameOwnerElement(WebCore::FrameIdentifier frameID)
 
-    FrameWasFocusedInAnotherProcess(WebCore::FrameIdentifier frameID)
+    ElementWasFocusedInAnotherProcess(WebCore::FrameIdentifier frameID, struct WebCore::FocusOptions options)
+    FrameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier> frameID)
 
-    RemotePostMessage(WebCore::FrameIdentifier source, String sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, struct WebCore::MessageWithMessagePorts message)
+    RemotePostMessage(WebCore::FrameIdentifier source, WebCore::SecurityOriginData sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, struct WebCore::MessageWithMessagePorts message)
     RenderTreeAsTextForTesting(WebCore::FrameIdentifier frameID, uint64_t baseIndent, OptionSet<WebCore::RenderAsTextFlag> behavior) -> (String renderTreeDump) Synchronous
     LayerTreeAsTextForTesting(WebCore::FrameIdentifier frameID, uint64_t baseIndent, OptionSet<WebCore::LayerTreeAsTextOptions> options) -> (String layerTreeDump) Synchronous
     FrameTextForTesting(WebCore::FrameIdentifier frameID) -> (String text) Synchronous
@@ -816,6 +832,9 @@ messages -> WebPage WantsAsyncDispatchMessage {
     RequestTextExtraction(struct WebCore::TextExtraction::Request request) -> (struct WebCore::TextExtraction::Item item)
     HandleTextExtractionInteraction(struct WebCore::TextExtraction::Interaction interaction) -> (bool succeeded, String description)
     DescribeTextExtractionInteraction(struct WebCore::TextExtraction::Interaction interaction) -> (struct WebCore::TextExtraction::InteractionDescription description)
+    TakeSnapshotOfExtractedText(struct WebCore::TextExtraction::ExtractedText text) -> (RefPtr<WebCore::TextIndicator> textIndicator)
+    UpdateTextExtractionFilterRules(Vector<WebCore::TextExtraction::FilterRuleData> ruleData)
+    ApplyTextExtractionFilter(String input, std::optional<WebCore::NodeIdentifier> containerNodeID) -> (String output)
 
 #if PLATFORM(IOS_FAMILY)
     ShouldDismissKeyboardAfterTapAtPoint(WebCore::FloatPoint point) -> (bool shouldDismiss)
@@ -859,7 +878,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #endif
 
 #if PLATFORM(COCOA)
-    CreateTextIndicatorForElementWithID(String elementID) -> (struct std::optional<WebCore::TextIndicatorData> textIndicator)
+    CreateTextIndicatorForElementWithID(String elementID) -> (RefPtr<WebCore::TextIndicator> textIndicator)
 #endif
 
     TakeSnapshotForTargetedElement(WebCore::NodeIdentifier nodeID, WebCore::ScriptExecutionContextIdentifier documentID) -> (std::optional<WebCore::ShareableBitmapHandle> image)
@@ -895,7 +914,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     CloseCurrentTypingCommand()
 
     SimulateClickOverFirstMatchingTextInViewportWithUserInteraction(String targetText) -> (bool success)
-    UpdateOpener(WebCore::FrameIdentifier frameID, WebCore::FrameIdentifier newOpener)
+    UpdateOpener(WebCore::FrameIdentifier frameID, std::optional<WebCore::FrameIdentifier> newOpener)
+    SetFramePrinting(WebCore::FrameIdentifier frameID, bool printing, WebCore::FloatSize pageSize, WebCore::FloatSize originalPageSize, float maximumShrinkRatio, enum:bool WebCore::AdjustViewSize shouldAdjustViewSize);
 
 #if HAVE(AUDIT_TOKEN)
     SetPresentingApplicationAuditTokenAndBundleIdentifier(struct WebKit::CoreIPCAuditToken auditToken, String bundleIdentifier)
@@ -904,5 +924,10 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if USE(UICONTEXTMENU)
     WillBeginContextMenuInteraction()
     DidEndContextMenuInteraction()
+#endif
+
+#if ENABLE(VIDEO)
+    ShowCaptionDisplaySettingsPreview(WebCore::MediaPlayerClientIdentifier identifier)
+    HideCaptionDisplaySettingsPreview(WebCore::MediaPlayerClientIdentifier identifier)
 #endif
 }

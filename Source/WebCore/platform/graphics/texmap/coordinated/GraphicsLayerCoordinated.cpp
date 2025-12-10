@@ -105,7 +105,7 @@ void GraphicsLayerCoordinated::setNeedsDisplayInRect(const FloatRect& initialRec
         return;
 
     auto rect = initialRect;
-    if (shouldClip == ClipToLayer)
+    if (shouldClip == ShouldClipToLayer::Clip)
         rect.intersect({ { }, m_size });
 
     if (rect.isEmpty())
@@ -587,7 +587,7 @@ void GraphicsLayerCoordinated::setBackdropFiltersRect(const FloatRoundedRect& ba
     noteLayerPropertyChanged(Change::BackdropRect, ScheduleFlush::Yes);
 }
 
-bool GraphicsLayerCoordinated::addAnimation(const KeyframeValueList& valueList, const FloatSize& boxSize, const GraphicsLayerAnimation* animation, const String& animationName, double timeOffset)
+bool GraphicsLayerCoordinated::addAnimation(const KeyframeValueList& valueList, const GraphicsLayerAnimation* animation, const String& animationName, double timeOffset)
 {
     ASSERT(!animationName.isEmpty());
     ASSERT(animation);
@@ -624,7 +624,7 @@ bool GraphicsLayerCoordinated::addAnimation(const KeyframeValueList& valueList, 
         return false;
     }
 
-    m_animations.add(TextureMapperAnimation(animationName, valueList, boxSize, *animation, MonotonicTime::now() - Seconds(timeOffset), 0_s, TextureMapperAnimation::State::Playing));
+    m_animations.add(TextureMapperAnimation(animationName, valueList, *animation, MonotonicTime::now() - Seconds(timeOffset), 0_s, TextureMapperAnimation::State::Playing));
     noteLayerPropertyChanged(Change::Animations, ScheduleFlush::Yes);
     return true;
 }
@@ -664,11 +664,11 @@ void GraphicsLayerCoordinated::transformRelatedPropertyDidChange()
         noteLayerPropertyChanged(Change::Animations, ScheduleFlush::Yes);
 }
 
-Vector<std::pair<String, double>> GraphicsLayerCoordinated::acceleratedAnimationsForTesting(const Settings&) const
+Vector<GraphicsLayer::AcceleratedAnimationForTesting> GraphicsLayerCoordinated::acceleratedAnimationsForTesting() const
 {
-    Vector<std::pair<String, double>> animations;
+    Vector<GraphicsLayer::AcceleratedAnimationForTesting> animations;
     for (auto& animation : m_animations.animations())
-        animations.append({ animatedPropertyIDAsString(animation.keyframes().property()), animation.state() == TextureMapperAnimation::State::Playing ? 1 : 0 });
+        animations.append({ animatedPropertyIDAsString(animation.keyframes().property()), animation.state() == TextureMapperAnimation::State::Playing ? 1.0 : 0.0, false });
     return animations;
 }
 

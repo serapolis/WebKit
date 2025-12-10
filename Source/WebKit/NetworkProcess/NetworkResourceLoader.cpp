@@ -95,6 +95,10 @@
 #include <WebCore/ContentFilterUnblockHandler.h>
 #endif
 
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#include "WebParentalControlsURLFilter.h"
+#endif
+
 #define LOADER_RELEASE_LOG_WITH_THIS(thisPtr, fmt, ...) RELEASE_LOG(Network, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", frameID=%" PRIu64 ", resourceID=%" PRIu64 ", isMainResource=%d, destination=%u, isSynchronous=%d] NetworkResourceLoader::" fmt, WTF::getPtr(thisPtr), thisPtr->webPageProxyID().toUInt64(), thisPtr->pageID().toUInt64(), thisPtr->frameID().toUInt64(), thisPtr->coreIdentifier().toUInt64(), thisPtr->isMainResource(), static_cast<unsigned>(thisPtr->m_parameters.options.destination), thisPtr->isSynchronous(), ##__VA_ARGS__)
 #define LOADER_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", frameID=%" PRIu64 ", resourceID=%" PRIu64 ", isMainResource=%d, destination=%u, isSynchronous=%d] NetworkResourceLoader::" fmt, this, webPageProxyID().toUInt64(), pageID().toUInt64(), frameID().toUInt64(), coreIdentifier().toUInt64(), isMainResource(), static_cast<unsigned>(m_parameters.options.destination), isSynchronous(), ##__VA_ARGS__)
 #define LOADER_RELEASE_LOG_DEBUG(fmt, ...) RELEASE_LOG_DEBUG(Network, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", frameID=%" PRIu64 ", resourceID=%" PRIu64 ", isMainResource=%d, destination=%u, isSynchronous=%d] NetworkResourceLoader::" fmt, this, webPageProxyID().toUInt64(), pageID().toUInt64(), frameID().toUInt64(), coreIdentifier().toUInt64(), isMainResource(), static_cast<unsigned>(m_parameters.options.destination), isSynchronous(), ##__VA_ARGS__)
@@ -284,21 +288,39 @@ void NetworkResourceLoader::startRequest(const ResourceRequest& newRequest)
 }
 
 #if ENABLE(CONTENT_FILTERING)
-bool NetworkResourceLoader::startContentFiltering(ResourceRequest& request)
+static void setSharedParentalControlsURLFilterIfNecessary()
 {
-    if (!isMainResource())
-        return true;
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && !HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
+    ASSERT(isMainRunLoop());
+    static bool initialized = false;
+    if (!initialized) {
+        WebCore::ParentalControlsURLFilter::setGlobalFilter(WebParentalControlsURLFilter::create());
+        initialized = true;
+    }
+#endif
+}
+
+void NetworkResourceLoader::startContentFiltering(ResourceRequest&& request, CompletionHandler<void(ResourceRequest)>&& completionHandler)
+{
+    if (!isMainResource()) {
+        completionHandler(WTFMove(request));
+        return;
+    }
+    setSharedParentalControlsURLFilterIfNecessary();
     m_contentFilter = ContentFilter::create(*this);
     CheckedPtr contentFilter = m_contentFilter.get();
 #if HAVE(AUDIT_TOKEN)
     contentFilter->setHostProcessAuditToken(protectedConnectionToWebProcess()->networkProcess().sourceApplicationAuditToken());
 #endif
     contentFilter->startFilteringMainResource(request.url());
-    if (!contentFilter->continueAfterWillSendRequest(request, ResourceResponse())) {
-        contentFilter->stopFilteringMainResource();
-        return false;
-    }
-    return true;
+
+    CompletionHandler<void(ResourceRequest)> completion = [contentFilter, completionHandler = WTFMove(completionHandler)](ResourceRequest&& request) mutable {
+        ASSERT(isMainRunLoop());
+        if (CheckedPtr filter = std::exchange(contentFilter, nullptr); request.isNull())
+            filter->stopFilteringMainResource();
+        completionHandler(WTFMove(request));
+    };
+    contentFilter->continueAfterWillSendRequest(WTFMove(request), ResourceResponse(), WTFMove(completion));
 }
 
 #endif
@@ -527,6 +549,8 @@ ResourceLoadInfo NetworkResourceLoader::resourceLoadInfo()
         case WebCore::FetchOptions::Destination::Serviceworker:
             return ResourceLoadInfo::Type::Other;
         case WebCore::FetchOptions::Destination::Sharedworker:
+            return ResourceLoadInfo::Type::Other;
+        case WebCore::FetchOptions::Destination::Speculationrules:
             return ResourceLoadInfo::Type::Other;
         case WebCore::FetchOptions::Destination::Style:
             return ResourceLoadInfo::Type::Stylesheet;
@@ -1150,10 +1174,10 @@ void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLo
 #endif
 
     if (isSynchronous())
-        sendReplyToSynchronousRequest(*m_synchronousLoadData, m_bufferedData.get().get(), networkLoadMetrics);
+        sendReplyToSynchronousRequest(*m_synchronousLoadData, m_bufferedData.protectedBuffer().get(), networkLoadMetrics);
     else {
         if (!m_bufferedData.isEmpty()) {
-            sendBuffer(*m_bufferedData.get());
+            sendBuffer(*m_bufferedData.protectedBuffer());
         }
 #if ENABLE(CONTENT_FILTERING)
         if (CheckedPtr contentFilter = m_contentFilter.get()) {
@@ -1587,12 +1611,12 @@ void NetworkResourceLoader::bufferingTimerFired()
         return;
 
 #if ENABLE(CONTENT_FILTERING)
-    auto sharedBuffer = m_bufferedData.takeAsContiguous();
+    auto sharedBuffer = m_bufferedData.takeBufferAsContiguous();
     bool shouldFilter = m_contentFilter && !checkedContentFilter()->continueAfterDataReceived(sharedBuffer);
     if (!shouldFilter)
         sendDidReceiveDataMessage(sharedBuffer);
 #else
-    sendDidReceiveDataMessage(m_bufferedData.takeAsContiguous());
+    sendDidReceiveDataMessage(m_bufferedData.takeBufferAsContiguous());
 #endif
     m_bufferedData.empty();
 }
@@ -1623,12 +1647,12 @@ void NetworkResourceLoader::tryStoreAsCacheEntry()
     if (isCrossOriginPrefetch()) {
         if (CheckedPtr session = protectedConnectionToWebProcess()->networkProcess().networkSession(sessionID())) {
             LOADER_RELEASE_LOG("tryStoreAsCacheEntry: Storing entry in prefetch cache");
-            session->checkedPrefetchCache()->store(m_networkLoad->currentRequest().url(), WTFMove(m_response), m_privateRelayed, m_bufferedDataForCache.take());
+            session->checkedPrefetchCache()->store(m_networkLoad->currentRequest().url(), WTFMove(m_response), m_privateRelayed, m_bufferedDataForCache.takeBuffer());
         }
         return;
     }
     LOADER_RELEASE_LOG("tryStoreAsCacheEntry: Storing entry in HTTP disk cache");
-    protectedCache()->store(m_networkLoad->currentRequest(), m_response, m_privateRelayed, m_bufferedDataForCache.take(), [loader = Ref { *this }](auto&& mappedBody) mutable {
+    protectedCache()->store(m_networkLoad->currentRequest(), m_response, m_privateRelayed, m_bufferedDataForCache.takeBuffer(), [loader = Ref { *this }](auto&& mappedBody) mutable {
 #if ENABLE(SHAREABLE_RESOURCE)
         if (!mappedBody.shareableResourceHandle)
             return;
@@ -2012,7 +2036,7 @@ void NetworkResourceLoader::logSlowCacheRetrieveIfNeeded(const NetworkCache::Cac
     if (duration < 1_s)
         return;
     LOADER_RELEASE_LOG("logSlowCacheRetrieveIfNeeded: Took %.0fms, priority %d", duration.milliseconds(), info.priority);
-    if (info.wasSpeculativeLoad)
+    if (info.speculativeLoadDecision && *info.speculativeLoadDecision == NetworkCache::SpeculativeLoadDecision::Yes)
         LOADER_RELEASE_LOG("logSlowCacheRetrieveIfNeeded: Was speculative load");
     if (!info.storageTimings.startTime)
         return;
@@ -2050,23 +2074,31 @@ void NetworkResourceLoader::startWithServiceWorker()
 {
     LOADER_RELEASE_LOG("startWithServiceWorker:");
 
-    auto newRequest = ResourceRequest { originalRequest() };
+    CompletionHandler<void(ResourceRequest)> completionHandler = [protectedThis = Ref { *this }](ResourceRequest&& request) {
+        ASSERT(RunLoop::isMain());
+
+        if (request.isNull())
+            return;
+
+        ASSERT(!protectedThis->m_serviceWorkerFetchTask);
+        protectedThis->m_serviceWorkerFetchTask = protectedThis->protectedConnectionToWebProcess()->createFetchTask(protectedThis, request);
+        if (protectedThis->m_serviceWorkerFetchTask) {
+            LOADER_RELEASE_LOG_WITH_THIS(protectedThis, "startWithServiceWorker: Created a ServiceWorkerFetchTask (fetchIdentifier=%" PRIu64 ")", protectedThis->m_serviceWorkerFetchTask->fetchIdentifier().toUInt64());
+            return;
+        }
+
+        if (protectedThis->abortIfServiceWorkersOnly())
+            return;
+
+        protectedThis->startRequest(WTFMove(request));
+    };
+
+    ResourceRequest newRequest { originalRequest() };
 #if ENABLE(CONTENT_FILTERING)
-    if (!startContentFiltering(newRequest))
-        return;
+    startContentFiltering(WTFMove(newRequest), WTFMove(completionHandler));
+#else
+    completionHandler(WTFMove(newRequest));
 #endif
-
-    ASSERT(!m_serviceWorkerFetchTask);
-    m_serviceWorkerFetchTask = protectedConnectionToWebProcess()->createFetchTask(*this, newRequest);
-    if (m_serviceWorkerFetchTask) {
-        LOADER_RELEASE_LOG("startWithServiceWorker: Created a ServiceWorkerFetchTask (fetchIdentifier=%" PRIu64 ")", m_serviceWorkerFetchTask->fetchIdentifier().toUInt64());
-        return;
-    }
-
-    if (abortIfServiceWorkersOnly())
-        return;
-
-    startRequest(newRequest);
 }
 
 bool NetworkResourceLoader::abortIfServiceWorkersOnly()
@@ -2211,13 +2243,6 @@ CheckedPtr<WebCore::ContentFilter> NetworkResourceLoader::checkedContentFilter()
 {
     return m_contentFilter.get();
 }
-
-#if HAVE(WEBCONTENTRESTRICTIONS)
-bool NetworkResourceLoader::usesWebContentRestrictions()
-{
-    return protectedConnectionToWebProcess()->usesWebContentRestrictionsForFilter();
-}
-#endif
 
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
 String NetworkResourceLoader::webContentRestrictionsConfigurationPath() const

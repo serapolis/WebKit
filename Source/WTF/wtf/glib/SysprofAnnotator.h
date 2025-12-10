@@ -67,11 +67,13 @@ public:
     {
         auto key = std::make_pair(pointer, static_cast<const void*>(name.data()));
 
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         Vector<char> buffer(1024);
         va_list args;
         va_start(args, description);
         vsnprintf(buffer.mutableSpan().data(), buffer.size(), description, args);
         va_end(args);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         auto value = std::make_pair(SYSPROF_CAPTURE_CURRENT_TIME, WTFMove(buffer));
 
@@ -143,8 +145,7 @@ public:
         case BuildTransactionStart:
         case WaitForCompositionCompletionStart:
         case RenderLayerTreeStart:
-        case FlushPendingLayerChangesStart:
-        case LayerFlushStart:
+        case UpdateRenderingStart:
         case SyncMessageStart:
         case SyncTouchEventStart:
         case InitializeWebProcessStart:
@@ -164,6 +165,8 @@ public:
         case WebXRCPFrameStartSubmissionStart:
         case WebXRCPFrameEndSubmissionStart:
         case WakeUpAndApplyDisplayListStart:
+        case ThreadTimersStart:
+        case TimerFiredStart:
             beginMark(nullptr, tracePointCodeName(code).spanIncludingNullTerminator(), "%s", "");
             break;
 
@@ -205,8 +208,7 @@ public:
         case BackingStoreFlushEnd:
         case WaitForCompositionCompletionEnd:
         case RenderLayerTreeEnd:
-        case FlushPendingLayerChangesEnd:
-        case LayerFlushEnd:
+        case UpdateRenderingEnd:
         case BuildTransactionEnd:
         case SyncMessageEnd:
         case SyncTouchEventEnd:
@@ -227,6 +229,8 @@ public:
         case WebXRCPFrameStartSubmissionEnd:
         case WebXRCPFrameEndSubmissionEnd:
         case WakeUpAndApplyDisplayListEnd:
+        case ThreadTimersEnd:
+        case TimerFiredEnd:
             endMark(nullptr, tracePointCodeName(code).spanIncludingNullTerminator(), "%s", "");
             break;
 
@@ -262,6 +266,12 @@ public:
             sysprof_collector_set_counters(&id.value(), &counterValue, 1);
         } else {
             unsigned newId = sysprof_collector_request_counters(1);
+
+            // Temporary workaround for libsysprof-capture providing conflicting IDs to threads.
+            static unsigned maxId = 0;
+            if (newId <= maxId)
+                newId = sysprof_collector_request_counters(maxId - newId + 1) + maxId - newId;
+            maxId = newId;
 
             m_counters.add(static_cast<const void*>(name.data()), newId);
 
@@ -402,6 +412,12 @@ private:
         case FixedContainerEdgeSamplingStart:
         case FixedContainerEdgeSamplingEnd:
             return "FixedContainerEdgeSampling"_s;
+        case ThreadTimersStart:
+        case ThreadTimersEnd:
+            return "WebCoreThreadTimers"_s;
+        case TimerFiredStart:
+        case TimerFiredEnd:
+            return "WebCoreTimerExecution"_s;
 
         case WebHTMLViewPaintStart:
         case WebHTMLViewPaintEnd:
@@ -479,18 +495,15 @@ private:
         case WakeUpAndApplyDisplayListEnd:
             return "WakeUpAndApplyDisplayList"_s;
 
-        case FlushPendingLayerChangesStart:
-        case FlushPendingLayerChangesEnd:
-            return "FlushPendingLayerChanges"_s;
+        case UpdateRenderingStart:
+        case UpdateRenderingEnd:
+            return "UpdateRendering"_s;
         case WaitForCompositionCompletionStart:
         case WaitForCompositionCompletionEnd:
             return "WaitForCompositionCompletion"_s;
         case RenderLayerTreeStart:
         case RenderLayerTreeEnd:
             return "RenderLayerTree"_s;
-        case LayerFlushStart:
-        case LayerFlushEnd:
-            return "LayerFlush"_s;
 
         case WTFRange:
         case JavaScriptRange:

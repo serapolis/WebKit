@@ -26,6 +26,9 @@
 #include "config.h"
 #include "TrackInfo.h"
 
+#if PLATFORM(COCOA)
+#include <CoreMedia/CMFormatDescription.h>
+#endif
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -44,6 +47,13 @@ String convertEnumerationToString(TrackInfoTrackType type)
     static_assert(static_cast<size_t>(TrackInfoTrackType::Text) == 3, "TrackInfoTrackType::Text is not 3 as expected");
     ASSERT(static_cast<size_t>(type) < std::size(values));
     return values[static_cast<size_t>(type)];
+}
+
+Ref<TrackInfo> TrackInfo::fromVariant(Variant<Ref<AudioInfo>, Ref<VideoInfo>> variant)
+{
+    return WTF::visit(WTF::makeVisitor([](auto&& info) -> Ref<TrackInfo> {
+        return WTFMove(info);
+    }), WTFMove(variant));
 }
 
 } // namespace WebCore

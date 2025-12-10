@@ -31,10 +31,10 @@
 #include "AudioBus.h"
 #include "CAAudioStreamDescription.h"
 #include "Logging.h"
-#include "SpanCoreAudio.h"
 #include "WebAudioBufferList.h"
 #include <CoreAudio/CoreAudioTypes.h>
 #include <pal/avfoundation/MediaTimeAVFoundation.h>
+#include <pal/cf/CoreAudioExtras.h>
 #include <wtf/StdLibExtras.h>
 
 #include <pal/cf/CoreMediaSoftLink.h>

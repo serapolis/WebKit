@@ -524,7 +524,10 @@ void DatabaseBackendDispatcher::executeSQLAsync(long protocol_requestId, RefPtr<
 #pragma once
 
 #include "TestProtocolObjects.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/JSONValues.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/Nonmovable.h>
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -534,10 +537,13 @@ class FrontendRouter;
 class DatabaseFrontendDispatcher {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DatabaseFrontendDispatcher);
 public:
-    DatabaseFrontendDispatcher(FrontendRouter& frontendRouter) : m_frontendRouter(frontendRouter) { }
+    DatabaseFrontendDispatcher(FrontendRouter&);
+    ~DatabaseFrontendDispatcher();
+    WTF_MAKE_NONCOPYABLE(DatabaseFrontendDispatcher);
+    WTF_MAKE_NONMOVABLE(DatabaseFrontendDispatcher);
     void didEncounterError(RefPtr<Protocol::Database::Error>&& opt_sqlError);
 private:
-    FrontendRouter& m_frontendRouter;
+    const CheckedRef<FrontendRouter> m_frontendRouter;
 };
 
 } // namespace Inspector
@@ -580,6 +586,10 @@ private:
 
 namespace Inspector {
 
+DatabaseFrontendDispatcher::DatabaseFrontendDispatcher(FrontendRouter& frontendRouter) : m_frontendRouter(frontendRouter) { }
+
+DatabaseFrontendDispatcher::~DatabaseFrontendDispatcher() = default;
+
 void DatabaseFrontendDispatcher::didEncounterError(RefPtr<Protocol::Database::Error>&& opt_sqlError)
 {
     auto protocol_jsonMessage = JSON::Object::create();
@@ -589,7 +599,7 @@ void DatabaseFrontendDispatcher::didEncounterError(RefPtr<Protocol::Database::Er
         protocol_paramsObject->setObject("sqlError"_s, opt_sqlError.releaseNonNull());
     protocol_jsonMessage->setObject("params"_s, WTFMove(protocol_paramsObject));
 
-    m_frontendRouter.sendEvent(protocol_jsonMessage->toJSONString());
+    m_frontendRouter->sendEvent(protocol_jsonMessage->toJSONString());
 }
 
 } // namespace Inspector
@@ -685,17 +695,25 @@ public:
         AllFieldsSet = (MessageSet | CodeSet)
     };
 
+    using JSON::ObjectBase::setBoolean;
+    using JSON::ObjectBase::setInteger;
+    using JSON::ObjectBase::setDouble;
+    using JSON::ObjectBase::setString;
+    using JSON::ObjectBase::setValue;
+    using JSON::ObjectBase::setObject;
+    using JSON::ObjectBase::setArray;
+
     template<int STATE>
     class Builder {
     private:
-        RefPtr<JSON::Object> m_result;
+        RefPtr<Error> m_result;
 
         template<int STEP> Builder<STATE | STEP>& castState()
         {
-            return *reinterpret_cast<Builder<STATE | STEP>*>(this);
+            SUPPRESS_MEMORY_UNSAFE_CAST return *reinterpret_cast<Builder<STATE | STEP>*>(this);
         }
 
-        Builder(Ref</*Error*/JSON::Object>&& object)
+        Builder(Ref<Error>&& object)
             : m_result(WTFMove(object))
         {
             static_assert(STATE == NoFieldsSet, "builder created in non init state");
@@ -706,14 +724,14 @@ public:
         Builder<STATE | MessageSet>& setMessage(const String& in_message)
         {
             static_assert(!(STATE & MessageSet), "property message already set");
-            m_result->setString("message"_s, in_message);
+            Ref { *m_result }->setString("message"_s, in_message);
             return castState<MessageSet>();
         }
 
         Builder<STATE | CodeSet>& setCode(int in_code)
         {
             static_assert(!(STATE & CodeSet), "property code already set");
-            m_result->setInteger("code"_s, in_code);
+            Ref { *m_result }->setInteger("code"_s, in_code);
             return castState<CodeSet>();
         }
 
@@ -722,12 +740,14 @@ public:
             static_assert(STATE == AllFieldsSet, "result is not ready");
             static_assert(sizeof(Error) == sizeof(JSON::Object), "cannot cast");
 
-            Ref<JSON::Object> jsonResult = m_result.releaseNonNull();
-            auto result = WTFMove(*reinterpret_cast<Ref<Error>*>(&jsonResult));
-            return result;
+            return m_result.releaseNonNull();
         }
     };
 
+private:
+    Error() = default;
+
+public:
     /*
      * Synthetic constructor:
      * Ref<Error> result = Error::create()
@@ -737,7 +757,7 @@ public:
      */
     static Builder<NoFieldsSet> create()
     {
-        return Builder<NoFieldsSet>(JSON::Object::create());
+        return Builder<NoFieldsSet>(adoptRef(*new Error));
     }
 };
 
@@ -1230,7 +1250,7 @@ using namespace Inspector;
     _databaseHandler = handler;
 
     auto alternateDispatcher = makeUnique<ObjCInspectorDatabaseBackendDispatcher>(handler);
-    auto alternateAgent = makeUnique<AlternateDispatchableAgent<DatabaseBackendDispatcher, AlternateDatabaseBackendDispatcher>>("Database"_s, *_controller, WTFMove(alternateDispatcher));
+    auto alternateAgent = makeUniqueRef<AlternateDispatchableAgent<DatabaseBackendDispatcher, AlternateDatabaseBackendDispatcher>>("Database"_s, *_controller, WTFMove(alternateDispatcher));
     _controller->registerAlternateAgent(WTFMove(alternateAgent));
 }
 

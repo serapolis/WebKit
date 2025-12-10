@@ -108,7 +108,14 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
         return jsEventListener && !jsEventListener->wasCreatedFromMarkup();
     }();
 
-    if (!ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once }))
+    bool trustedOnly = false;
+    if (options.webkitTrustedOnly) {
+        auto* function = listener->jsFunction();
+        if (function && worldForDOMObject(*function).allowAutofill())
+            trustedOnly = true;
+    }
+
+    if (!ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once, trustedOnly }))
         return false;
 
     if (RefPtr signal = options.signal) {
@@ -347,6 +354,9 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         if (phase == EventInvokePhase::Bubbling && registeredListener->useCapture())
             continue;
 
+        if (!event.isTrusted() && registeredListener->trustedOnly()) [[unlikely]]
+            continue;
+
         Ref callback = registeredListener->callback();
         if (InspectorInstrumentation::isEventListenerDisabled(*this, event.type(), callback, registeredListener->useCapture()))
             continue;
@@ -365,6 +375,11 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         if (event.isAutofillEvent()) [[unlikely]] {
             if (!worldForDOMObject(*callback->jsFunction()).allowAutofill())
                 continue; // webkitrequestautofill only fires in a world with autofill capability.
+        }
+
+        if (event.isShadowRootAttachedEvent()) [[unlikely]] {
+            if (!worldForDOMObject(*callback->jsFunction()).canAccessAnyShadowRoot())
+                continue; // webkitshadowrootattached only fires in a world with access to all shadow roots.
         }
 
         // Do this before invocation to avoid reentrancy issues.

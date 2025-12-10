@@ -47,7 +47,7 @@
 #import "WebFrame.h"
 #import "WebHitTestResultData.h"
 #import "WebImage.h"
-#import "WebInspectorInternal.h"
+#import "WebInspectorBackend.h"
 #import "WebKeyboardEvent.h"
 #import "WebMouseEvent.h"
 #import "WebPageOverlay.h"
@@ -63,11 +63,15 @@
 #import <WebCore/ColorMac.h>
 #import <WebCore/DataDetection.h>
 #import <WebCore/DictionaryLookup.h>
+#import <WebCore/DocumentPage.h>
+#import <WebCore/DocumentQuirks.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/Editing.h>
 #import <WebCore/EditingHTMLConverter.h>
 #import <WebCore/Editor.h>
 #import <WebCore/EventHandler.h>
 #import <WebCore/FocusController.h>
+#import <WebCore/FrameDestructionObserverInlines.h>
 #import <WebCore/FrameLoader.h>
 #import <WebCore/FrameLoaderTypes.h>
 #import <WebCore/GraphicsContext.h>
@@ -114,6 +118,7 @@
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 #import "MediaPlaybackTargetContextSerialized.h"
+#import "MediaPlaybackTargetSerialized.h"
 #endif
 
 #import "PDFKitSoftLink.h"
@@ -155,7 +160,7 @@ void WebPage::createMockAccessibilityElement(pid_t pid)
     m_mockAccessibilityElement = WTFMove(mockAccessibilityElement);
 }
 
-void WebPage::platformReinitialize()
+void WebPage::platformReinitializeAccessibilityToken()
 {
     RefPtr frame = m_page->focusController().focusedOrMainFrame();
     if (!frame)
@@ -211,7 +216,7 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
         postLayoutData.selectionBoundingRect = frame.protectedView()->contentsToWindow(enclosingIntRect(unitedBoundingBoxes(quads)));
     else if (selection.isCaret()) {
         // Quads will be empty at the start of a paragraph.
-        postLayoutData.selectionBoundingRect = frame.protectedView()->contentsToWindow(frame.selection().absoluteCaretBounds());
+        postLayoutData.selectionBoundingRect = frame.protectedView()->contentsToWindow(frame.checkedSelection()->absoluteCaretBounds());
     }
 }
 
@@ -432,7 +437,7 @@ bool WebPage::performNonEditingBehaviorForSelector(const String& selector, Keybo
 
 void WebPage::updateRemotePageAccessibilityOffset(WebCore::FrameIdentifier frameID, WebCore::IntPoint offset)
 {
-    [accessibilityRemoteObject() setRemoteFrameOffset:offset];
+    [protectedAccessibilityRemoteObject() setRemoteFrameOffset:offset];
 }
 
 void WebPage::registerRemoteFrameAccessibilityTokens(pid_t pid, std::span<const uint8_t> elementToken, WebCore::FrameIdentifier frameID)
@@ -441,21 +446,23 @@ void WebPage::registerRemoteFrameAccessibilityTokens(pid_t pid, std::span<const 
     auto remoteElement = [elementTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:elementTokenData.get()]) : nil;
 
     createMockAccessibilityElement(pid);
-    [accessibilityRemoteObject() setRemoteParent:remoteElement.get() token:elementTokenData.get()];
-    [accessibilityRemoteObject() setFrameIdentifier:frameID];
+    RetainPtr accessibilityRemoteObject = this->accessibilityRemoteObject();
+    [accessibilityRemoteObject setRemoteParent:remoteElement.get() token:elementTokenData.get()];
+    [accessibilityRemoteObject setFrameIdentifier:frameID];
 }
 
 void WebPage::registerUIProcessAccessibilityTokens(std::span<const uint8_t> elementToken, std::span<const uint8_t> windowToken)
 {
     RetainPtr elementTokenData = toNSData(elementToken);
     RetainPtr windowTokenData = toNSData(windowToken);
-    auto remoteElement = [elementTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:elementTokenData.get()]) : nil;
-    auto remoteWindow = [windowTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:windowTokenData.get()]) : nil;
+    RetainPtr remoteElement = [elementTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:elementTokenData.get()]) : nil;
+    RetainPtr remoteWindow = [windowTokenData length] ? adoptNS([[NSAccessibilityRemoteUIElement alloc] initWithRemoteToken:windowTokenData.get()]) : nil;
 
     [remoteElement setWindowUIElement:remoteWindow.get()];
     [remoteElement setTopLevelUIElement:remoteWindow.get()];
-    [accessibilityRemoteObject() setWindow:remoteWindow.get()];
-    [accessibilityRemoteObject() setRemoteParent:remoteElement.get() token:elementTokenData.get()];
+    RetainPtr accessibilityRemoteObject = this->accessibilityRemoteObject();
+    [accessibilityRemoteObject setWindow:remoteWindow.get()];
+    [accessibilityRemoteObject setRemoteParent:remoteElement.get() token:elementTokenData.get()];
 }
 
 void WebPage::getStringSelectionForPasteboard(CompletionHandler<void(String&&)>&& completionHandler)
@@ -490,11 +497,6 @@ void WebPage::getDataSelectionForPasteboard(const String pasteboardType, Complet
     if (!buffer)
         return completionHandler({ });
     completionHandler(buffer.releaseNonNull());
-}
-
-WKAccessibilityWebPageObject* WebPage::accessibilityRemoteObject()
-{
-    return m_mockAccessibilityElement.get();
 }
 
 WebCore::IntPoint WebPage::accessibilityRemoteFrameOffset()
@@ -595,7 +597,7 @@ void WebPage::setTopOverhangImage(WebImage* image)
 
     layer->setSize(image->size());
     layer->setPosition(FloatPoint(0, -image->size().height()));
-    layer->platformLayer().contents = (__bridge id)nativeImage->platformImage().get();
+    layer->protectedPlatformLayer().get().contents = (__bridge id)nativeImage->platformImage().get();
 }
 
 void WebPage::setBottomOverhangImage(WebImage* image)
@@ -613,7 +615,7 @@ void WebPage::setBottomOverhangImage(WebImage* image)
         return;
 
     layer->setSize(image->size());
-    layer->platformLayer().contents = (__bridge id)nativeImage->platformImage().get();
+    layer->protectedPlatformLayer().get().contents = (__bridge id)nativeImage->platformImage().get();
 }
 
 void WebPage::setUseFormSemanticContext(bool useFormSemanticContext)
@@ -672,7 +674,7 @@ void WebPage::handleImageServiceClick(WebCore::FrameIdentifier frameID, const In
         point,
         image,
         element.isContentEditable(),
-        element.renderBox()->absoluteContentQuad().enclosingBoundingBox(),
+        element.checkedRenderBox()->absoluteContentQuad().enclosingBoundingBox(),
         HTMLAttachmentElement::getAttachmentIdentifier(element),
         contextForElement(element),
         image.mimeType()
@@ -688,7 +690,7 @@ void WebPage::handlePDFServiceClick(WebCore::FrameIdentifier frameID, const IntP
     send(Messages::WebPageProxy::ShowContextMenuFromFrame(webFrame->info(), ContextMenuContextData {
         point,
         element.isContentEditable(),
-        element.renderBox()->absoluteContentQuad().enclosingBoundingBox(),
+        element.checkedRenderBox()->absoluteContentQuad().enclosingBoundingBox(),
         element.uniqueIdentifier(),
         "application/pdf"_s
     }, { }));
@@ -1016,7 +1018,7 @@ void WebPage::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
 
 void WebPage::zoomPDFIn(PDFPluginIdentifier identifier)
 {
-    auto pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
+    RefPtr pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
     if (!pdfPlugin)
         return;
     pdfPlugin->zoomIn();
@@ -1024,7 +1026,7 @@ void WebPage::zoomPDFIn(PDFPluginIdentifier identifier)
 
 void WebPage::zoomPDFOut(PDFPluginIdentifier identifier)
 {
-    auto pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
+    RefPtr pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
     if (!pdfPlugin)
         return;
     pdfPlugin->zoomOut();
@@ -1032,7 +1034,7 @@ void WebPage::zoomPDFOut(PDFPluginIdentifier identifier)
 
 void WebPage::savePDF(PDFPluginIdentifier identifier, CompletionHandler<void(const String&, const URL&, std::span<const uint8_t>)>&& completionHandler)
 {
-    auto pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
+    RefPtr pdfPlugin = m_pdfPlugInsWithHUD.get(identifier);
     if (!pdfPlugin)
         return completionHandler({ }, { }, { });
     pdfPlugin->save(WTFMove(completionHandler));

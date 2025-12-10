@@ -45,7 +45,7 @@
 #pragma once
 
 #include <WebCore/ClipRect.h>
-#include <WebCore/GraphicsLayer.h>
+#include <WebCore/GraphicsLayerEnums.h>
 #include <WebCore/LayerFragment.h>
 #include <WebCore/LayoutRect.h>
 #include <WebCore/PaintFrequencyTracker.h>
@@ -54,6 +54,7 @@
 #include <WebCore/RenderPtr.h>
 #include <WebCore/RenderSVGModelObject.h>
 #include <WebCore/ScrollBehavior.h>
+#include <WebCore/TransformationMatrix.h>
 #include <memory>
 #include <wtf/CheckedRef.h>
 #include <wtf/Markable.h>
@@ -142,11 +143,12 @@ enum class ShouldAllowCrossOriginScrolling : bool { No, Yes };
 
 struct ScrollRectToVisibleOptions {
     SelectionRevealMode revealMode { SelectionRevealMode::Reveal };
-    const ScrollAlignment& alignX { ScrollAlignment::alignCenterIfNeeded };
-    const ScrollAlignment& alignY { ScrollAlignment::alignCenterIfNeeded };
+    ScrollAlignment alignX { ScrollAlignment::alignCenterIfNeeded };
+    ScrollAlignment alignY { ScrollAlignment::alignCenterIfNeeded };
     ShouldAllowCrossOriginScrolling shouldAllowCrossOriginScrolling { ShouldAllowCrossOriginScrolling::No };
     ScrollBehavior behavior { ScrollBehavior::Auto };
     OnlyAllowForwardScrolling onlyAllowForwardScrolling { OnlyAllowForwardScrolling::No };
+    AllowScrollingOverflowHidden allowScrollingOverflowHidden { AllowScrollingOverflowHidden::Yes };
     std::optional<LayoutRect> visibilityCheckRect { std::nullopt };
 };
 
@@ -451,10 +453,10 @@ public:
 
     // Indicate that the layer contents need to be repainted. Only has an effect
     // if layer compositing is being used.
-    void setBackingNeedsRepaint(GraphicsLayer::ShouldClipToLayer = GraphicsLayer::ClipToLayer);
+    void setBackingNeedsRepaint(GraphicsLayerShouldClipToLayer = GraphicsLayerShouldClipToLayer::Clip);
 
     // The rect is in the coordinate space of the layer's render object.
-    void setBackingNeedsRepaintInRect(const LayoutRect&, GraphicsLayer::ShouldClipToLayer = GraphicsLayer::ClipToLayer);
+    void setBackingNeedsRepaintInRect(const LayoutRect&, GraphicsLayerShouldClipToLayer = GraphicsLayerShouldClipToLayer::Clip);
     void repaintIncludingNonCompositingDescendants(const RenderLayerModelObject* repaintContainer);
 
     void styleChanged(StyleDifference, const RenderStyle* oldStyle);
@@ -502,7 +504,7 @@ public:
     void updateScrollbarSteps();
 
     // Returns true if this RenderLayer is a candidate for scrolling during scrollIntoView operations.
-    bool shouldTryToScrollForScrollIntoView() const;
+    bool shouldTryToScrollForScrollIntoView(const ScrollRectToVisibleOptions&) const;
     void autoscroll(const IntPoint&);
 
     bool canResize() const;
@@ -568,7 +570,6 @@ public:
 
     struct PaintedContentRequest {
         PaintedContentRequest() = default;
-        PaintedContentRequest(const RenderLayer& owningLayer);
 
         void setHasPaintedContent() { hasPaintedContent = RequestState::True; }
         void makePaintedContentUndetermined() { hasPaintedContent = RequestState::Undetermined; }
@@ -578,7 +579,8 @@ public:
 #if HAVE(SUPPORT_HDR_DISPLAY)
         void setHasHDRContent() { hasHDRContent = RequestState::True; }
         void makeHDRContentFalse() { hasHDRContent = RequestState::False; }
-        void makeHDRContentUnknown() { hasHDRContent = RequestState::Unknown; }
+
+        void setHDRRequestState(RequestState state) { hasHDRContent = state; }
         bool isHDRContentSatisfied() const { return hasHDRContent != RequestState::Unknown; }
 #endif
 
@@ -598,6 +600,7 @@ public:
     };
 
     bool isVisibilityHiddenOrOpacityZero() const;
+    bool isSubtreeVisibilityHiddenOrOpacityZero() const;
 
     // Returns true if this layer has visible content (ignoring any child layers).
     bool isVisuallyNonEmpty(PaintedContentRequest* = nullptr) const;
@@ -608,7 +611,7 @@ public:
     bool rendererHasHDRContent() const;
 #endif
 
-    bool isViewportConstrained() const { return renderer().isFixedPositioned() || renderer().isStickilyPositioned(); }
+    inline bool isViewportConstrained() const;
 
     // FIXME: We should ASSERT(!m_hasSelfPaintingLayerDescendantDirty); here but we hit the same bugs as visible content above.
     // Part of the issue is with subtree relayout: we don't check if our ancestors have some descendant flags dirty, missing some updates.
@@ -1462,7 +1465,7 @@ private:
 
     IntRect m_blockSelectionGapsBounds;
 
-    std::unique_ptr<RenderLayerFilters> m_filters;
+    RefPtr<RenderLayerFilters> m_filters;
     std::unique_ptr<RenderLayerBacking> m_backing;
     std::unique_ptr<RenderLayerScrollableArea> m_scrollableArea;
 

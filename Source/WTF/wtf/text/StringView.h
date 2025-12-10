@@ -68,7 +68,7 @@ public:
     StringView(const StringImpl* string LIFETIME_BOUND);
     StringView(std::span<const Latin1Character> span LIFETIME_BOUND);
     StringView(std::span<const char16_t> span LIFETIME_BOUND);
-    StringView(std::span<const char> span LIFETIME_BOUND); // FIXME: Consider dropping this overload. Callers should pass LChars/UChars instead.
+    StringView(std::span<const char> span LIFETIME_BOUND); // FIXME: Consider dropping this overload. Callers should pass Latin1Character/char16_t instead.
     StringView(const void* string LIFETIME_BOUND, unsigned length, bool is8bit);
     StringView(ASCIILiteral);
 
@@ -94,6 +94,8 @@ public:
     GraphemeClusters graphemeClusters() const;
 
     bool is8Bit() const;
+    unsigned sizeInBytes() const;
+
     const void* rawCharacters() const LIFETIME_BOUND { return m_characters; }
     std::span<const Latin1Character> span8() const LIFETIME_BOUND;
     std::span<const char16_t> span16() const LIFETIME_BOUND;
@@ -155,7 +157,8 @@ public:
     size_t find(char16_t, unsigned start = 0) const;
     size_t find(Latin1Character, unsigned start = 0) const;
     ALWAYS_INLINE size_t find(char c, unsigned start = 0) const { return find(byteCast<Latin1Character>(c), start); }
-    template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>>* = nullptr>
+    template<typename CodeUnitMatchFunction>
+        requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
     size_t find(CodeUnitMatchFunction&&, unsigned start = 0) const;
     ALWAYS_INLINE size_t find(ASCIILiteral literal, unsigned start = 0) const { return find(literal.span8(), start); }
     WTF_EXPORT_PRIVATE size_t find(StringView, unsigned start = 0) const;
@@ -172,8 +175,11 @@ public:
     WTF_EXPORT_PRIVATE String convertToASCIIUppercase() const;
     WTF_EXPORT_PRIVATE AtomString convertToASCIILowercaseAtom() const;
 
+    WTF_EXPORT_PRIVATE std::optional<char32_t> convertToSingleCodePoint() const;
+
     bool contains(char16_t) const;
-    template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>>* = nullptr>
+    template<typename CodeUnitMatchFunction>
+        requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
     bool contains(CodeUnitMatchFunction&&) const;
     bool contains(ASCIILiteral literal) const { return find(literal) != notFound; }
     bool contains(StringView string) const { return find(string) != notFound; }
@@ -251,7 +257,7 @@ private:
 template<typename CharacterType, size_t inlineCapacity> void append(Vector<CharacterType, inlineCapacity>&, StringView);
 
 bool equal(StringView, StringView);
-bool equal(StringView, const Latin1Character* b);
+bool equal(StringView, std::span<const Latin1Character>);
 
 bool equalIgnoringASCIICase(StringView, StringView);
 bool equalIgnoringASCIICase(StringView, ASCIILiteral);
@@ -405,8 +411,8 @@ inline StringView::StringView(std::span<const char16_t> characters)
 }
 
 inline StringView::StringView(const char* characters)
+    : StringView { unsafeSpan(characters) }
 {
-    initialize(unsafeSpan8(characters));
 }
 
 inline StringView::StringView(std::span<const char> characters)
@@ -557,6 +563,11 @@ inline bool StringView::is8Bit() const
     return m_is8Bit;
 }
 
+inline unsigned StringView::sizeInBytes() const
+{
+    return m_length * (m_is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
+}
+
 inline StringView StringView::substring(unsigned start, unsigned length) const
 {
     if (start >= this->length())
@@ -596,7 +607,8 @@ inline bool StringView::contains(char16_t character) const
     return find(character) != notFound;
 }
 
-template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>>*>
+template<typename CodeUnitMatchFunction>
+    requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
 inline bool StringView::contains(CodeUnitMatchFunction&& function) const
 {
     return find(std::forward<CodeUnitMatchFunction>(function)) != notFound;
@@ -695,7 +707,8 @@ inline size_t StringView::find(Latin1Character character, unsigned start) const
     return WTF::find(span16(), character, start);
 }
 
-template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>>*>
+template<typename CodeUnitMatchFunction>
+    requires (std::is_invocable_r_v<bool, CodeUnitMatchFunction, char16_t>)
 inline size_t StringView::find(CodeUnitMatchFunction&& matchFunction, unsigned start) const
 {
     if (is8Bit())
@@ -718,7 +731,7 @@ inline void StringView::invalidate(const StringImpl&)
 
 #endif
 
-template<> class StringTypeAdapter<StringView, void> {
+template<> class StringTypeAdapter<StringView> {
 public:
     StringTypeAdapter(StringView string)
         : m_string { string }
@@ -760,25 +773,24 @@ ALWAYS_INLINE bool equal(StringView a, StringView b)
     return equalCommon(a, b);
 }
 
-inline bool equal(StringView a, const Latin1Character* b)
+inline bool equal(StringView a, std::span<const Latin1Character> b)
 {
-    if (!b)
+    if (!b.data())
         return !a.isEmpty();
     if (a.isEmpty())
-        return !b;
+        return !b.data();
 
-    auto bSpan = unsafeSpan8(byteCast<char>(b));
-    if (a.length() != bSpan.size())
+    if (a.length() != b.size())
         return false;
 
     if (a.is8Bit())
-        return equal(a.span8().data(), bSpan);
-    return equal(a.span16().data(), bSpan);
+        return equal(a.span8().data(), b);
+    return equal(a.span16().data(), b);
 }
 
 ALWAYS_INLINE bool equal(StringView a, ASCIILiteral b)
 {
-    return equal(a, b.span8().data());
+    return equal(a, b.span8());
 }
 
 inline bool equalIgnoringASCIICase(StringView a, StringView b)

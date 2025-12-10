@@ -30,7 +30,6 @@
 #include "CAAudioStreamDescription.h"
 #include "CMUtilities.h"
 #include "Logging.h"
-#include "SpanCoreAudio.h"
 #include "WebAudioBufferList.h"
 #include <AudioToolbox/AudioCodec.h>
 #include <AudioToolbox/AudioConverter.h>
@@ -39,6 +38,7 @@
 #include <Foundation/NSValue.h>
 #include <algorithm>
 #include <pal/avfoundation/MediaTimeAVFoundation.h>
+#include <pal/cf/CoreAudioExtras.h>
 #include <wtf/NativePromise.h>
 #include <wtf/Scope.h>
 #include <wtf/ZippedRange.h>

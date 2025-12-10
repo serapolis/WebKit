@@ -71,6 +71,12 @@
 #import "WindowServerConnection.h"
 #endif
 
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+#import "LaunchLogMessages.h"
+#import "XPCEndpoint.h"
+#import <wtf/spi/cocoa/OSLogSPI.h>
+#endif
+
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 #import "TCCSoftLink.h"
 #endif
@@ -81,6 +87,14 @@
 namespace WebKit {
 
 static const Seconds unexpectedActivityDuration = 10_s;
+
+void WebProcessProxy::registerNotifyObservers()
+{
+    PAL::registerNotifyCallback("com.apple.WebKit.logFrameTrees"_s, [] {
+        for (Ref page : WebProcessProxy::globalPages())
+            page->logFrameTree();
+    });
+}
 
 const MemoryCompactLookupOnlyRobinHoodHashSet<String>& WebProcessProxy::platformPathsWithAssumedReadAccess()
 {
@@ -131,7 +145,7 @@ bool WebProcessProxy::shouldEnableRemoteInspector()
 #if PLATFORM(IOS_FAMILY)
     return CFPreferencesGetAppIntegerValue(WIRRemoteInspectorEnabledKey, WIRRemoteInspectorDomainName, nullptr);
 #else
-    return CFPreferencesGetAppIntegerValue(CFSTR("ShowDevelopMenu"), bundleIdentifierForSandboxBroker(), nullptr);
+    return CFPreferencesGetAppIntegerValue(CFSTR("ShowDevelopMenu"), bundleIdentifierForSandboxBrokerSingleton(), nullptr);
 #endif
 }
 
@@ -366,6 +380,51 @@ void WebProcessProxy::platformSuspendProcess()
     m_platformSuspendDidReleaseNearSuspendedAssertion = throttler().isHoldingNearSuspendedAssertion();
     protectedThrottler()->setShouldTakeNearSuspendedAssertion(false);
 }
+
+#if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+RefPtr<XPCEventHandler> WebProcessProxy::xpcEventHandler() const
+{
+    return adoptRef(new WebProcessProxy::WebProcessXPCEventHandler(*this));
+}
+
+bool WebProcessProxy::WebProcessXPCEventHandler::handleXPCEvent(xpc_object_t event)
+{
+    auto messageName = xpcDictionaryGetString(event, XPCEndpoint::xpcMessageNameKey);
+    if (messageName == logMessageName) {
+        RefPtr webProcess = m_webProcess.get();
+        if (!webProcess)
+            return true;
+
+        MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(m_logEndpointEnabled, webProcess->connection(), false);
+
+        auto subsystem = xpcDictionaryGetString(event, subsystemKey);
+        auto category = xpcDictionaryGetString(event, categoryKey);
+        auto messageString = xpcDictionaryGetString(event, messageStringKey);
+        auto logType = xpc_dictionary_get_uint64(event, logTypeKey);
+        auto pid = xpc_connection_get_pid(xpc_dictionary_get_remote_connection(event));
+
+        OSObjectPtr<os_log_t> osLog;
+        if (!subsystem.isEmpty() && !category.isEmpty())
+            osLog = adoptOSObject(os_log_create(subsystem.utf8().data(), category.utf8().data()));
+
+        auto osLogPointer = osLog ? osLog.get() : OS_LOG_DEFAULT;
+        os_log_with_type(osLogPointer, static_cast<os_log_type_t>(logType), "WebContent[%d] %{public}s", static_cast<int>(pid), messageString.utf8().data());
+        webProcess->m_didReceiveLogsDuringLaunchForTesting = true;
+    } else if (messageName == disableLogMessageName) {
+        RefPtr webProcess = m_webProcess.get();
+        if (!webProcess)
+            return true;
+        m_logEndpointEnabled = false;
+        RELEASE_LOG(Process, "Log endpoint is disabled");
+    }
+    return false;
+}
+
+WebProcessProxy::WebProcessXPCEventHandler::WebProcessXPCEventHandler(const WebProcessProxy& webProcess)
+    : m_webProcess(webProcess)
+{
+}
+#endif // ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
 
 }
 

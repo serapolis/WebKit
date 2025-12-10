@@ -193,6 +193,7 @@ PASS inset-block-start
 PASS inset-inline-end
 PASS inset-inline-start
 PASS isolation
+PASS item-tolerance
 PASS justify-content
 PASS justify-items
 PASS justify-self
@@ -229,6 +230,7 @@ PASS mask-origin
 PASS mask-repeat
 PASS mask-size
 PASS mask-type
+PASS math-depth
 PASS math-shift
 PASS math-style
 PASS max-block-size

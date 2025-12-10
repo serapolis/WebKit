@@ -27,8 +27,10 @@
 
 #include <WebCore/InlineDisplayBox.h>
 #include <WebCore/InlineItem.h>
+#include <WebCore/InlineLineTypes.h>
 #include <WebCore/InlineTextItem.h>
-#include <WebCore/RenderStyleInlines.h>
+#include <WebCore/RenderStyle.h>
+#include <ranges>
 #include <unicode/ubidi.h>
 #include <wtf/Range.h>
 
@@ -44,7 +46,6 @@ enum class IntrinsicWidthMode;
 class Line {
 public:
     Line(const InlineFormattingContext&);
-    ~Line() = default;
 
     void initialize(const Vector<InlineItem, 1>& lineSpanningInlineBoxes, bool isFirstFormattedLine);
 
@@ -57,6 +58,7 @@ public:
     void appendLineBreak(const InlineItem&, const RenderStyle&);
     void appendWordBreakOpportunity(const InlineItem&, const RenderStyle&);
     void appendOpaqueBox(const InlineItem&, const RenderStyle&);
+    void appendBlock(const InlineItem&, InlineLayoutUnit marginBoxLogicalWidth);
 
     void setContentNeedsBidiReordering() { m_hasNonDefaultBidiLevelRun = true; }
 
@@ -100,7 +102,8 @@ public:
             InlineBoxStart,
             InlineBoxEnd,
             LineSpanningInlineBoxStart,
-            Opaque
+            Opaque,
+            Block
         };
 
         bool isText() const { return m_type == Type::Text || isWordSeparator() || isNonBreakingSpace(); }
@@ -119,8 +122,9 @@ public:
         bool isLineSpanningInlineBoxStart() const { return m_type == Type::LineSpanningInlineBoxStart; }
         bool isInlineBoxEnd() const { return m_type == Type::InlineBoxEnd; }
         bool isOpaque() const { return m_type == Type::Opaque; }
+        bool isBlock() const { return m_type == Type::Block; }
 
-        bool isContentful() const { return (isText() && textContent()->length) || isAtomicInlineBox() || isLineBreak() || isListMarker(); }
+        bool isContentful() const { return (isText() && textContent()->length) || isAtomicInlineBox() || isLineBreak() || isListMarker() || isBlock(); }
         bool isGenerated() const { return isListMarker(); }
         static bool isContentfulOrHasDecoration(const Run&, const InlineFormattingContext&);
 
@@ -142,7 +146,7 @@ public:
         InlineLayoutUnit trailingWhitespaceWidth() const { return m_trailingWhitespace ? m_trailingWhitespace->width : 0.f; }
         bool isWhitespaceOnly() const { return hasTrailingWhitespace() && m_trailingWhitespace->length == m_textContent->length; }
 
-        TextDirection inlineDirection() const;
+        inline TextDirection inlineDirection() const;
         InlineLayoutUnit letterSpacing() const;
         bool hasTextCombine() const;
         InlineLayoutUnit textSpacingAdjustment() const { return m_textSpacingAdjustment; }
@@ -232,7 +236,8 @@ public:
     };
     Result close();
 
-    static bool restoreTrimmedTrailingWhitespace(InlineLayoutUnit trimmedTrailingWhitespaceWidth, RunList&);
+    static bool restoreTrimmedTrailingWhitespace(InlineLayoutUnit trimmedTrailingWhitespaceWidth, RunList&, InlineItemRange, const InlineItemList&);
+    static bool hasTrailingForcedLineBreak(const RunList&);
 
 private:
     InlineLayoutUnit lastRunLogicalRight() const { return m_runs.isEmpty() ? 0.0f : m_runs.last().logicalRight(); }
@@ -243,6 +248,8 @@ private:
 
     bool isFirstFormattedLine() const { return m_isFirstFormattedLine; }
     const InlineFormattingContext& formattingContext() const;
+
+    static bool appendTrailingInlineItemAsTrailingRun(RunList&, InlineLayoutUnit trimmedTrailingWhitespaceWidth, InlineItemRange, const InlineItemList&);
 
     struct TrimmableTrailingContent {
         TrimmableTrailingContent(RunList&);
@@ -329,7 +336,7 @@ inline bool Line::hasContentOrListMarker() const
 
 inline bool Line::hasContent() const
 {
-    for (auto& run : makeReversedRange(m_runs)) {
+    for (auto& run : m_runs | std::views::reverse) {
         if (run.isContentful() && !run.isGenerated())
             return true;
     }
@@ -383,11 +390,6 @@ inline void Line::Run::setNeedsHyphen(InlineLayoutUnit hyphenLogicalWidth)
 inline TextDirection Line::Run::inlineDirection() const
 {
     return m_style.writingMode().bidiDirection();
-}
-
-inline InlineLayoutUnit Line::Run::letterSpacing() const
-{
-    return m_style.letterSpacing();
 }
 
 }

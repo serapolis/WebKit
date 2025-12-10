@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <iterator>
 #include <ranges>
+#include <wtf/Hasher.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -52,6 +53,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CDMFactoryClearKey);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CDMPrivateClearKey);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CDMInstanceClearKey);
 
 static std::optional<Vector<RefPtr<KeyHandle>>> parseLicenseFormat(const JSON::Object& root)
 {
@@ -62,7 +64,7 @@ static std::optional<Vector<RefPtr<KeyHandle>>> parseLicenseFormat(const JSON::O
         return std::nullopt;
 
     // Retrieve the keys array.
-    auto keysArray = it->value->asArray();
+    auto keysArray = Ref { it->value }->asArray();
     if (!keysArray)
         return std::nullopt;
 
@@ -110,7 +112,7 @@ static bool parseLicenseReleaseAcknowledgementFormat(const JSON::Object& root)
         return false;
 
     // Retrieve the kids array.
-    auto kidsArray = it->value->asArray();
+    auto kidsArray = Ref { it->value }->asArray();
     if (!kidsArray)
         return false;
 
@@ -275,7 +277,7 @@ bool CDMFactoryClearKey::supportsKeySystem(const String& keySystem)
 CDMPrivateClearKey::CDMPrivateClearKey() = default;
 CDMPrivateClearKey::~CDMPrivateClearKey() = default;
 
-Vector<AtomString> CDMPrivateClearKey::supportedInitDataTypes() const
+Vector<String> CDMPrivateClearKey::supportedInitDataTypes() const
 {
     return {
         InitDataRegistry::keyidsName(),
@@ -332,10 +334,10 @@ bool CDMPrivateClearKey::supportsSessionTypeWithConfiguration(const CDMSessionTy
     return supportsConfiguration(configuration);
 }
 
-Vector<AtomString> CDMPrivateClearKey::supportedRobustnesses() const
+Vector<String> CDMPrivateClearKey::supportedRobustnesses() const
 {
     // Only empty `robustness` string is supported.
-    return { emptyAtom() };
+    return { emptyString() };
 }
 
 CDMRequirement CDMPrivateClearKey::distinctiveIdentifiersRequirement(const CDMKeySystemConfiguration&, const CDMRestrictions& restrictions) const
@@ -381,7 +383,7 @@ bool CDMPrivateClearKey::supportsSessions() const
     return true;
 }
 
-bool CDMPrivateClearKey::supportsInitData(const AtomString& initDataType, const SharedBuffer& initData) const
+bool CDMPrivateClearKey::supportsInitData(const String& initDataType, const SharedBuffer& initData) const
 {
     // Validate the initData buffer as an JSON object in keyids case.
     if (equalLettersIgnoringASCIICase(initDataType, "keyids"_s) && CDMUtilities::parseJSONObject(initData))
@@ -446,7 +448,7 @@ RefPtr<CDMInstanceSession> CDMInstanceClearKey::createSession()
     return adoptRef(new CDMInstanceSessionClearKey(*this));
 }
 
-void CDMInstanceSessionClearKey::requestLicense(LicenseType, KeyGroupingStrategy, const AtomString& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&& callback)
+void CDMInstanceSessionClearKey::requestLicense(LicenseType, KeyGroupingStrategy, const String& initDataType, Ref<SharedBuffer>&& initData, LicenseCallback&& callback)
 {
     if (RefPtr parentInstance = this->parentInstance())
         m_sessionID = String::number(parentInstance->getNextSessionIdValue());
@@ -460,11 +462,8 @@ void CDMInstanceSessionClearKey::requestLicense(LicenseType, KeyGroupingStrategy
         initData = extractKeyIdFromWebMInitData(initData.get());
 
     callOnMainThread(
-        [this, weakThis = WeakPtr { *this }, callback = WTFMove(callback), initData = WTFMove(initData)]() mutable {
-            if (!weakThis)
-                return;
-
-            callback(WTFMove(initData), m_sessionID, false, Succeeded);
+        [sessionID = m_sessionID, callback = WTFMove(callback), initData = WTFMove(initData)]() mutable {
+            callback(WTFMove(initData), sessionID, false, Succeeded);
         });
 }
 

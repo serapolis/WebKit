@@ -25,33 +25,38 @@
 
 #pragma once
 
+#include <WebCore/GridTypeAliases.h>
 #include <wtf/Forward.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
+
 namespace Layout {
 
-class PlacedGridItem;
-class UnplacedGridItem;
-
-using PlacedGridItems = Vector<PlacedGridItem>;
+enum class GridLayoutAlgorithm : uint8_t;
+struct GridAutoFlowOptions;
 
 // https://drafts.csswg.org/css-grid-1/#implicit-grids
 class ImplicitGrid {
 public:
-    ImplicitGrid(size_t explicitColumnsCount, size_t explicitRowsCount);
+    ImplicitGrid(size_t totalColumnsCount, size_t totalRowsCount);
 
     size_t rowsCount() const { return m_gridMatrix.size(); }
     size_t columnsCount() const { return rowsCount() ? m_gridMatrix[0].size() : 0; }
 
     void insertUnplacedGridItem(const UnplacedGridItem&);
+    void insertDefiniteRowItem(const UnplacedGridItem&, GridAutoFlowOptions, HashMap<size_t, size_t, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>>*);
 
-    PlacedGridItems placedGridItems() const;
+    GridAreas gridAreas() const;
 
 private:
-    using GridMatrix = Vector<Vector<std::optional<const UnplacedGridItem>>>;
+    std::optional<size_t> findFirstAvailableColumnPosition(size_t rowStart, size_t rowEnd, size_t columnSpan, size_t startSearchColumn) const;
+    bool isCellRangeEmpty(size_t columnStart, size_t columnEnd, size_t rowStart, size_t rowEnd) const;
+    void insertItemInArea(const UnplacedGridItem&, size_t columnStart, size_t columnEnd, size_t rowStart, size_t rowEnd);
+
     GridMatrix m_gridMatrix;
 };
 
 } // namespace Layout
+
 } // namespace WebCore

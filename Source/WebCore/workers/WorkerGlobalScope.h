@@ -114,8 +114,7 @@ public:
     WorkerSWClientConnection& swClientConnection();
     void updateServiceWorkerClientData() final;
 
-    WorkerThread& thread() const;
-    Ref<WorkerThread> protectedThread() const;
+    Ref<WorkerThread> thread() const;
 
     using ScriptExecutionContext::hasPendingActivity;
 
@@ -160,7 +159,7 @@ public:
     CSSValuePool& cssValuePool() final;
     CSSFontSelector* cssFontSelector() final;
     Ref<FontFaceSet> fonts();
-    std::unique_ptr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource) final;
+    RefPtr<FontLoadRequest> fontLoadRequest(const String& url, bool isSVG, bool isInitiatingElementInUserAgentShadowTree, LoadedFromOpaqueSource) final;
     void beginLoadingFontSoon(FontLoadRequest&) final;
 
     const SettingsValues& settingsValues() const final { return m_settingsValues; }
@@ -206,6 +205,7 @@ private:
     EventTarget* errorEventTarget() final;
     String resourceRequestIdentifier() const final { return m_inspectorIdentifier; }
     SocketProvider* socketProvider() final;
+    RefPtr<SocketProvider> protectedSocketProvider();
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
 
     bool shouldBypassMainWorldContentSecurityPolicy() const final { return m_shouldBypassMainWorldContentSecurityPolicy; }
@@ -244,10 +244,10 @@ private:
     MemoryCompactRobinHoodHashMap<URL, WeakHashSet<ScriptBufferSourceProvider>> m_importedScriptsSourceProviders;
 
     const RefPtr<CacheStorageConnection> m_cacheStorageConnection;
-    const std::unique_ptr<WorkerMessagePortChannelProvider> m_messagePortChannelProvider;
+    const RefPtr<WorkerMessagePortChannelProvider> m_messagePortChannelProvider;
     const RefPtr<WorkerSWClientConnection> m_swClientConnection;
-    std::unique_ptr<CSSValuePool> m_cssValuePool;
-    std::unique_ptr<WorkerClient> m_workerClient;
+    const std::unique_ptr<CSSValuePool> m_cssValuePool;
+    const std::unique_ptr<WorkerClient> m_workerClient;
     const RefPtr<CSSFontSelector> m_cssFontSelector;
     SettingsValues m_settingsValues;
     WorkerType m_workerType;

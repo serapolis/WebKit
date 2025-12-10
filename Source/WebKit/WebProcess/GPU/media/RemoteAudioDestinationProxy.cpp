@@ -42,9 +42,9 @@
 #if PLATFORM(COCOA)
 #include <WebCore/AudioUtilitiesCocoa.h>
 #include <WebCore/CARingBuffer.h>
-#include <WebCore/SpanCoreAudio.h>
 #include <WebCore/WebAudioBufferList.h>
 #include <mach/mach_time.h>
+#include <pal/cf/CoreAudioExtras.h>
 #endif
 
 namespace WebKit {
@@ -239,7 +239,7 @@ void RemoteAudioDestinationProxy::renderAudio(unsigned frameCount)
 
         // Associate the destination data array with the output bus then fill the FIFO.
         for (UInt32 i = 0; i < numberOfBuffers; ++i) {
-            auto memory = WebCore::mutableSpan<float>(buffers[i]);
+            auto memory = PAL::mutableSpan<float>(buffers[i]);
             if (numberOfFrames < memory.size())
                 memory = memory.first(numberOfFrames);
             m_outputBus->setChannelMemory(i, memory);

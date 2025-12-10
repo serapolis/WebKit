@@ -183,7 +183,7 @@ template<bool characterPredicate(char16_t)>
 inline void VTTScanner::skipWhile()
 {
     if (m_is8Bit)
-        WTF::skipWhile<LCharPredicateAdapter<characterPredicate>>(m_data.characters8);
+        WTF::skipWhile<Latin1CharacterPredicateAdapter<characterPredicate>>(m_data.characters8);
     else
         WTF::skipWhile<characterPredicate>(m_data.characters16);
 }
@@ -192,7 +192,7 @@ template<bool characterPredicate(char16_t)>
 inline void VTTScanner::skipUntil()
 {
     if (m_is8Bit)
-        WTF::skipUntil<LCharPredicateAdapter<characterPredicate>>(m_data.characters8);
+        WTF::skipUntil<Latin1CharacterPredicateAdapter<characterPredicate>>(m_data.characters8);
     else
         WTF::skipUntil<characterPredicate>(m_data.characters16);
 }
@@ -202,7 +202,7 @@ inline VTTScanner::Run VTTScanner::collectWhile()
 {
     if (m_is8Bit) {
         auto current = m_data.characters8;
-        WTF::skipWhile<LCharPredicateAdapter<characterPredicate>>(current);
+        WTF::skipWhile<Latin1CharacterPredicateAdapter<characterPredicate>>(current);
         return Run { m_data.characters8.first(current.data() - m_data.characters8.data()) };
     }
     auto current = m_data.characters16;
@@ -215,7 +215,7 @@ inline VTTScanner::Run VTTScanner::collectUntil()
 {
     if (m_is8Bit) {
         auto current = m_data.characters8;
-        WTF::skipUntil<LCharPredicateAdapter<characterPredicate>>(current);
+        WTF::skipUntil<Latin1CharacterPredicateAdapter<characterPredicate>>(current);
         return Run { m_data.characters8.first(current.data() - m_data.characters8.data()) };
     }
     auto current = m_data.characters16;

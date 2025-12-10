@@ -49,6 +49,7 @@ add_library(Skia STATIC
     src/codec/SkEncodedInfo.cpp
     src/codec/SkExif.cpp
     src/codec/SkGainmapInfo.cpp
+    src/codec/SkHdrMetadata.cpp
     src/codec/SkImageGenerator_FromEncoded.cpp
     src/codec/SkJpegCodec.cpp
     src/codec/SkJpegDecoderMgr.cpp
@@ -184,6 +185,7 @@ add_library(Skia STATIC
     src/core/SkPaintPriv.cpp
     src/core/SkPath.cpp
     src/core/SkPathBuilder.cpp
+    src/core/SkPathData.cpp
     src/core/SkPathEffect.cpp
     src/core/SkPathIter.cpp
     src/core/SkPathMeasure.cpp
@@ -192,6 +194,8 @@ add_library(Skia STATIC
     src/core/SkPathRawShapes.cpp
     src/core/SkPathRef.cpp
     src/core/SkPathUtils.cpp
+    src/core/SkPath_editing.cpp
+    src/core/SkPath_pathref.cpp
     src/core/SkPath_serial.cpp
     src/core/SkPicture.cpp
     src/core/SkPictureData.cpp

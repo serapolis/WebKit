@@ -42,6 +42,7 @@
 #include "ElementTargetingTypes.h"
 #include "FloatPoint.h"
 #include "FloatRect.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameSnapshotting.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLBodyElement.h"
@@ -197,9 +198,9 @@ static inline bool elementAndAncestorsAreOnlyRenderedChildren(const Element& ele
 
 static inline bool querySelectorMatchesOneElement(const Element& element, const String& selector)
 {
-    Ref container = [&]() -> ContainerNode& {
+    Ref container = [&]() -> Ref<ContainerNode> {
         if (RefPtr shadowRoot = element.containingShadowRoot())
-            return *shadowRoot;
+            return shadowRoot.releaseNonNull();
         return element.document();
     }();
 
@@ -664,7 +665,7 @@ static URL urlForElement(const Element& element)
 
     if (CheckedPtr renderer = element.renderer()) {
         if (auto& style = renderer->style(); style.hasBackgroundImage()) {
-            if (RefPtr image = style.backgroundLayers().first().image().tryStyleImage())
+            if (RefPtr image = style.backgroundLayers().usedFirst().image().tryStyleImage())
                 return image->url().resolved;
         }
     }
@@ -756,7 +757,7 @@ static std::optional<TargetedElementInfo> targetedElementInfo(Element& element, 
     } };
 }
 
-static const HTMLElement* findOnlyMainElement(const HTMLBodyElement& bodyElement)
+static RefPtr<const HTMLElement> findOnlyMainElement(const HTMLBodyElement& bodyElement)
 {
     RefPtr<const HTMLElement> onlyMainElement;
     for (auto& descendant : descendantsOfType<HTMLElement>(bodyElement)) {
@@ -770,7 +771,7 @@ static const HTMLElement* findOnlyMainElement(const HTMLBodyElement& bodyElement
 
         onlyMainElement = descendant;
     }
-    return onlyMainElement.get();
+    return onlyMainElement;
 }
 
 static bool isNavigationalElement(const Element& element)
@@ -1021,7 +1022,7 @@ std::pair<Vector<Ref<Node>>, RefPtr<Element>> ElementTargetingController::findNo
     return { copyToVector(result.listBasedTestResult()), result.innerNonSharedElement() };
 }
 
-static Element* searchForElementContainingText(ContainerNode& container, const String& searchText)
+static RefPtr<Element> searchForElementContainingText(ContainerNode& container, const String& searchText)
 {
     auto remainingRange = makeRangeSelectingNodeContents(container);
     while (is_lt(treeOrder(remainingRange.start, remainingRange.end))) {
@@ -1051,7 +1052,7 @@ static Element* searchForElementContainingText(ContainerNode& container, const S
     auto documentElements = collectDocumentElementsFromChildFrames(container);
     for (auto& documentElement : documentElements) {
         if (RefPtr target = searchForElementContainingText(documentElement, searchText))
-            return target.get();
+            return target;
     }
 
     return nullptr;
@@ -1406,11 +1407,11 @@ Vector<TargetedElementInfo> ElementTargetingController::extractTargets(Vector<Re
     return results;
 }
 
-static inline Element& elementToAdjust(Element& element)
+static inline Ref<Element> elementToAdjust(Element& element)
 {
     if (RefPtr pseudoElement = dynamicDowncast<PseudoElement>(element)) {
         if (RefPtr host = pseudoElement->hostElement())
-            return *host;
+            return host.releaseNonNull();
     }
     return element;
 }

@@ -178,7 +178,8 @@ void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextDat
                 if (serviceWorkerPageIdentifier)
                     client->setServiceWorkerPageIdentifier(*serviceWorkerPageIdentifier);
                 return client;
-            } }, SandboxFlags { }
+            } }, SandboxFlags { },
+            ReferrerPolicy::EmptyString
         };
 
         [[maybe_unused]] auto serviceWorkerIdentifier = contextData.serviceWorkerIdentifier;
@@ -485,7 +486,7 @@ void WebSWContextManagerConnection::setRegistrationUpdateViaCache(WebCore::Servi
     SWContextManager::singleton().setRegistrationUpdateViaCache(identifier, value);
 }
 
-void WebSWContextManagerConnection::postMessageToServiceWorkerClient(const ScriptExecutionContextIdentifier& destinationIdentifier, const MessageWithMessagePorts& message, ServiceWorkerIdentifier sourceIdentifier, const String& sourceOrigin)
+void WebSWContextManagerConnection::postMessageToServiceWorkerClient(const ScriptExecutionContextIdentifier& destinationIdentifier, const MessageWithMessagePorts& message, ServiceWorkerIdentifier sourceIdentifier, const SecurityOriginData& sourceOrigin)
 {
     for (auto& port : message.transferredPorts)
         WebMessagePortChannelProvider::singleton().messagePortSentToRemote(port.first);

@@ -116,7 +116,7 @@ public:
     virtual void waitForDidUpdateActivityState(ActivityStateChangeID) { }
 
     // Hide the content until the currently pending update arrives.
-    virtual void hideContentUntilPendingUpdate() { ASSERT_NOT_REACHED(); }
+    virtual void hideContentUntilPendingUpdate() { hideContentUntilAnyUpdate(); }
 
     // Hide the content until any update arrives.
     virtual void hideContentUntilAnyUpdate() { }

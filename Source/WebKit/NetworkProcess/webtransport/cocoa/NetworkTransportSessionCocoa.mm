@@ -26,13 +26,23 @@
 #import "config.h"
 #import "NetworkTransportSession.h"
 
+#import "AuthenticationChallengeDisposition.h"
 #import "AuthenticationManager.h"
+#import "MessageSenderInlines.h"
 #import "NetworkConnectionToWebProcess.h"
+#import "NetworkProcess.h"
+#import "NetworkSessionCocoa.h"
 #import "NetworkTransportStream.h"
+#import "WebTransportSessionMessages.h"
 #import <Security/Security.h>
 #import <WebCore/AuthenticationChallenge.h>
+#import <WebCore/ClientOrigin.h>
 #import <WebCore/Exception.h>
 #import <WebCore/ExceptionCode.h>
+#import <WebCore/WebTransportConnectionInfo.h>
+#import <WebCore/WebTransportConnectionStats.h>
+#import <WebCore/WebTransportReceiveStreamStats.h>
+#import <WebCore/WebTransportSendStreamStats.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
@@ -45,14 +55,15 @@
 
 namespace WebKit {
 
-Ref<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connection, WebTransportSessionIdentifier identifier, nw_connection_group_t group, nw_endpoint_t endpoint)
+Ref<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connection, WebTransportSessionIdentifier identifier, WebCore::WebTransportOptions&& options, nw_connection_group_t group, nw_endpoint_t endpoint)
 {
-    return adoptRef(*new NetworkTransportSession(connection, identifier, group, endpoint));
+    return adoptRef(*new NetworkTransportSession(connection, identifier, WTFMove(options), group, endpoint));
 }
 
-NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& connection, WebTransportSessionIdentifier identifier, nw_connection_group_t connectionGroup, nw_endpoint_t endpoint)
+NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& connection, WebTransportSessionIdentifier identifier, WebCore::WebTransportOptions&& options, nw_connection_group_t connectionGroup, nw_endpoint_t endpoint)
     : m_connectionToWebProcess(connection)
     , m_identifier(identifier)
+    , m_options(WTFMove(options))
     , m_connectionGroup(connectionGroup)
     , m_endpoint(endpoint)
 {
@@ -61,10 +72,62 @@ NetworkTransportSession::NetworkTransportSession(NetworkConnectionToWebProcess& 
 
 #if HAVE(WEB_TRANSPORT)
 
-static void didReceiveServerTrustChallenge(Ref<NetworkConnectionToWebProcess>&& connectionToWebProcess, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin, sec_trust_t trust, sec_protocol_verify_complete_t completion)
+static bool leafCertificateMatchesWebTransportHash(sec_trust_t trust, const Vector<WebCore::WebTransportHash>& hashes)
 {
+    // https://www.w3.org/TR/webtransport/#verify-a-certificate-hash
+    SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr secTrust = adoptCF(sec_trust_copy_ref(trust));
+    if (!secTrust)
+        return false;
+
+    RetainPtr chain = adoptCF(SecTrustCopyCertificateChain(secTrust.get()));
+    if (!chain || !CFArrayGetCount(chain.get()))
+        return false;
+
+    RetainPtr leafCertificate = checked_cf_cast<SecCertificateRef>(CFArrayGetValueAtIndex(chain.get(), 0));
+    if (!leafCertificate)
+        return false;
+
+    SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr x509Data = adoptNS(bridge_cast(SecCertificateCopyData(leafCertificate.get())));
+    if (!x509Data)
+        return false;
+
+    std::array<uint8_t, CC_SHA256_DIGEST_LENGTH> sha2;
+    CC_SHA256([x509Data bytes], [x509Data length], sha2.data());
+
+    bool hashMatches = std::ranges::any_of(hashes, [&] (auto& hash) {
+        return hash.algorithm == "sha-256"_s && equalSpans(std::span(sha2), hash.value.span());
+    });
+    if (!hashMatches)
+        return false;
+
+    // https://www.w3.org/TR/webtransport/#custom-certificate-requirements
+    RetainPtr validityBegin = adoptCF(SecCertificateCopyNotValidBeforeDate(leafCertificate.get()));
+    if (!validityBegin)
+        return false;
+    RetainPtr validityEnd = adoptCF(SecCertificateCopyNotValidAfterDate(leafCertificate.get()));
+    if (!validityEnd)
+        return false;
+    CFAbsoluteTime currentTime = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime beginTime = CFDateGetAbsoluteTime(validityBegin.get());
+    CFAbsoluteTime endTime = CFDateGetAbsoluteTime(validityEnd.get());
+    if (currentTime < beginTime || currentTime > endTime)
+        return false;
+
+    CFTimeInterval validityPeriod = endTime - beginTime;
+    constexpr double twoWeeks = 2 * 7 * 24 * 60 * 60;
+    if (validityPeriod <= 0 || validityPeriod > twoWeeks)
+        return false;
+
+    return true;
+}
+
+static void didReceiveServerTrustChallenge(NetworkConnectionToWebProcess& connectionToWebProcess, const URL& url, const Vector<WebCore::WebTransportHash>& hashes, WebKit::WebPageProxyIdentifier pageID, const WebCore::ClientOrigin& clientOrigin, sec_trust_t trust, sec_protocol_verify_complete_t completion)
+{
+    if (!hashes.isEmpty())
+        return completion(leafCertificateMatchesWebTransportHash(trust, hashes));
+
     uint16_t port = url.port() ? *url.port() : *defaultPortForProtocol(url.protocol());
-    RetainPtr secTrust = adoptCF(sec_trust_copy_ref(trust));
+    SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr secTrust = adoptCF(sec_trust_copy_ref(trust));
     RetainPtr protectionSpace = adoptNS([[NSURLProtectionSpace alloc] initWithHost:url.host().createNSString().get() port:port protocol:NSURLProtectionSpaceHTTPS realm:nil authenticationMethod:NSURLAuthenticationMethodServerTrust]);
     [protectionSpace _setServerTrust:secTrust.get()];
 
@@ -96,10 +159,15 @@ static void didReceiveServerTrustChallenge(Ref<NetworkConnectionToWebProcess>&& 
         RELEASE_ASSERT_NOT_REACHED();
     };
 
-    auto* sessionCocoa = static_cast<NetworkSessionCocoa*>(connectionToWebProcess->networkProcess().networkSession(connectionToWebProcess->sessionID()));
+    CheckedPtr sessionCocoa = downcast<NetworkSessionCocoa>(connectionToWebProcess.networkProcess().networkSession(connectionToWebProcess.sessionID()));
 
     if (sessionCocoa && sessionCocoa->fastServerTrustEvaluationEnabled()) {
-        auto decisionHandler = makeBlockPtr([connectionToWebProcess = WTFMove(connectionToWebProcess), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin), challengeCompletionHandler = WTFMove(challengeCompletionHandler)](NSURLAuthenticationChallenge *challenge, OSStatus trustResult) mutable {
+        auto decisionHandler = makeBlockPtr([
+            connectionToWebProcess = Ref { connectionToWebProcess },
+            pageID = WTFMove(pageID),
+            clientOrigin,
+            challengeCompletionHandler = WTFMove(challengeCompletionHandler)
+        ] (NSURLAuthenticationChallenge *challenge, OSStatus trustResult) mutable {
             if (trustResult == noErr) {
                 challengeCompletionHandler(AuthenticationChallengeDisposition::PerformDefaultHandling, WebCore::Credential());
                 return;
@@ -113,39 +181,82 @@ static void didReceiveServerTrustChallenge(Ref<NetworkConnectionToWebProcess>&& 
         return;
     }
 
-    connectionToWebProcess->networkProcess().protectedAuthenticationManager()->didReceiveAuthenticationChallenge(connectionToWebProcess->sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTFMove(challengeCompletionHandler));
+    connectionToWebProcess.networkProcess().protectedAuthenticationManager()->didReceiveAuthenticationChallenge(connectionToWebProcess.sessionID(), pageID, &clientOrigin.topOrigin, challenge.get(), NegotiatedLegacyTLS::No, WTFMove(challengeCompletionHandler));
 }
 
-static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
+static String joinProtocolStrings(const Vector<String>& protocols)
 {
-    auto configureWebTransport = [clientOrigin = clientOrigin.clientOrigin.toString()](nw_protocol_options_t options) {
+    StringBuilder builder;
+    for (size_t i = 0; i < protocols.size(); ++i) {
+        if (i)
+            builder.append(", "_s);
+        builder.append('\"', protocols[i], '\"');
+    }
+    return builder.toString();
+}
+
+static RetainPtr<nw_parameters_t> createParameters(NetworkConnectionToWebProcess& connectionToWebProcess, URL&& url, WebCore::WebTransportOptions& options, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
+{
+    // https://www.w3.org/TR/webtransport/#web-transport-configuration
+    auto configureWebTransport = [
+        clientOrigin = clientOrigin.clientOrigin.toString(),
+        maxStreamsUni = options.anticipatedConcurrentIncomingUnidirectionalStreams.value_or(100),
+        maxStreamsBidi = options.anticipatedConcurrentIncomingBidirectionalStreams.value_or(100),
+        protocols = joinProtocolStrings(options.protocols)
+    ](nw_protocol_options_t options) {
         nw_webtransport_options_set_is_unidirectional(options, false);
         nw_webtransport_options_set_is_datagram(options, true);
         nw_webtransport_options_add_connect_request_header(options, "origin", clientOrigin.utf8().data());
         if (canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready())
             softLink_Network_nw_webtransport_options_set_allow_joining_before_ready(options, true);
+        if (canLoad_Network_nw_webtransport_options_set_initial_max_streams_uni())
+            softLink_Network_nw_webtransport_options_set_initial_max_streams_uni(options, maxStreamsUni);
+        if (canLoad_Network_nw_webtransport_options_set_initial_max_streams_bidi())
+            softLink_Network_nw_webtransport_options_set_initial_max_streams_bidi(options, maxStreamsBidi);
+        nw_webtransport_options_add_connect_request_header(options, "wt-available-protocols", protocols.utf8().data());
     };
 
-    auto configureTLS = [connectionToWebProcess = Ref { connectionToWebProcess }, url = WTFMove(url), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin)] (nw_protocol_options_t options) {
+    auto configureTLS = [
+        weakConnection = WeakPtr { connectionToWebProcess },
+        url = WTFMove(url),
+        pageID = WTFMove(pageID),
+        hashes = std::exchange(options.serverCertificateHashes, { }),
+        clientOrigin = WTFMove(clientOrigin)
+    ](nw_protocol_options_t options) mutable {
         RetainPtr securityOptions = adoptNS(nw_tls_copy_sec_protocol_options(options));
         sec_protocol_options_set_peer_authentication_required(securityOptions.get(), true);
-        sec_protocol_options_set_verify_block(securityOptions.get(), makeBlockPtr([connectionToWebProcess = WTFMove(connectionToWebProcess), url = WTFMove(url), pageID = WTFMove(pageID), clientOrigin = WTFMove(clientOrigin)](sec_protocol_metadata_t metadata, sec_trust_t trust, sec_protocol_verify_complete_t completion) mutable {
-            didReceiveServerTrustChallenge(WTFMove(connectionToWebProcess), WTFMove(url), WTFMove(pageID), WTFMove(clientOrigin), trust, completion);
+        sec_protocol_options_set_verify_block(securityOptions.get(), makeBlockPtr([
+            // The configureTLS lambda can be called more than once, which means that
+            // this inner lambda capture initialization will also run multiple times.
+            // Therefore, do not WTFMove in this capture list or it will not work
+            // after the first move.
+            weakConnection,
+            url,
+            pageID,
+            hashes,
+            clientOrigin
+        ] (sec_protocol_metadata_t metadata, sec_trust_t trust, sec_protocol_verify_complete_t completion) mutable {
+            RefPtr connectionToWebProcess = weakConnection.get();
+            if (!connectionToWebProcess) {
+                completion(false);
+                return;
+            }
+            didReceiveServerTrustChallenge(*connectionToWebProcess, url, hashes, pageID, clientOrigin, trust, completion);
         }).get(), mainDispatchQueueSingleton());
         // FIXME: Pipe client cert auth into this too, probably.
     };
 
     auto configureQUIC = [](nw_protocol_options_t options) {
-        nw_quic_set_initial_max_streams_bidirectional(options, std::numeric_limits<uint32_t>::max());
-        nw_quic_set_initial_max_streams_unidirectional(options, std::numeric_limits<uint32_t>::max());
         nw_quic_set_max_datagram_frame_size(options, std::numeric_limits<uint16_t>::max());
     };
 
-    return adoptNS(nw_parameters_create_webtransport_http(configureWebTransport, configureTLS, configureQUIC, NW_PARAMETERS_DEFAULT_CONFIGURATION));
+    auto configureTCP = options.requireUnreliable ? NW_PARAMETERS_DISABLE_PROTOCOL : NW_PARAMETERS_DEFAULT_CONFIGURATION;
+
+    return adoptNS(nw_parameters_create_webtransport_http(configureWebTransport, configureTLS, configureQUIC, configureTCP));
 }
 #endif // HAVE(WEB_TRANSPORT)
 
-RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connectionToWebProcess, WebTransportSessionIdentifier identifier, URL&& url, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
+RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectionToWebProcess& connectionToWebProcess, WebTransportSessionIdentifier identifier, URL&& url, WebCore::WebTransportOptions&& options, WebKit::WebPageProxyIdentifier&& pageID, WebCore::ClientOrigin&& clientOrigin)
 {
 #if HAVE(WEB_TRANSPORT)
     RetainPtr endpoint = adoptNS(nw_endpoint_create_url(url.string().utf8().data()));
@@ -154,7 +265,7 @@ RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectio
         return nullptr;
     }
 
-    RetainPtr parameters = createParameters(connectionToWebProcess, WTFMove(url), WTFMove(pageID), WTFMove(clientOrigin));
+    RetainPtr parameters = createParameters(connectionToWebProcess, WTFMove(url), options, WTFMove(pageID), WTFMove(clientOrigin));
     if (!parameters) {
         ASSERT_NOT_REACHED();
         return nullptr;
@@ -172,38 +283,72 @@ RefPtr<NetworkTransportSession> NetworkTransportSession::create(NetworkConnectio
         return nullptr;
     }
 
-    return NetworkTransportSession::create(connectionToWebProcess, identifier, connectionGroup.get(), endpoint.get());
+    return NetworkTransportSession::create(connectionToWebProcess, identifier, WTFMove(options), connectionGroup.get(), endpoint.get());
 #else
     return nullptr;
 #endif // HAVE(WEB_TRANSPORT)
 }
 
-void NetworkTransportSession::initialize(CompletionHandler<void(bool)>&& completionHandler)
+void NetworkTransportSession::initialize(CompletionHandler<void(std::optional<WebCore::WebTransportConnectionInfo>&&)>&& completionHandler)
 {
 #if HAVE(WEB_TRANSPORT)
-    auto creationCompletionHandler = [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)] (bool success) mutable {
+    auto creationCompletionHandler = [weakThis = WeakPtr { *this }, completionHandler = WTFMove(completionHandler)] (std::optional<WebCore::WebTransportConnectionInfo>&& connectionInfo) mutable {
         if (!completionHandler)
             return;
         if (canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready())
-            return completionHandler(true);
-        if (!success)
-            return completionHandler(false);
+            return completionHandler(WTFMove(connectionInfo));
+        if (!connectionInfo)
+            return completionHandler(std::nullopt);
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
-            return completionHandler(false);
+            return completionHandler(std::nullopt);
         protectedThis->setupDatagramConnection(WTFMove(completionHandler));
     };
 
-    nw_connection_group_set_state_changed_handler(m_connectionGroup.get(), makeBlockPtr([creationCompletionHandler = WTFMove(creationCompletionHandler)] (nw_connection_group_state_t state, nw_error_t error) mutable {
+    nw_connection_group_set_state_changed_handler(m_connectionGroup.get(), makeBlockPtr([creationCompletionHandler = WTFMove(creationCompletionHandler), weakThis = WeakPtr { *this }] (nw_connection_group_state_t state, nw_error_t error) mutable {
         switch (state) {
         case nw_connection_group_state_invalid:
         case nw_connection_group_state_waiting:
             return; // We will get another callback with another state change.
-        case nw_connection_group_state_ready:
-            return creationCompletionHandler(true);
+        case nw_connection_group_state_ready: {
+            __block String protocol;
+            WebCore::WebTransportReliabilityMode reliabilityMode = WebCore::WebTransportReliabilityMode::Pending;
+            if (RefPtr protectedThis = weakThis.get()) {
+                protectedThis->m_sessionMetadata = nw_connection_group_copy_protocol_metadata(protectedThis->m_connectionGroup.get(), adoptNS(nw_protocol_copy_webtransport_definition()).get());
+                if (RetainPtr metadata = protectedThis->m_sessionMetadata) {
+                    if (canLoad_Network_nw_webtransport_metadata_set_remote_drain_handler()) {
+                        softLink_Network_nw_webtransport_metadata_set_remote_drain_handler(metadata.get(), makeBlockPtr([weakThis = WeakPtr { *protectedThis }] () mutable {
+                            RefPtr protectedThis = weakThis.get();
+                            if (!protectedThis)
+                                return;
+                            protectedThis->send(Messages::WebTransportSession::DidDrain());
+                        }).get(), mainDispatchQueueSingleton());
+                    }
+                    if (canLoad_Network_nw_webtransport_metadata_copy_connect_response()) {
+                        RetainPtr response = adoptNS(softLink_Network_nw_webtransport_metadata_copy_connect_response(metadata.get()));
+                        nw_http_fields_access_value_by_name(response.get(), "wt-protocol", ^void(const char *value) {
+                            protocol = String::fromUTF8(unsafeSpan(value));
+                        });
+                    }
+                }
+            }
+            return creationCompletionHandler(WebCore::WebTransportConnectionInfo { WTFMove(protocol), reliabilityMode });
+        }
         case nw_connection_group_state_failed:
-            // FIXME: Send error to JS if this is not a clean session termination.
-            return creationCompletionHandler(false);
+            if (RefPtr protectedThis = weakThis.get()) {
+                if (RetainPtr metadata = protectedThis->m_sessionMetadata) {
+                    std::optional<unsigned> sessionErrorCode = std::nullopt;
+                    String sessionErrorMessage;
+                    if (canLoad_Network_nw_webtransport_metadata_get_session_closed() && softLink_Network_nw_webtransport_metadata_get_session_closed(metadata.get())) {
+                        sessionErrorCode = nw_webtransport_metadata_get_session_error_code(metadata.get());
+                        if (const char* errorMessage = nw_webtransport_metadata_get_session_error_message(metadata.get()))
+                            sessionErrorMessage = String::fromUTF8(unsafeSpan(errorMessage));
+                    }
+                    protectedThis->send(Messages::WebTransportSession::DidFail(WTFMove(sessionErrorCode), WTFMove(sessionErrorMessage)));
+                    return;
+                }
+            }
+            return creationCompletionHandler(std::nullopt);
         case nw_connection_group_state_cancelled:
             return;
         }
@@ -214,9 +359,9 @@ void NetworkTransportSession::initialize(CompletionHandler<void(bool)>&& complet
     nw_connection_group_start(m_connectionGroup.get());
 
     if (canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready())
-        setupDatagramConnection([](bool) { });
+        setupDatagramConnection([](std::optional<WebCore::WebTransportConnectionInfo>&&) { });
 #else
-    completionHandler(false);
+    completionHandler(std::nullopt);
 #endif
 }
 
@@ -225,12 +370,18 @@ void NetworkTransportSession::createBidirectionalStream(CompletionHandler<void(s
     createStream(NetworkTransportStreamType::Bidirectional, WTFMove(completionHandler));
 }
 
+void NetworkTransportSession::getStats(CompletionHandler<void(WebCore::WebTransportConnectionStats&&)>&& completionHandler)
+{
+    // FIXME: Implement.
+    completionHandler({ });
+}
+
 void NetworkTransportSession::createOutgoingUnidirectionalStream(CompletionHandler<void(std::optional<WebCore::WebTransportStreamIdentifier>)>&& completionHandler)
 {
     createStream(NetworkTransportStreamType::OutgoingUnidirectional, WTFMove(completionHandler));
 }
 
-void NetworkTransportSession::setupDatagramConnection(CompletionHandler<void(bool)>&& completionHandler)
+void NetworkTransportSession::setupDatagramConnection(CompletionHandler<void(std::optional<WebCore::WebTransportConnectionInfo>&&)>&& completionHandler)
 {
 #if HAVE(WEB_TRANSPORT)
     ASSERT(!m_datagramConnection);
@@ -254,7 +405,10 @@ void NetworkTransportSession::setupDatagramConnection(CompletionHandler<void(boo
     auto creationCompletionHandler = [completionHandler = WTFMove(completionHandler)] (bool success) mutable {
         if (!completionHandler)
             return;
-        completionHandler(success);
+        if (success)
+            completionHandler(WebCore::WebTransportConnectionInfo { { }, WebCore::WebTransportReliabilityMode::Pending });
+        else
+            completionHandler(std::nullopt);
     };
 
     nw_connection_set_state_changed_handler(m_datagramConnection.get(), makeBlockPtr([weakThis = WeakPtr { *this }, creationCompletionHandler = WTFMove(creationCompletionHandler)] (nw_connection_state_t state, nw_error_t error) mutable {
@@ -283,12 +437,17 @@ void NetworkTransportSession::setupDatagramConnection(CompletionHandler<void(boo
         receiveDatagramLoop();
 
 #else
-    completionHandler(false);
+    completionHandler(std::nullopt);
 #endif // HAVE(WEB_TRANSPORT)
 }
 
-void NetworkTransportSession::sendDatagram(std::span<const uint8_t> data, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&& completionHandler)
+void NetworkTransportSession::sendDatagram(std::optional<WebCore::WebTransportSendGroupIdentifier> identifier, std::span<const uint8_t> data, CompletionHandler<void(std::optional<WebCore::Exception>&&)>&& completionHandler)
 {
+    if (identifier) {
+        m_datagramStats.ensure(*identifier, [] {
+            return uint64_t { };
+        }).iterator->value += data.size();
+    }
 #if HAVE(WEB_TRANSPORT)
     ASSERT(m_datagramConnection);
     nw_connection_send(m_datagramConnection.get(), makeDispatchData(Vector(data)).get(), NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, makeBlockPtr([completionHandler = WTFMove(completionHandler)] (nw_error_t error) mutable {
@@ -338,19 +497,35 @@ void NetworkTransportSession::setupConnectionHandler()
                 return;
             }
             RetainPtr metadata = adoptNS(nw_connection_copy_protocol_metadata(inboundConnection.get(), adoptNS(nw_protocol_copy_webtransport_definition()).get()));
-            if (nw_webtransport_metadata_get_is_unidirectional(metadata.get())) {
-                Ref stream = NetworkTransportStream::create(*protectedThis.get(), std::exchange(inboundConnection, nullptr).get(), NetworkTransportStreamType::IncomingUnidirectional);
-                auto identifier = stream->identifier();
-                ASSERT(!protectedThis->m_streams.contains(identifier));
-                protectedThis->m_streams.set(identifier, stream);
-                protectedThis->receiveIncomingUnidirectionalStream(identifier);
-                return;
-            }
-            Ref stream = NetworkTransportStream::create(*protectedThis.get(), std::exchange(inboundConnection, nullptr).get(), NetworkTransportStreamType::Bidirectional);
+            bool unidirectional = nw_webtransport_metadata_get_is_unidirectional(metadata.get());
+            auto streamType = unidirectional ? NetworkTransportStreamType::IncomingUnidirectional : NetworkTransportStreamType::Bidirectional;
+            Ref stream = NetworkTransportStream::create(*protectedThis.get(), std::exchange(inboundConnection, nullptr).get(), streamType);
             auto identifier = stream->identifier();
             ASSERT(!protectedThis->m_streams.contains(identifier));
             protectedThis->m_streams.set(identifier, stream);
-            protectedThis->receiveBidirectionalStream(identifier);
+
+            if (unidirectional)
+                protectedThis->receiveIncomingUnidirectionalStream(identifier);
+            else
+                protectedThis->receiveBidirectionalStream(identifier);
+
+            if (!unidirectional && canLoad_Network_nw_webtransport_metadata_set_remote_receive_error_handler()) {
+                softLink_Network_nw_webtransport_metadata_set_remote_receive_error_handler(metadata.get(), makeBlockPtr([weakThis = WeakPtr { *protectedThis }, identifier] (uint64_t errorCode) mutable {
+                    RefPtr protectedThis = weakThis.get();
+                    if (!protectedThis)
+                        return;
+                    protectedThis->send(Messages::WebTransportSession::StreamSendError(identifier, errorCode));
+                }).get(), mainDispatchQueueSingleton());
+            }
+
+            if (canLoad_Network_nw_webtransport_metadata_set_remote_send_error_handler()) {
+                softLink_Network_nw_webtransport_metadata_set_remote_send_error_handler(metadata.get(), makeBlockPtr([weakThis = WeakPtr { *protectedThis }, identifier] (uint64_t errorCode) mutable {
+                    RefPtr protectedThis = weakThis.get();
+                    if (!protectedThis)
+                        return;
+                    protectedThis->send(Messages::WebTransportSession::StreamReceiveError(identifier, errorCode));
+                }).get(), mainDispatchQueueSingleton());
+            }
         }).get());
         nw_connection_set_queue(inboundConnection, mainDispatchQueueSingleton());
         nw_connection_start(inboundConnection);
@@ -396,7 +571,10 @@ void NetworkTransportSession::createStream(NetworkTransportStreamType streamType
 
     nw_connection_set_state_changed_handler(connection.get(), makeBlockPtr([
         creationCompletionHandler = WTFMove(creationCompletionHandler),
-        stream = WTFMove(stream)
+        stream = WTFMove(stream),
+        connection,
+        streamType,
+        weakThis = WeakPtr { *this }
     ] (nw_connection_state_t state, nw_error_t error) mutable {
         switch (state) {
         case nw_connection_state_invalid:
@@ -404,12 +582,35 @@ void NetworkTransportSession::createStream(NetworkTransportStreamType streamType
         case nw_connection_state_preparing:
             return; // We will get another callback with another state change.
         case nw_connection_state_ready:
-            return creationCompletionHandler(WTFMove(stream));
+            break;
         case nw_connection_state_failed:
         case nw_connection_state_cancelled:
             return creationCompletionHandler(nullptr);
         }
-        RELEASE_ASSERT_NOT_REACHED();
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return creationCompletionHandler(nullptr);
+        RetainPtr metadata = adoptNS(nw_connection_copy_protocol_metadata(connection.get(), adoptNS(nw_protocol_copy_webtransport_definition()).get()));
+        bool unidirectional = streamType == NetworkTransportStreamType::OutgoingUnidirectional;
+        auto identifier = stream->identifier();
+        if (canLoad_Network_nw_webtransport_metadata_set_remote_receive_error_handler()) {
+            softLink_Network_nw_webtransport_metadata_set_remote_receive_error_handler(metadata.get(), makeBlockPtr([weakThis = WeakPtr { *protectedThis }, identifier] (uint64_t errorCode) mutable {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return;
+                protectedThis->send(Messages::WebTransportSession::StreamSendError(identifier, errorCode));
+            }).get(), mainDispatchQueueSingleton());
+        }
+
+        if (!unidirectional && canLoad_Network_nw_webtransport_metadata_set_remote_send_error_handler()) {
+            softLink_Network_nw_webtransport_metadata_set_remote_send_error_handler(metadata.get(), makeBlockPtr([weakThis = WeakPtr { *protectedThis }, identifier] (uint64_t errorCode) mutable {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return;
+                protectedThis->send(Messages::WebTransportSession::StreamReceiveError(identifier, errorCode));
+            }).get(), mainDispatchQueueSingleton());
+        }
+        return creationCompletionHandler(WTFMove(stream));
     }).get());
     nw_connection_set_queue(connection.get(), mainDispatchQueueSingleton());
     nw_connection_start(connection.get());
@@ -427,7 +628,7 @@ void NetworkTransportSession::receiveDatagramLoop()
         if (!protectedThis)
             return;
         if (error) {
-            if (!(nw_error_get_error_domain(error) == nw_error_domain_posix && nw_error_get_error_code(error) == ECANCELED))
+            if (nw_error_get_error_domain(error) != nw_error_domain_posix || nw_error_get_error_code(error) != ECANCELED)
                 protectedThis->receiveDatagram({ }, false, WebCore::Exception(WebCore::ExceptionCode::NetworkError));
             return;
         }
@@ -457,15 +658,16 @@ void NetworkTransportSession::receiveDatagramLoop()
 void NetworkTransportSession::terminate(WebCore::WebTransportSessionErrorCode code, CString&& message)
 {
 #if HAVE(WEB_TRANSPORT)
-    if (RetainPtr metadata = nw_connection_group_copy_protocol_metadata(m_connectionGroup.get(), adoptNS(nw_protocol_copy_webtransport_definition()).get())) {
-        nw_webtransport_metadata_set_session_error_code(metadata.get(), code);
-        nw_webtransport_metadata_set_session_error_message(metadata.get(), message.data());
+    if (m_sessionMetadata) {
+        nw_webtransport_metadata_set_session_error_code(m_sessionMetadata.get(), code);
+        nw_webtransport_metadata_set_session_error_message(m_sessionMetadata.get(), message.data());
     }
 
     if (m_datagramConnection)
         nw_connection_cancel(m_datagramConnection.get());
 
-    for (auto& stream : std::exchange(m_streams, { }).values())
+    auto streams = std::exchange(m_streams, { });
+    for (auto& stream : streams.values())
         stream->cancel(code);
 
     nw_connection_group_cancel(m_connectionGroup.get());

@@ -357,8 +357,10 @@ static Node* firstNode(const BoundaryPoint& point)
 {
     if (point.container->isCharacterDataNode())
         return point.container.ptr();
-    if (RefPtr child = point.container->traverseToChildAt(point.offset))
-        return child.get();
+    // FIXME: This is a safer cpp false positive. We should not need to ref the variable here
+    // as we merely return it right away (rdar://165602290).
+    SUPPRESS_UNCOUNTED_LOCAL if (auto* child = point.container->traverseToChildAt(point.offset))
+        return child;
     if (!point.offset)
         return point.container.ptr();
     return NodeTraversal::nextSkippingChildren(point.container);
@@ -1200,7 +1202,7 @@ void TextIterator::emitText(Text& textNode, RenderText& renderer, int textStartO
     ASSERT(textEndOffset >= 0);
     ASSERT(textStartOffset <= textEndOffset);
 
-    bool shouldIgnoreFullSizeKana = m_behaviors.contains(TextIteratorBehavior::IgnoresFullSizeKana) && renderer.style().textTransform().contains(TextTransform::FullSizeKana);
+    bool shouldIgnoreFullSizeKana = m_behaviors.contains(TextIteratorBehavior::IgnoresFullSizeKana) && renderer.style().textTransform().contains(Style::TextTransformValue::FullSizeKana);
 
     // FIXME: This probably yields the wrong offsets when text-transform: lowercase turns a single character into two characters.
     String string = m_behaviors.contains(TextIteratorBehavior::EmitsOriginalText) || shouldIgnoreFullSizeKana ? renderer.originalText()
@@ -1240,7 +1242,7 @@ Node* TextIterator::node() const
 {
     auto start = this->range().start;
     if (start.container->isCharacterDataNode())
-        return start.container.ptr();
+        return start.container.unsafePtr();
     return start.container->traverseToChildAt(start.offset);
 }
 
@@ -1440,7 +1442,7 @@ RenderText* SimplifiedBackwardsTextIterator::handleFirstLetter(int& startOffset,
     m_offset = firstLetterRenderer->caretMaxOffset();
     m_offset += collapsedSpaceLength(*firstLetterRenderer, m_offset);
 
-    return firstLetterRenderer.get();
+    return firstLetterRenderer.unsafeGet();
 }
 
 bool SimplifiedBackwardsTextIterator::handleReplacedElement()
@@ -2557,10 +2559,10 @@ SimpleRange resolveCharacterRange(const SimpleRange& scope, CharacterRange range
         }
 
         auto boundary = [&] (uint64_t targetLocation) -> BoundaryPoint {
-            if (is<Text>(textRunRange.start.container)) {
-                ASSERT(targetLocation - location <= downcast<Text>(textRunRange.start.container.get()).length());
+            if (RefPtr textNode = dynamicDowncast<Text>(textRunRange.start.container)) {
+                ASSERT(targetLocation - location <= textNode->length());
                 unsigned offset = textRunRange.start.offset + targetLocation - location;
-                return { textRunRange.start.container.copyRef(), offset };
+                return { textNode.releaseNonNull(), offset };
             }
             return targetLocation == location ? textRunRange.start : textRunRange.end;
         };
@@ -2705,6 +2707,48 @@ SimpleRange findClosestPlainText(const SimpleRange& range, const String& target,
     return rangeForMatch(range, options, closestMatch);
 }
 
+Vector<SimpleRange> findAllPlainText(const SimpleRange& range, const String& target, FindOptions options, unsigned limit)
+{
+    Vector<SimpleRange> matches;
+    CharacterIterator it(range, findIteratorOptions(options));
+    size_t currentCharacterIndex = 0;
+
+    auto extractRange = [&](const CharacterRange& match) -> std::optional<SimpleRange> {
+        if (it.atEnd())
+            return std::nullopt;
+        auto start = it.range().start;
+        if (match.length > 1) {
+            // Advance to the last character of the match. We subtract 1 because
+            // it.range().end gives us the boundary *after* the current character,
+            it.advance(match.length - 1);
+            currentCharacterIndex += match.length - 1;
+        }
+        if (it.atEnd())
+            return std::nullopt;
+        auto end = it.range().end;
+        return { { WTFMove(start), WTFMove(end) } };
+    };
+
+    forEachMatch(range, target, options, [&] (CharacterRange match) {
+        // Advance iterator to match start position
+        if (currentCharacterIndex < match.location) {
+            it.advance(match.location - currentCharacterIndex);
+            currentCharacterIndex = match.location;
+        }
+
+        auto foundRange = extractRange(match);
+        if (!foundRange)
+            return true;
+
+        matches.append(WTFMove(*foundRange));
+
+        return limit > 0 && matches.size() >= limit;
+    });
+
+    return matches;
+}
+
+// FIXME: Do not iterate over the entire range if we are searching backwards.
 SimpleRange findPlainText(const SimpleRange& range, const String& target, FindOptions options)
 {
     // When searching forward stop since we want the first match.

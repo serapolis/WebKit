@@ -25,7 +25,8 @@
 
 #include "AXObjectCache.h"
 #include "BackgroundPainter.h"
-#include "DocumentInlines.h"
+#include "DocumentSecurityOrigin.h"
+#include "DocumentView.h"
 #include "FloatRoundedRect.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HitTestResult.h"
@@ -34,6 +35,7 @@
 #include "RemoteFrameView.h"
 #include "RenderBox.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderEmbeddedObject.h"
 #include "RenderLayer.h"
@@ -238,6 +240,15 @@ void RenderWidget::styleDidChange(StyleDifference diff, const RenderStyle* oldSt
 
         if (CheckedPtr cache = document().existingAXObjectCache())
             cache->onWidgetVisibilityChanged(*this);
+    }
+
+    // If this is an iframe and the zoom property changed, notify the iframe's content frame
+    // to trigger a resize event since devicePixelRatio will have changed.
+    if (oldStyle && oldStyle->zoom() != style().zoom()) {
+        if (auto* frameView = dynamicDowncast<LocalFrameView>(m_widget.get())) {
+            frameView->frame().deviceOrPageScaleFactorChanged();
+            frameView->scheduleResizeEventIfNeeded();
+        }
     }
 }
 

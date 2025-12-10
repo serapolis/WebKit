@@ -81,12 +81,12 @@ SQLiteStorageArea::SQLiteStorageArea(unsigned quota, const WebCore::ClientOrigin
     , m_queue(WTFMove(workQueue))
     , m_cachedStatements(static_cast<size_t>(StatementType::Invalid))
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 }
 
 void SQLiteStorageArea::close()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     m_cache = std::nullopt;
     m_cacheSize = std::nullopt;
@@ -98,7 +98,7 @@ void SQLiteStorageArea::close()
 
 SQLiteStorageArea::~SQLiteStorageArea()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     bool databaseIsEmpty = isEmpty();
     close();
@@ -108,7 +108,7 @@ SQLiteStorageArea::~SQLiteStorageArea()
 
 bool SQLiteStorageArea::isEmpty()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     if (m_cache)
         return m_cache->isEmpty();
@@ -130,7 +130,7 @@ bool SQLiteStorageArea::isEmpty()
 
 void SQLiteStorageArea::clear()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     close();
     WebCore::SQLiteFileSystem::deleteDatabaseFile(m_path);
@@ -164,10 +164,22 @@ bool SQLiteStorageArea::createTableIfNecessary()
     return true;
 }
 
+enum class ShouldCreateParentDirectory : bool { No, Yes };
+static Expected<UniqueRef<WebCore::SQLiteDatabase>, int> createAndOpenDatabase(const String& path, ShouldCreateParentDirectory shouldCreateParentDirectory = ShouldCreateParentDirectory::No)
+{
+    auto database = makeUniqueRef<WebCore::SQLiteDatabase>();
+    if (shouldCreateParentDirectory == ShouldCreateParentDirectory::Yes)
+        FileSystem::makeAllDirectories(FileSystem::parentPath(path));
+    bool opened = database->open(path, WebCore::SQLiteDatabase::OpenMode::ReadWriteCreate, WebCore::SQLiteDatabase::OpenOptions::CanSuspendWhileLocked);
+    if (!opened)
+        return makeUnexpected(database->lastError());
+
+    return database;
+}
+
 bool SQLiteStorageArea::prepareDatabase(ShouldCreateIfNotExists shouldCreateIfNotExists)
 {
-    CheckedPtr database = m_database.get();
-    if (database && database->isOpen())
+    if (m_database && m_database->isOpen())
         return true;
 
     m_database = nullptr;
@@ -175,24 +187,22 @@ bool SQLiteStorageArea::prepareDatabase(ShouldCreateIfNotExists shouldCreateIfNo
     if (shouldCreateIfNotExists == ShouldCreateIfNotExists::No && !databaseExists)
         return true;
 
-    m_database = makeUnique<WebCore::SQLiteDatabase>();
-    CheckedRef resultDatabase = *m_database;
-    FileSystem::makeAllDirectories(FileSystem::parentPath(m_path));
-    auto openResult  = resultDatabase->open(m_path, WebCore::SQLiteDatabase::OpenMode::ReadWriteCreate, WebCore::SQLiteDatabase::OpenOptions::CanSuspendWhileLocked);
-    if (!openResult && handleDatabaseErrorIfNeeded(resultDatabase->lastError()) == IsDatabaseDeleted::Yes) {
+    auto openResult = createAndOpenDatabase(m_path, ShouldCreateParentDirectory::Yes);
+    if (!openResult && handleDatabaseErrorIfNeeded(openResult.error()) == IsDatabaseDeleted::Yes) {
         databaseExists = false;
         if (shouldCreateIfNotExists == ShouldCreateIfNotExists::No)
             return true;
 
-        m_database = makeUnique<WebCore::SQLiteDatabase>();
-        openResult = checkedDatabase()->open(m_path);
+        // Try again after deleting corrupted database file.
+        openResult = createAndOpenDatabase(m_path);
     }
 
     if (!openResult) {
         RELEASE_LOG_ERROR(Storage, "SQLiteStorageArea::prepareDatabase failed to open database at '%s'", m_path.utf8().data());
-        m_database = nullptr;
         return false;
     }
+
+    m_database = openResult.value().moveToUniquePtr();
 
     // Since a WorkQueue isn't bound to a specific thread, we need to disable threading check.
     // We will never access the database from different threads simultaneously.
@@ -235,8 +245,8 @@ WebCore::SQLiteStatementAutoResetScope SQLiteStorageArea::cachedStatement(Statem
 
     auto index = static_cast<uint8_t>(type);
     if (!m_cachedStatements[index]) {
-        if (auto result = checkedDatabase()->prepareHeapStatement(statementString(type)))
-            m_cachedStatements[index] = result.value().moveToUniquePtr();
+        if (auto result = checkedDatabase()->prepareStatement(statementString(type)))
+            m_cachedStatements[index] = WTFMove(result);
     }
 
     return WebCore::SQLiteStatementAutoResetScope { m_cachedStatements[index].get() };
@@ -297,7 +307,7 @@ Expected<String, StorageError> SQLiteStorageArea::getItemFromDatabase(const Stri
 
 HashMap<String, String> SQLiteStorageArea::allItems()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     if (!prepareDatabase(ShouldCreateIfNotExists::No) || !m_database)
         return HashMap<String, String> { };
@@ -324,7 +334,7 @@ HashMap<String, String> SQLiteStorageArea::allItems()
             if (result.has_value())
                 items.add(key, result.value());
             else {
-                RELEASE_LOG_ERROR(Storage, "SQLiteStorageArea::allItems failed during read from cache (%hhu)" PUBLIC_LOG_STRING, result.error());
+                RELEASE_LOG_ERROR(Storage, "SQLiteStorageArea::allItems failed during read from cache (%hhu)" PUBLIC_LOG_STRING, static_cast<uint8_t>(result.error()));
                 return { };
             }
         }
@@ -366,7 +376,7 @@ HashMap<String, String> SQLiteStorageArea::allItems()
 
 Expected<void, StorageError> SQLiteStorageArea::setItem(std::optional<IPC::Connection::UniqueID> connection, std::optional<StorageAreaImplIdentifier> storageAreaImplID, String&& key, String&& value, const String& urlString)
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     if (!prepareDatabase(ShouldCreateIfNotExists::Yes))
         return makeUnexpected(StorageError::Database);
@@ -411,7 +421,7 @@ Expected<void, StorageError> SQLiteStorageArea::setItem(std::optional<IPC::Conne
 
 Expected<void, StorageError> SQLiteStorageArea::removeItem(IPC::Connection::UniqueID connection, StorageAreaImplIdentifier storageAreaImplID, const String& key, const String& urlString)
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     if (!prepareDatabase(ShouldCreateIfNotExists::No))
         return makeUnexpected(StorageError::Database);
@@ -453,7 +463,7 @@ Expected<void, StorageError> SQLiteStorageArea::removeItem(IPC::Connection::Uniq
 
 Expected<void, StorageError> SQLiteStorageArea::clear(IPC::Connection::UniqueID connection, StorageAreaImplIdentifier storageAreaImplID, const String& urlString)
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
     if (!prepareDatabase(ShouldCreateIfNotExists::No))
         return makeUnexpected(StorageError::Database);
@@ -506,13 +516,9 @@ void SQLiteStorageArea::commitTransactionIfNecessary()
 
 void SQLiteStorageArea::handleLowMemoryWarning()
 {
-    ASSERT(!isMainRunLoop());
+    assertIsCurrent(m_queue.get());
 
-    if (!m_database)
-        return;
-
-    CheckedRef database = *m_database;
-    if (database->isOpen())
+    if (CheckedPtr database = m_database.get())
         database->releaseMemory();
 }
 

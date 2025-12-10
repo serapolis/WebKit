@@ -30,6 +30,7 @@
 
 #import "WebViewInternal.h"
 #import <WebCore/ChromeClient.h>
+#import <WebCore/Document.h>
 #import <WebCore/IntSize.h>
 #import <WebCore/LocalFrame.h>
 #import <WebCore/ScrollingConstraints.h>
@@ -77,9 +78,7 @@ WebFixedPositionContentData::WebFixedPositionContentData(WebView *webView)
 {
 }
 
-WebFixedPositionContentData::~WebFixedPositionContentData()
-{
-}
+WebFixedPositionContentData::~WebFixedPositionContentData() = default;
 
 @implementation WebFixedPositionContent {
     struct WebFixedPositionContentData* _private;

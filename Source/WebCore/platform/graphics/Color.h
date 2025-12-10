@@ -56,10 +56,6 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 typedef struct CGColor* CGColorRef;
 #endif
 
-#if PLATFORM(GTK)
-typedef struct _GdkRGBA GdkRGBA;
-#endif
-
 namespace WebCore {
 
 struct OutOfLineColorDataForIPC {
@@ -105,6 +101,7 @@ public:
     explicit Color(WTF::HashTableDeletedValueType);
     bool isHashTableDeletedValue() const;
     bool isHashTableEmptyValue() const;
+    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 
     Color(const Color&);
     Color(Color&&);
@@ -165,11 +162,6 @@ public:
     // Returns the underlying color if its type is inline.
     std::optional<PackedColor::RGBA> tryGetAsPackedInline() const;
     std::optional<SRGBA<uint8_t>> tryGetAsSRGBABytes() const;
-
-#if PLATFORM(GTK)
-    Color(const GdkRGBA&);
-    operator GdkRGBA() const;
-#endif
 
 #if USE(SKIA)
     Color(const SkColor&);
@@ -646,6 +638,5 @@ inline void Color::setOutOfLineComponents(Ref<OutOfLineComponents>&& color, Colo
 } // namespace WebCore
 
 namespace WTF {
-template<> struct DefaultHash<WebCore::Color>;
 template<> struct HashTraits<WebCore::Color>;
 }

@@ -57,7 +57,6 @@ namespace JSC {
     macro(iteratedObject) \
     macro(iteratedString) \
     macro(promise) \
-    macro(promiseOrCapability) \
     macro(Object) \
     macro(Number) \
     macro(Array) \
@@ -76,19 +75,33 @@ namespace JSC {
     macro(BuiltinLog) \
     macro(BuiltinDescribe) \
     macro(homeObject) \
-    macro(enqueueJob) \
-    macro(hostPromiseRejectionTracker) \
-    macro(onFulfilled) \
-    macro(onRejected) \
+    macro(resolvePromise) \
+    macro(rejectPromise) \
+    macro(fulfillPromise) \
+    macro(resolveWithoutPromise) \
+    macro(rejectWithoutPromise) \
+    macro(fulfillWithoutPromise) \
+    macro(resolvePromiseWithFirstResolvingFunctionCallCheck) \
+    macro(rejectPromiseWithFirstResolvingFunctionCallCheck) \
+    macro(fulfillPromiseWithFirstResolvingFunctionCallCheck) \
+    macro(resolveWithoutPromiseForAsyncAwait) \
+    macro(driveAsyncFunction) \
+    macro(awaitValue) \
+    macro(newHandledRejectedPromise) \
+    macro(promiseEmptyOnFulfilled) \
+    macro(promiseEmptyOnRejected) \
+    macro(promiseResolve) \
+    macro(promiseReject) \
+    macro(performPromiseThen) \
     macro(push) \
     macro(repeatCharacter) \
     macro(starDefault) \
     macro(starNamespace) \
+    macro(then) \
     macro(keys) \
     macro(values) \
     macro(set) \
     macro(clear) \
-    macro(context) \
     macro(defer) \
     macro(delete) \
     macro(size) \
@@ -133,7 +146,6 @@ namespace JSC {
     macro(instanceOf) \
     macro(isArraySlow) \
     macro(sameValue) \
-    macro(appendMemcpy) \
     macro(regExpCreate) \
     macro(isRegExp) \
     macro(isFinite) \
@@ -195,13 +207,11 @@ namespace JSC {
     macro(hasOwnPropertyFunction) \
     macro(createPrivateSymbol) \
     macro(entries) \
-    macro(outOfLineReactionCounts) \
     macro(emptyPropertyNameEnumerator) \
     macro(sentinelString) \
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
-    macro(arrayFromFastFillWithUndefined) \
-    macro(arrayFromFastFillWithEmpty) \
+    macro(arrayFromFastWithoutMapFn) \
     macro(jsonParse) \
     macro(jsonStringify) \
     macro(String) \
@@ -215,7 +225,6 @@ namespace JSC {
     macro(pop) \
     macro(wrapForValidIteratorCreate) \
     macro(asyncFromSyncIteratorCreate) \
-    macro(promiseAllContextCreate) \
     macro(regExpStringIteratorCreate) \
     macro(iteratorHelperCreate) \
     macro(syncIterator) \

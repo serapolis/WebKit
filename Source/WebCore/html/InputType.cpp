@@ -38,7 +38,7 @@
 #include "DateInputType.h"
 #include "DateTimeLocalInputType.h"
 #include "Decimal.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "ElementInlines.h"
 #include "ElementTextDirection.h"
 #include "EmailInputType.h"
@@ -58,7 +58,6 @@
 #include "MonthInputType.h"
 #include "NodeRenderStyle.h"
 #include "NumberInputType.h"
-#include "Page.h"
 #include "PasswordInputType.h"
 #include "PseudoClassChangeInvalidation.h"
 #include "RadioInputType.h"
@@ -1176,8 +1175,10 @@ void InputType::createShadowSubtreeIfNeeded()
 bool InputType::hasTouchEventHandler() const
 {
 #if ENABLE(IOS_TOUCH_EVENTS)
-    if (isSwitch())
-        return true;
+    if (isSwitch()) {
+        ASSERT(element());
+        return !protectedElement()->isDisabledFormControl();
+    }
 #else
     if (isRangeControl())
         return true;

@@ -133,7 +133,7 @@ void StringBuilder::reserveCapacity(unsigned newCapacity)
 }
 
 // Alterative extendBufferForAppending that can be called from the header without inlining.
-std::span<Latin1Character> StringBuilder::extendBufferForAppendingLChar(unsigned requiredLength)
+std::span<Latin1Character> StringBuilder::extendBufferForAppendingLatin1Character(unsigned requiredLength)
 {
     return extendBufferForAppending<Latin1Character>(requiredLength);
 }

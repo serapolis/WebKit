@@ -39,8 +39,8 @@
 #import "CommonAtomStrings.h"
 #import "ComposedTreeIterator.h"
 #import "ContainerNodeInlines.h"
-#import "Document.h"
 #import "DocumentLoader.h"
+#import "DocumentQuirks.h"
 #import "Editing.h"
 #import "ElementChildIteratorInlines.h"
 #import "ElementInlines.h"
@@ -49,6 +49,7 @@
 #import "File.h"
 #import "FontAttributes.h"
 #import "FontCascade.h"
+#import "FrameDestructionObserverInlines.h"
 #import "FrameLoader.h"
 #import "HTMLAttachmentElement.h"
 #import "HTMLConverter.h"
@@ -67,8 +68,8 @@
 #import "LocalFrame.h"
 #import "LocalizedStrings.h"
 #import "NodeName.h"
-#import "Quirks.h"
 #import "RenderImage.h"
+#import "RenderStyleInlines.h"
 #import "RenderText.h"
 #import "StyleExtractor.h"
 #import "StyleProperties.h"
@@ -80,6 +81,7 @@
 #import "markup.h"
 #import <objc/runtime.h>
 #import <pal/spi/cocoa/NSAttributedStringSPI.h>
+#import <pal/spi/cocoa/UIFoundationSPI.h>
 #import <wtf/ASCIICType.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/text/MakeString.h>
@@ -176,7 +178,7 @@ public:
 private:
     Position m_start;
     Position m_end;
-    DocumentLoader* m_dataSource { nullptr };
+    SingleThreadWeakPtr<DocumentLoader> m_dataSource;
 
     HashMap<RefPtr<Element>, RetainPtr<NSDictionary>> m_attributesForElements;
     HashMap<RetainPtr<CFTypeRef>, RefPtr<Element>> m_textTableFooters;
@@ -221,10 +223,10 @@ private:
 
     NSDictionary *computedAttributesForElement(Element&);
     NSDictionary *attributesForElement(Element&);
-    NSDictionary *aggregatedAttributesForAncestors(CharacterData&);
-    NSDictionary* aggregatedAttributesForElementAndItsAncestors(Element&);
+    RetainPtr<NSDictionary> aggregatedAttributesForAncestors(CharacterData&);
+    RetainPtr<NSDictionary> aggregatedAttributesForElementAndItsAncestors(Element&);
 
-    Element* _blockLevelElementForNode(Node*);
+    RefPtr<Element> _blockLevelElementForNode(Node*);
 
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     BOOL _addMultiRepresentationHEICAttachmentForImageElement(HTMLImageElement&);
@@ -787,14 +789,14 @@ bool HTMLConverterCaches::elementHasOwnBackgroundColor(Element& element)
     return element.hasTagName(htmlTag) || element.hasTagName(bodyTag) || propertyValueForNode(element, CSSPropertyDisplay).startsWith("table"_s);
 }
 
-Element* HTMLConverter::_blockLevelElementForNode(Node* node)
+RefPtr<Element> HTMLConverter::_blockLevelElementForNode(Node* node)
 {
     RefPtr element = dynamicDowncast<Element>(node);
     if (!element)
         element = node->parentElement();
     if (element && !_caches->isBlockElement(*element))
         element = _blockLevelElementForNode(element->parentInComposedTree());
-    return element.get();
+    return element;
 }
 
 static Color normalizedColor(Color color, bool ignoreDefaultColor, Element& element)
@@ -1020,7 +1022,7 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
             [attrs setObject:shadow forKey:NSShadowAttributeName];
     }
 
-    Element* blockElement = _blockLevelElementForNode(&element);
+    RefPtr blockElement = _blockLevelElementForNode(&element);
     if (&element != blockElement && [_writingDirectionArray count] > 0)
         [attrs setObject:[NSArray arrayWithArray:_writingDirectionArray.get()] forKey:NSWritingDirectionAttributeName];
 
@@ -1107,7 +1109,7 @@ NSDictionary* HTMLConverter::attributesForElement(Element& element)
     return attributes.get();
 }
 
-NSDictionary* HTMLConverter::aggregatedAttributesForAncestors(CharacterData& node)
+RetainPtr<NSDictionary> HTMLConverter::aggregatedAttributesForAncestors(CharacterData& node)
 {
     Node* ancestor = node.parentInComposedTree();
     while (ancestor && !is<Element>(*ancestor))
@@ -1117,7 +1119,7 @@ NSDictionary* HTMLConverter::aggregatedAttributesForAncestors(CharacterData& nod
     return aggregatedAttributesForElementAndItsAncestors(downcast<Element>(*ancestor));
 }
 
-NSDictionary* HTMLConverter::aggregatedAttributesForElementAndItsAncestors(Element& element)
+RetainPtr<NSDictionary> HTMLConverter::aggregatedAttributesForElementAndItsAncestors(Element& element)
 {
     auto& cachedAttributes = m_aggregatedAttributesForElements.add(&element, nullptr).iterator->value;
     if (cachedAttributes)
@@ -1139,7 +1141,7 @@ NSDictionary* HTMLConverter::aggregatedAttributesForElementAndItsAncestors(Eleme
     [attributesForAncestors addEntriesFromDictionary:attributesForCurrentElement];
     m_aggregatedAttributesForElements.set(&element, attributesForAncestors);
 
-    return attributesForAncestors.get();
+    return attributesForAncestors;
 }
 
 void HTMLConverter::_newParagraphForElement(Element& element, NSString *tag, BOOL flag, BOOL suppressTrailingSpace)
@@ -1274,7 +1276,7 @@ BOOL HTMLConverter::_addAttachmentForElement(Element& element, NSURL *url, BOOL 
             fileWrapper = nil;
     }
     if (!fileWrapper && !notFound) {
-        fileWrapper = fileWrapperForURL(m_dataSource, url);
+        fileWrapper = fileWrapperForURL(m_dataSource.get(), url);
         if (usePlaceholder && fileWrapper && [[[[fileWrapper preferredFilename] pathExtension] lowercaseString] hasPrefix:@"htm"])
             notFound = YES;
         if (notFound)
@@ -1396,63 +1398,63 @@ void HTMLConverter::_fillInBlock(NSTextBlock *block, Element& element, PlatformC
     RetainPtr width = element.getAttribute(widthAttr).createNSString();
     if ((width && [width length]) || !isTable) {
         if (_caches->floatPropertyValueForNode(element, CSSPropertyWidth, result))
-            [block setValue:result type:NSTextBlockAbsoluteValueType forDimension:NSTextBlockWidth];
+            [block setValue:result type:NSTextBlockValueTypeAbsolute forDimension:NSTextBlockDimensionWidth];
     }
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMinWidth, result))
-        [block setValue:result type:NSTextBlockAbsoluteValueType forDimension:NSTextBlockMinimumWidth];
+        [block setValue:result type:NSTextBlockValueTypeAbsolute forDimension:NSTextBlockDimensionMinimumWidth];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMaxWidth, result))
-        [block setValue:result type:NSTextBlockAbsoluteValueType forDimension:NSTextBlockMaximumWidth];
+        [block setValue:result type:NSTextBlockValueTypeAbsolute forDimension:NSTextBlockDimensionMaximumWidth];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMinHeight, result))
-        [block setValue:result type:NSTextBlockAbsoluteValueType forDimension:NSTextBlockMinimumHeight];
+        [block setValue:result type:NSTextBlockValueTypeAbsolute forDimension:NSTextBlockDimensionMinimumHeight];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMaxHeight, result))
-        [block setValue:result type:NSTextBlockAbsoluteValueType forDimension:NSTextBlockMaximumHeight];
+        [block setValue:result type:NSTextBlockValueTypeAbsolute forDimension:NSTextBlockDimensionMaximumHeight];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyPaddingLeft, result))
-        [block setWidth:result + extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMinXEdge];
+        [block setWidth:result + extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMinX];
     else
-        [block setWidth:extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMinXEdge];
+        [block setWidth:extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMinX];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyPaddingTop, result))
-        [block setWidth:result + extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMinYEdge];
+        [block setWidth:result + extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMinY];
     else
-        [block setWidth:extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMinYEdge];
+        [block setWidth:extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMinY];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyPaddingRight, result))
-        [block setWidth:result + extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMaxXEdge];
+        [block setWidth:result + extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMaxX];
     else
-        [block setWidth:extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMaxXEdge];
+        [block setWidth:extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMaxX];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyPaddingBottom, result))
-        [block setWidth:result + extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMaxYEdge];
+        [block setWidth:result + extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMaxY];
     else
-        [block setWidth:extraPadding type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockPadding edge:NSMaxYEdge];
+        [block setWidth:extraPadding type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerPadding edge:NSRectEdgeMaxY];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyBorderLeftWidth, result))
-        [block setWidth:result type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder edge:NSMinXEdge];
+        [block setWidth:result type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerBorder edge:NSRectEdgeMinX];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyBorderTopWidth, result))
-        [block setWidth:result type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder edge:NSMinYEdge];
+        [block setWidth:result type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerBorder edge:NSRectEdgeMinY];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyBorderRightWidth, result))
-        [block setWidth:result type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder edge:NSMaxXEdge];
+        [block setWidth:result type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerBorder edge:NSRectEdgeMaxX];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyBorderBottomWidth, result))
-        [block setWidth:result type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockBorder edge:NSMaxYEdge];
+        [block setWidth:result type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerBorder edge:NSRectEdgeMaxY];
 
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMarginLeft, result))
-        [block setWidth:result + extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMinXEdge];
+        [block setWidth:result + extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMinX];
     else
-        [block setWidth:extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMinXEdge];
+        [block setWidth:extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMinX];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMarginTop, result))
-        [block setWidth:result + extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMinYEdge];
+        [block setWidth:result + extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMinY];
     else
-        [block setWidth:extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMinYEdge];
+        [block setWidth:extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMinY];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMarginRight, result))
-        [block setWidth:result + extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMaxXEdge];
+        [block setWidth:result + extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMaxX];
     else
-        [block setWidth:extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMaxXEdge];
+        [block setWidth:extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMaxX];
     if (_caches->floatPropertyValueForNode(element, CSSPropertyMarginBottom, result))
-        [block setWidth:result + extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMaxYEdge];
+        [block setWidth:result + extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMaxY];
     else
-        [block setWidth:extraMargin type:NSTextBlockAbsoluteValueType forLayer:NSTextBlockMargin edge:NSMaxYEdge];
+        [block setWidth:extraMargin type:NSTextBlockValueTypeAbsolute forLayer:NSTextBlockLayerMargin edge:NSRectEdgeMaxY];
 
     RetainPtr<PlatformColor> color;
     if ((color = _colorForElement(element, CSSPropertyBackgroundColor)))
@@ -1461,14 +1463,14 @@ void HTMLConverter::_fillInBlock(NSTextBlock *block, Element& element, PlatformC
         [block setBackgroundColor:backgroundColor];
 
     if ((color = _colorForElement(element, CSSPropertyBorderLeftColor)))
-        [block setBorderColor:color.get() forEdge:NSMinXEdge];
+        [block setBorderColor:color.get() forEdge:NSRectEdgeMinX];
 
     if ((color = _colorForElement(element, CSSPropertyBorderTopColor)))
-        [block setBorderColor:color.get() forEdge:NSMinYEdge];
+        [block setBorderColor:color.get() forEdge:NSRectEdgeMinY];
     if ((color = _colorForElement(element, CSSPropertyBorderRightColor)))
-        [block setBorderColor:color.get() forEdge:NSMaxXEdge];
+        [block setBorderColor:color.get() forEdge:NSRectEdgeMaxX];
     if ((color = _colorForElement(element, CSSPropertyBorderBottomColor)))
-        [block setBorderColor:color.get() forEdge:NSMaxYEdge];
+        [block setBorderColor:color.get() forEdge:NSRectEdgeMaxY];
 }
 
 static inline BOOL read2DigitNumber(std::span<const char>& p, int8_t& outval)
@@ -1660,7 +1662,7 @@ void HTMLConverter::_addTableForElement(Element *tableElement)
     CGFloat cellSpacingVal = 1;
     CGFloat cellPaddingVal = 1;
     [table setNumberOfColumns:1];
-    [table setLayoutAlgorithm:NSTextTableAutomaticLayoutAlgorithm];
+    [table setLayoutAlgorithm:NSTextTableLayoutAlgorithmAutomatic];
     [table setCollapsesBorders:NO];
     [table setHidesEmptyCells:NO];
 
@@ -1684,7 +1686,7 @@ void HTMLConverter::_addTableForElement(Element *tableElement)
         if (_caches->propertyValueForNode(coreTableElement, CSSPropertyEmptyCells) == "hide"_s)
             [table setHidesEmptyCells:YES];
         if (_caches->propertyValueForNode(coreTableElement, CSSPropertyTableLayout) == "fixed"_s)
-            [table setLayoutAlgorithm:NSTextTableFixedLayoutAlgorithm];
+            [table setLayoutAlgorithm:NSTextTableLayoutAlgorithmFixed];
     }
 
     [_textTables addObject:table.get()];
@@ -1731,13 +1733,13 @@ void HTMLConverter::_addTableCellForElement(Element* element)
 
         _fillInBlock(block.get(), *element, color, cellSpacingVal / 2, 0, NO);
         if (verticalAlign == "middle"_s)
-            [block setVerticalAlignment:NSTextBlockMiddleAlignment];
+            [block setVerticalAlignment:NSTextBlockVerticalAlignmentMiddle];
         else if (verticalAlign == "bottom"_s)
-            [block setVerticalAlignment:NSTextBlockBottomAlignment];
+            [block setVerticalAlignment:NSTextBlockVerticalAlignmentBottom];
         else if (verticalAlign == "baseline"_s)
-            [block setVerticalAlignment:NSTextBlockBaselineAlignment];
+            [block setVerticalAlignment:NSTextBlockVerticalAlignmentBaseline];
         else if (verticalAlign == "top"_s)
-            [block setVerticalAlignment:NSTextBlockTopAlignment];
+            [block setVerticalAlignment:NSTextBlockVerticalAlignmentTop];
     } else {
         block = adoptNS([[PlatformNSTextTableBlock alloc] initWithTable:table startingRow:rowNumber rowSpan:rowSpan startingColumn:columnNumber columnSpan:colSpan]);
     }
@@ -1769,7 +1771,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
         }
     }
     if (displayValue == "table"_s || (![_textTables count] && displayValue == "table-row-group"_s)) {
-        Element* tableElement = &element;
+        RefPtr tableElement = &element;
         if (displayValue == "table-row-group"_s) {
             // If we are starting in medias res, the first thing we see may be the tbody, so go up to the table
             tableElement = _blockLevelElementForNode(element.parentInComposedTree());
@@ -1778,7 +1780,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
         }
         while ([_textTables count] > [_textBlocks count])
             _addTableCellForElement(nil);
-        _addTableForElement(tableElement);
+        _addTableForElement(tableElement.get());
     } else if (displayValue == "table-footer-group"_s && [_textTables count] > 0) {
         m_textTableFooters.add((__bridge CFTypeRef)[_textTables lastObject], &element);
         retval = NO;
@@ -1846,7 +1848,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
             retval = NO;
         }
     } else if (element.hasTagName(brTag)) {
-        Element* blockElement = _blockLevelElementForNode(element.parentInComposedTree());
+        RefPtr blockElement = _blockLevelElementForNode(element.parentInComposedTree());
         RetainPtr breakClass = element.getAttribute(classAttr).createNSString();
         RetainPtr blockTag = blockElement ? blockElement->tagName().createNSString() : nil;
         BOOL isExtraBreak = [AppleInterchangeNewline.createNSString() isEqualToString:breakClass.get()];
@@ -2015,7 +2017,7 @@ void HTMLConverter::_exitElement(Element& element, NSInteger depth, NSUInteger s
         NSTextTableBlock *block;
         NSMutableArray *rowArray = [_textTableRowArrays lastObject], *previousRowArray;
         NSUInteger i, count;
-        NSInteger numberOfColumns = [table numberOfColumns];
+        auto numberOfColumns = [table numberOfColumns];
         NSInteger openColumn;
         NSInteger rowNumber = [[_textTableRows lastObject] integerValue];
         do {
@@ -2025,8 +2027,11 @@ void HTMLConverter::_exitElement(Element& element, NSInteger depth, NSUInteger s
             count = [previousRowArray count];
             for (i = 0; i < count; i++) {
                 block = [previousRowArray objectAtIndex:i];
-                if ([block startingColumn] + [block columnSpan] > numberOfColumns) numberOfColumns = [block startingColumn] + [block columnSpan];
-                if ([block startingRow] + [block rowSpan] > rowNumber) [rowArray addObject:block];
+                if ([block startingColumn] + [block columnSpan] > static_cast<NSInteger>(numberOfColumns))
+                    numberOfColumns = [block startingColumn] + [block columnSpan];
+
+                if ([block startingRow] + [block rowSpan] > rowNumber)
+                    [rowArray addObject:block];
             }
             count = [rowArray count];
             openColumn = 0;
@@ -2034,8 +2039,8 @@ void HTMLConverter::_exitElement(Element& element, NSInteger depth, NSUInteger s
                 block = [rowArray objectAtIndex:i];
                 if (openColumn >= [block startingColumn] && openColumn < [block startingColumn] + [block columnSpan]) openColumn = [block startingColumn] + [block columnSpan];
             }
-        } while (openColumn >= numberOfColumns);
-        if ((NSUInteger)numberOfColumns > [table numberOfColumns])
+        } while (openColumn >= static_cast<NSInteger>(numberOfColumns));
+        if (numberOfColumns > [table numberOfColumns])
             [table setNumberOfColumns:numberOfColumns];
         [_textTableRows removeLastObject];
         [_textTableRows addObject:[NSNumber numberWithInteger:rowNumber]];
@@ -2176,7 +2181,7 @@ void HTMLConverter::_processText(Text& text)
         [_attrStr replaceCharactersInRange:rangeToReplace withString:outputString.createNSString().get()];
         rangeToReplace.length = outputString.length();
         if (rangeToReplace.length)
-            [_attrStr setAttributes:aggregatedAttributesForAncestors(text) range:rangeToReplace];
+            [_attrStr setAttributes:aggregatedAttributesForAncestors(text).get() range:rangeToReplace];
         _flags.isSoft = wasSpace;
     }
 }

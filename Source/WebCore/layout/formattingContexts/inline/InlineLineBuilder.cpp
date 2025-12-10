@@ -36,9 +36,10 @@
 #include "LayoutShape.h"
 #include "RenderStyleInlines.h"
 #include "RubyFormattingContext.h"
-#include "StyleLineBoxContain.h"
+#include "StyleWebKitLineBoxContain.h"
 #include "TextUtil.h"
 #include "UnicodeBidi.h"
+#include <ranges>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
@@ -52,6 +53,11 @@ struct LineContent {
     std::optional<InlineLayoutUnit> overflowLogicalWidth { };
     HashMap<const Box*, InlineLayoutUnit> rubyBaseAlignmentOffsetList { };
     InlineLayoutUnit rubyAnnotationOffset { 0.f };
+    enum class LineBreakReason : uint8_t {
+        ForcedLineBreakByBlockContent,
+        Other
+    };
+    LineBreakReason lineBreakReason { LineBreakReason::Other };
 };
 
 static bool isContentfulOrHasDecoration(const InlineItem& inlineItem, const InlineFormattingContext& formattingContext)
@@ -90,11 +96,11 @@ static inline Vector<int32_t> computedVisualOrder(const Line::RunList& lineRuns,
 
     Vector<size_t> runIndexOffsetMap;
     runIndexOffsetMap.reserveInitialCapacity(lineRuns.size());
-    auto hasOpaqueRun = false;
+    size_t numberOfOpaqueRuns = 0;
     for (size_t i = 0, accumulatedOffset = 0; i < lineRuns.size(); ++i) {
         if (lineRuns[i].bidiLevel() == InlineItem::opaqueBidiLevel) {
             ++accumulatedOffset;
-            hasOpaqueRun = true;
+            ++numberOfOpaqueRuns;
             continue;
         }
 
@@ -109,9 +115,21 @@ static inline Vector<int32_t> computedVisualOrder(const Line::RunList& lineRuns,
         runIndexOffsetMap.append(accumulatedOffset);
     }
 
+    auto forceBiDiOnOpaqueLine = [&] {
+        if (lineRuns.isEmpty() || numberOfOpaqueRuns != lineRuns.size())
+            return;
+        // When an RTL line has only opaque items (e.g. [spanning inline box start][inline box end] on <span><div></div></span>)
+        // we need to set the bidi level on the spanning inline box as if it was contentful to initiate bidi processing (mainly just RTL direction align).
+        if (!lineRuns.first().isLineSpanningInlineBoxStart())
+            return;
+        runLevels.append(lineRuns.first().layoutBox().parent().writingMode().isBidiLTR() ? UBIDI_LTR : UBIDI_RTL);
+        runIndexOffsetMap.append(0);
+    };
+    forceBiDiOnOpaqueLine();
+
     visualOrderList.resizeToFit(runLevels.size());
     ubidi_reorderVisual(runLevels.span().data(), runLevels.size(), visualOrderList.mutableSpan().data());
-    if (hasOpaqueRun) {
+    if (numberOfOpaqueRuns) {
         ASSERT(visualOrderList.size() == runIndexOffsetMap.size());
         for (size_t i = 0; i < runIndexOffsetMap.size(); ++i)
             visualOrderList[i] += runIndexOffsetMap[visualOrderList[i]];
@@ -228,6 +246,7 @@ struct LineCandidate {
     // Candidate content is a collection of inline content or a float box.
     InlineContent inlineContent;
     const InlineItem* floatItem { nullptr };
+    const InlineItem* blockItem { nullptr };
 };
 
 inline void LineCandidate::InlineContent::appendInlineItem(const InlineItem& inlineItem, const RenderStyle& style, InlineLayoutUnit logicalWidth, InlineLayoutUnit textSpacingAdjustment)
@@ -279,7 +298,8 @@ inline void LineCandidate::InlineContent::reset()
 
 inline void LineCandidate::reset()
 {
-    floatItem = nullptr;
+    floatItem = { };
+    blockItem = { };
     inlineContent.reset();
 }
 
@@ -302,7 +322,7 @@ LineLayoutResult LineBuilder::layoutInlineContent(const LineInput& lineInput, co
             , WTFMove(result.runs)
             , { WTFMove(m_placedFloats), WTFMove(m_suspendedFloats), { } }
             , { { }, result.contentLogicalWidth, { }, lineContent->overflowLogicalWidth }
-            , { m_lineLogicalRect.topLeft(), { }, { }, { } }
+            , { m_lineLogicalRect.topLeft() }
             , { }
             , { }
             , { isFirstFormattedLineCandidate && inlineContentEnding.has_value() ? IsFirstFormattedLine::Yes : IsFirstFormattedLine::No, { } }
@@ -321,7 +341,9 @@ LineLayoutResult LineBuilder::layoutInlineContent(const LineInput& lineInput, co
     // Both the inline content ('last line') and the trailing out-of-flow box are supposed to be center aligned.
     auto shouldTreatAsLastLine = isLastInlineContent || lineContent->range.endIndex() == lineInput.needsLayoutRange.endIndex();
     auto inlineBaseDirection = !result.runs.isEmpty() ? inlineBaseDirectionForLineContent(result.runs, rootStyle(), m_previousLine) : TextDirection::LTR;
-    auto contentLogicalLeft = !result.runs.isEmpty() ? InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), result.contentLogicalRight, m_lineLogicalRect.width(), result.hangingTrailingContentWidth, result.runs, shouldTreatAsLastLine, inlineBaseDirection) : 0.f;
+    auto lineEndsWithForcedLineBreak = lineContent->lineBreakReason == LineContent::LineBreakReason::ForcedLineBreakByBlockContent || Line::hasTrailingForcedLineBreak(result.runs);
+    auto isLastLineOrLineEndsWithForcedLineBreak = shouldTreatAsLastLine || lineEndsWithForcedLineBreak;
+    auto contentLogicalLeft = !result.runs.isEmpty() ? InlineFormattingUtils::horizontalAlignmentOffset(rootStyle(), result.contentLogicalRight, m_lineLogicalRect.width(), result.hangingTrailingContentWidth, isLastLineOrLineEndsWithForcedLineBreak, inlineBaseDirection) : 0.f;
     Vector<int32_t> visualOrderList;
     if (result.contentNeedsBidiReordering)
         computedVisualOrder(result.runs, visualOrderList);
@@ -330,7 +352,7 @@ LineLayoutResult LineBuilder::layoutInlineContent(const LineInput& lineInput, co
         , WTFMove(result.runs)
         , { WTFMove(m_placedFloats), WTFMove(m_suspendedFloats), m_lineIsConstrainedByFloat }
         , { contentLogicalLeft, result.contentLogicalWidth, contentLogicalLeft + result.contentLogicalRight, lineContent->overflowLogicalWidth }
-        , { m_lineLogicalRect.topLeft(), m_lineLogicalRect.width(), m_lineInitialLogicalRect.left() + m_initialIntrusiveFloatsWidth, m_initialLetterClearGap }
+        , { m_lineLogicalRect.topLeft(), m_lineLogicalRect.width(), m_lineInitialLogicalRect.left(), m_initialIntrusiveFloatsWidth, m_initialLetterClearGap }
         , { !result.isHangingTrailingContentWhitespace, result.hangingTrailingContentWidth, result.hangablePunctuationStartWidth }
         , { WTFMove(visualOrderList), inlineBaseDirection }
         , { isFirstFormattedLineCandidate && inlineContentEnding.has_value() ? IsFirstFormattedLine::Yes : IsFirstFormattedLine::No, isLastInlineContent }
@@ -401,7 +423,7 @@ void LineBuilder::initialize(const InlineRect& initialLineLogicalRect, const Inl
             ancestor = &ancestor->parent();
         }
         // Let's treat these spanning inline items as opaque bidi content. They should not change the bidi levels on adjacent content.
-        for (auto* spanningInlineBox : makeReversedRange(spanningLayoutBoxList))
+        for (auto* spanningInlineBox : spanningLayoutBoxList | std::views::reverse)
             m_lineSpanningInlineBoxes.append({ *spanningInlineBox, InlineItem::Type::InlineBoxStart, InlineItem::opaqueBidiLevel });
     };
     createLineSpanningInlineBoxes();
@@ -496,8 +518,51 @@ UniqueRef<LineContent> LineBuilder::placeInlineAndFloatContent(const InlineItemR
                     m_suspendedFloats.append(&floatItem->layoutBox());
                 }
                 ++placedInlineItemCount;
+            } else if (auto* blockItem = lineCandidate->blockItem) {
+                // We need to break whenever we come across a block level block to ensure it's the only item on the line.
+                // This is unlike hard line break as in case of 'text<br>', hard line break stays on the current line.
+                if (placedInlineItemCount) {
+                    lineContent->lineBreakReason = LineContent::LineBreakReason::ForcedLineBreakByBlockContent;
+                    return;
+                }
+
+                ASSERT(lineCandidate->inlineContent.isEmpty());
+                handleBlockContent(*blockItem);
+                ++placedInlineItemCount;
+                // It's always end of line before/after a block level box.
+                return;
             } else {
                 auto result = handleInlineContent(needsLayoutRange, lineCandidate);
+
+                auto adjustLineWithMarginBefore = [&] {
+                    // We don't know if margin coming from previous content should be applied or not
+                    // until after we managed to put some inline content on the line.
+                    // e.g.
+                    // <span>text<div style="margin-bottom: 100px;"></div>more text</span> v.s
+                    // <span>text<div style="margin-bottom: 100px;"></div> <div></div></span>
+                    // where in the first example, the 100px gap is between the block container's edge and "more text"
+                    // while in the second case, it is somewhere after the second block container (can't tell).
+                    if (!m_line.hasContentOrListMarker())
+                        return false;
+                    auto& marginState = blockLayoutState().marginState();
+                    auto marginValue = marginState.margin();
+                    marginState.resetMarginValues();
+                    if (marginState.atBeforeSideOfBlock) {
+                        marginState.resetBeforeSideOfBlock();
+                        return false;
+                    }
+                    if (!marginValue)
+                        return false;
+                    m_lineLogicalRect = { m_lineLogicalRect.top() + marginValue, m_lineInitialLogicalRect.left(), m_lineInitialLogicalRect.width(), m_lineInitialLogicalRect.height() };
+                    return true;
+                };
+                if (adjustLineWithMarginBefore() && !floatingContext().isEmpty()) {
+                    // This is similar to what we do in block layout when the estimated top position turns out to be incorrect
+                    // and now we have to relayout the content with the adjusted vertical position to make sure we avoid floats properly.
+                    m_line.initialize(m_lineSpanningInlineBoxes, isFirstFormattedLineCandidate());
+                    result = handleInlineContent(needsLayoutRange, lineCandidate);
+                }
+
                 auto isEndOfLine = result.isEndOfLine == InlineContentBreaker::IsEndOfLine::Yes;
                 if (!result.committedCount.isRevert) {
                     placedInlineItemCount += result.committedCount.value;
@@ -621,7 +686,7 @@ UniqueRef<LineContent> LineBuilder::placeInlineAndFloatContent(const InlineItemR
                 // Text is justified according to the method specified by the text-justify property,
                 // in order to exactly fill the line box. Unless otherwise specified by text-align-last,
                 // the last line before a forced break or the end of the block is start-aligned.
-                auto hasTextAlignJustify = (isLastInlineContent || m_line.runs().last().isLineBreak()) ? rootStyle.textAlignLast() == TextAlignLast::Justify : rootStyle.textAlign() == TextAlignMode::Justify;
+                auto hasTextAlignJustify = (isLastInlineContent || m_line.runs().last().isLineBreak()) ? rootStyle.textAlignLast() == Style::TextAlignLast::Justify : rootStyle.textAlign() == Style::TextAlign::Justify;
                 if (hasTextAlignJustify) {
                     auto additionalSpaceForAlignedContent = InlineContentAligner::applyTextAlignJustify(m_line.runs(), spaceToDistribute, m_line.hangingTrailingWhitespaceLength());
                     m_line.inflateContentLogicalWidth(additionalSpaceForAlignedContent);
@@ -705,7 +770,7 @@ InlineLayoutUnit LineBuilder::trailingPunctuationOrStopOrCommaWidthForLineCandia
     return { };
 }
 
-Vector<std::pair<size_t, size_t>> LineBuilder::collectShapingRanges(const LineCandidate& lineCandidate) const
+Vector<std::pair<size_t, size_t>> LineBuilder::collectShapeRanges(const LineCandidate& lineCandidate) const
 {
     // Normally candidate content is inline items between 2 soft wraping opportunities e.g.
     // <div>some text<span>more text</span></div>
@@ -739,15 +804,17 @@ Vector<std::pair<size_t, size_t>> LineBuilder::collectShapingRanges(const LineCa
             type = ShapingType::Break;
             break;
         case InlineItem::Type::InlineBoxStart: {
+            [[fallthrough]];
+        case InlineItem::Type::InlineBoxEnd:
             auto& boxGeometry = formattingContext().geometryForBox(inlineItem.layoutBox());
-            auto hasDecoration = boxGeometry.marginStart() || boxGeometry.borderStart() || boxGeometry.paddingStart();
-            type = hasDecoration ? ShapingType::Break : ShapingType::Keep;
-            break;
-        }
-        case InlineItem::Type::InlineBoxEnd: {
-            auto& boxGeometry = formattingContext().geometryForBox(inlineItem.layoutBox());
-            auto hasDecoration = boxGeometry.marginEnd() || boxGeometry.borderEnd() || boxGeometry.paddingEnd();
-            type = hasDecoration ? ShapingType::Break : ShapingType::Keep;
+            auto& style = isFirstFormattedLineCandidate ? inlineItem.firstLineStyle() : inlineItem.style();
+            auto hasDecoration = [&] {
+                // Note that this depends on the content being RTL (inline-box-end vs. start decoration matching visual order -visual matching).
+                auto shouldCheckLogicalStart = style.writingMode().bidiDirection() == TextDirection::LTR ? inlineItem.type() == InlineItem::Type::InlineBoxEnd : inlineItem.type() == InlineItem::Type::InlineBoxStart;
+                return shouldCheckLogicalStart ? boxGeometry.marginStart() || boxGeometry.borderStart() || boxGeometry.paddingStart() : boxGeometry.marginEnd() || boxGeometry.borderEnd() || boxGeometry.paddingEnd();
+            };
+            auto hasBidiIsolation = isIsolated(style.unicodeBidi());
+            type = hasDecoration() || hasBidiIsolation ? ShapingType::Break : ShapingType::Keep;
             break;
         }
         case InlineItem::Type::HardLineBreak:
@@ -755,6 +822,7 @@ Vector<std::pair<size_t, size_t>> LineBuilder::collectShapingRanges(const LineCa
         case InlineItem::Type::WordBreakOpportunity:
         case InlineItem::Type::Float:
         case InlineItem::Type::Opaque:
+        case InlineItem::Type::Block:
             break;
         default:
             ASSERT_NOT_REACHED();
@@ -816,15 +884,16 @@ Vector<std::pair<size_t, size_t>> LineBuilder::collectShapingRanges(const LineCa
             break;
         case ShapingType::Content: {
             auto& inlineTextItem = downcast<InlineTextItem>(runs[entry.index].inlineItem);
+            auto& styleToUse = isFirstFormattedLineCandidate ? inlineTextItem.firstLineStyle() : inlineTextItem.style();
             auto& inlineTextBox = inlineTextItem.inlineTextBox();
             auto isEligibleText = !inlineTextBox.canUseSimpleFontCodePath() && !inlineTextBox.isCombined() && inlineTextItem.direction() == TextDirection::RTL;
 
             if (!leadingContentRunIndex) {
                 if (isEligibleText)
                     leadingContentRunIndex = entry.index;
-                lastFontCascade = isFirstFormattedLineCandidate ? &inlineTextItem.firstLineStyle().fontCascade() : &inlineTextItem.style().fontCascade();
+                lastFontCascade = &styleToUse.fontCascade();
             } else if (hasBoundaryBetween) {
-                auto hasMatchingFontCascade = *lastFontCascade.get() == (isFirstFormattedLineCandidate ? inlineTextItem.firstLineStyle().fontCascade() : inlineTextItem.style().fontCascade());
+                auto hasMatchingFontCascade = *lastFontCascade.get() == styleToUse.fontCascade();
                 if (isEligibleText && hasMatchingFontCascade)
                     trailingContentRunIndex = entry.index;
                 else
@@ -862,9 +931,9 @@ void LineBuilder::applyShapingOnRunRange(LineCandidate& lineCandidate, std::pair
     auto characterScanForCodePath = true;
     auto& style = isFirstFormattedLineCandidate() ? runs[range.first].inlineItem.firstLineStyle() : runs[range.first].inlineItem.style();
     auto textRun = TextRun { textContent, m_lineLogicalRect.left(), { }, ExpansionBehavior::defaultBehavior(), TextDirection::RTL, style.rtlOrdering() == Order::Visual, characterScanForCodePath };
-    auto glyphSizes = ComplexTextController::glyphBoundsForTextRun(style.fontCascade(), textRun);
+    auto glyphAdvances = ComplexTextController::glyphAdvancesForTextRun(style.fontCascade(), textRun);
 
-    if (glyphSizes.size() != textRun.length()) {
+    if (glyphAdvances.size() != textRun.length()) {
         ASSERT_NOT_REACHED();
         return;
     }
@@ -880,13 +949,14 @@ void LineBuilder::applyShapingOnRunRange(LineCandidate& lineCandidate, std::pair
         }
         auto runWidth = InlineLayoutUnit { };
         for (size_t i = 0; i < inlineTextItem->length(); ++i) {
-            runWidth += std::max(0.f, glyphSizes[glyphIndex]);
+            runWidth += std::max(0.f, glyphAdvances[glyphIndex]);
             ++glyphIndex;
         }
         run.adjustContentWidth(runWidth);
         shapedContentWidth += runWidth;
     }
     inlineContent.continuousContent().adjustLogicalWidth(shapedContentWidth);
+    inlineContent.continuousContent().setHasShapedContent();
 }
 
 void LineBuilder::applyShapingIfNeeded(LineCandidate& lineCandidate)
@@ -897,8 +967,57 @@ void LineBuilder::applyShapingIfNeeded(LineCandidate& lineCandidate)
     if (!lineCandidate.inlineContent.isShapingCandidateByContent())
         return;
 
-    for (auto range : collectShapingRanges(lineCandidate))
+    for (auto range : collectShapeRanges(lineCandidate))
         applyShapingOnRunRange(lineCandidate, range);
+}
+
+void LineBuilder::shapePartialLineCandidate(LineCandidate& lineCandidate, size_t trailingRunIndex) const
+{
+    auto& inlineContent = lineCandidate.inlineContent;
+    auto& runs = inlineContent.continuousContent().runs();
+
+    if (trailingRunIndex >= runs.size()) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    // Find the shaping boundary end to see if we need to reshape the candidate text.
+    for (auto index = trailingRunIndex + 1; index < runs.size(); ++index) {
+        auto shapingBoundary = runs[index].shapingBoundary;
+        if (!shapingBoundary)
+            continue;
+        if (*shapingBoundary == InlineContentBreaker::ContinuousContent::Run::ShapingBoundary::Start) {
+            // Trailing content is a new shaping boundary, no need to reshape leading content.
+            return;
+        }
+        ASSERT(*shapingBoundary == InlineContentBreaker::ContinuousContent::Run::ShapingBoundary::End);
+        auto endPosition = std::optional<size_t> { };
+        for (auto i = trailingRunIndex + 1; i--;) {
+            auto& run = runs[i];
+            if (!endPosition && run.inlineItem.isText())
+                endPosition = i;
+
+            auto shapingBoundary = run.shapingBoundary;
+            if (shapingBoundary && *shapingBoundary == InlineContentBreaker::ContinuousContent::Run::ShapingBoundary::Start) {
+                if (!endPosition) {
+                    ASSERT_NOT_REACHED();
+                    return;
+                }
+                if (*endPosition == i) {
+                    // No shaping is needed when content does not cross multiple boxes.
+                    run.shapingBoundary = { };
+                    if (i < trailingRunIndex)
+                        run.adjustContentWidth(formattingContext().formattingUtils().inlineItemWidth(run.inlineItem, { }, isFirstFormattedLineCandidate()));
+                    return;
+                }
+
+                applyShapingOnRunRange(lineCandidate, { i, *endPosition });
+                return;
+            }
+        }
+        // We should always find a start when there's an end.
+        ASSERT_NOT_REACHED();
+    }
 }
 
 void LineBuilder::candidateContentForLine(LineCandidate& lineCandidate, std::pair<size_t, size_t> startEndIndex, const InlineItemRange& layoutRange, InlineLayoutUnit currentLogicalRight, SkipFloats skipFloats)
@@ -998,35 +1117,48 @@ void LineBuilder::candidateContentForLine(LineCandidate& lineCandidate, std::pai
             lineCandidate.inlineContent.appendInlineItem(inlineItem, style, { });
             continue;
         }
+        if (inlineItem.isBlock()) {
+            // Blocks must be the only items in the list.
+            lineCandidate.blockItem = &inlineItem;
+            ASSERT(startEndIndex.first + 1 == startEndIndex.second);
+            continue;
+        }
         ASSERT_NOT_REACHED();
     }
-    lineCandidate.inlineContent.setHasTrailingClonedDecoration(contentHasInlineItemsWithDecorationClone);
 
-    auto setLeadingAndTrailingHangingPunctuation = [&] {
-        auto& inlineContent = lineCandidate.inlineContent;
-        auto hangingContentWidth = inlineContent.continuousContent().hangingContentWidth();
-        // Do not even try to check for trailing punctuation when the candidate content already has whitespace type of hanging content.
-        if (!hangingContentWidth)
-            hangingContentWidth += trailingPunctuationOrStopOrCommaWidthForLineCandiate(lineCandidate, startEndIndex.second, layoutRange.endIndex());
-        hangingContentWidth += leadingPunctuationWidthForLineCandiate(lineCandidate);
-        if (hangingContentWidth)
-            lineCandidate.inlineContent.setHangingContentWidth(hangingContentWidth);
-    };
-    setLeadingAndTrailingHangingPunctuation();
+    if (lineCandidate.floatItem || lineCandidate.blockItem)
+        return;
 
-    auto setTrailingSoftHyphenWidth = [&] {
-        if (!trailingSoftHyphenInlineTextItemIndex)
-            return;
-        for (auto index = *trailingSoftHyphenInlineTextItemIndex; index < startEndIndex.second; ++index) {
-            if (!is<InlineTextItem>(m_inlineItemList[index]))
+    auto setupTrailingContent = [&] {
+        lineCandidate.inlineContent.setHasTrailingClonedDecoration(contentHasInlineItemsWithDecorationClone);
+
+        auto setLeadingAndTrailingHangingPunctuation = [&] {
+            auto& inlineContent = lineCandidate.inlineContent;
+            auto hangingContentWidth = inlineContent.continuousContent().hangingContentWidth();
+            // Do not even try to check for trailing punctuation when the candidate content already has whitespace type of hanging content.
+            if (!hangingContentWidth)
+                hangingContentWidth += trailingPunctuationOrStopOrCommaWidthForLineCandiate(lineCandidate, startEndIndex.second, layoutRange.endIndex());
+            hangingContentWidth += leadingPunctuationWidthForLineCandiate(lineCandidate);
+            if (hangingContentWidth)
+                lineCandidate.inlineContent.setHangingContentWidth(hangingContentWidth);
+        };
+        setLeadingAndTrailingHangingPunctuation();
+
+        auto setTrailingSoftHyphenWidth = [&] {
+            if (!trailingSoftHyphenInlineTextItemIndex)
                 return;
-        }
-        auto& trailingInlineTextItem = m_inlineItemList[*trailingSoftHyphenInlineTextItemIndex];
-        auto& style = isFirstFormattedLineCandidate ? trailingInlineTextItem.firstLineStyle() : trailingInlineTextItem.style();
-        lineCandidate.inlineContent.setTrailingSoftHyphenWidth(TextUtil::hyphenWidth(style));
+            for (auto index = *trailingSoftHyphenInlineTextItemIndex; index < startEndIndex.second; ++index) {
+                if (!is<InlineTextItem>(m_inlineItemList[index]))
+                    return;
+            }
+            auto& trailingInlineTextItem = m_inlineItemList[*trailingSoftHyphenInlineTextItemIndex];
+            auto& style = isFirstFormattedLineCandidate ? trailingInlineTextItem.firstLineStyle() : trailingInlineTextItem.style();
+            lineCandidate.inlineContent.setTrailingSoftHyphenWidth(TextUtil::hyphenWidth(style));
+        };
+        setTrailingSoftHyphenWidth();
+        lineCandidate.inlineContent.setHasTrailingSoftWrapOpportunity(hasTrailingSoftWrapOpportunity(startEndIndex.second, layoutRange.endIndex(), m_inlineItemList));
     };
-    setTrailingSoftHyphenWidth();
-    lineCandidate.inlineContent.setHasTrailingSoftWrapOpportunity(hasTrailingSoftWrapOpportunity(startEndIndex.second, layoutRange.endIndex(), m_inlineItemList));
+    setupTrailingContent();
     applyShapingIfNeeded(lineCandidate);
 }
 
@@ -1090,7 +1222,7 @@ LineBuilder::RectAndFloatConstraints LineBuilder::adjustedLineRectWithCandidateI
         if (inlineItem.isText()) {
             auto& styleToUse = isFirstFormattedLineCandidate() ? inlineItem.firstLineStyle() : inlineItem.style();
             candidateContentHeight = std::max<InlineLayoutUnit>(candidateContentHeight, styleToUse.computedLineHeight());
-        } else if (inlineItem.isAtomicInlineBox() && lineBoxContain.contains(Style::LineBoxContain::Replaced))
+        } else if (inlineItem.isAtomicInlineBox() && lineBoxContain.contains(Style::WebkitLineBoxContainValue::Replaced))
             candidateContentHeight = std::max(candidateContentHeight, InlineLayoutUnit { formattingContext().geometryForBox(inlineItem.layoutBox()).marginBoxHeight() });
     }
     if (candidateContentHeight <= m_lineLogicalRect.height())
@@ -1102,7 +1234,7 @@ LineBuilder::RectAndFloatConstraints LineBuilder::adjustedLineRectWithCandidateI
 std::optional<LineBuilder::InitialLetterOffsets> LineBuilder::adjustLineRectForInitialLetterIfApplicable(const Box& floatBox)
 {
     auto drop = floatBox.style().initialLetter().drop();
-    auto isInitialLetter = floatBox.isFloatingPositioned() && floatBox.style().pseudoElementType() == PseudoId::FirstLetter && drop;
+    auto isInitialLetter = floatBox.isFloatingPositioned() && floatBox.style().pseudoElementType() == PseudoElementType::FirstLetter && drop;
     if (!isInitialLetter)
         return { };
 
@@ -1243,7 +1375,7 @@ bool LineBuilder::tryPlacingFloatBox(const Box& floatBox, MayOverConstrainLine m
     auto placeFloatBox = [&] {
         auto lineIndex = m_previousLine ? (m_previousLine->lineIndex + 1) : 0lu;
         auto floatItem = floatingContext.makeFloatItem(floatBox, boxGeometry, lineIndex);
-        layoutState().placedFloats().append(floatItem);
+        layoutState().placedFloats().add(floatItem);
         m_placedFloats.append(floatItem);
     };
     placeFloatBox();
@@ -1262,7 +1394,20 @@ bool LineBuilder::tryPlacingFloatBox(const Box& floatBox, MayOverConstrainLine m
     return true;
 }
 
-LineBuilder::Result LineBuilder::handleInlineContent(const InlineItemRange& layoutRange, const LineCandidate& lineCandidate)
+void LineBuilder::handleBlockContent(const InlineItem& blockItem)
+{
+    ASSERT(blockItem.isBlock());
+    // Blocks are always the only content on the line.
+    ASSERT(!m_line.hasContentOrListMarker());
+    if (!isInIntrinsicWidthMode())
+        formattingContext().integrationUtils().layoutWithFormattingContextForBlockInInline(downcast<ElementBox>(blockItem.layoutBox()), LayoutPoint { m_lineLogicalRect.topLeft() }, layoutState());
+    auto marginBoxLogicalWidth = formattingContext().formattingUtils().inlineItemWidth(blockItem, { }, false);
+    m_line.appendBlock(blockItem, marginBoxLogicalWidth);
+    if (rootStyle().writingMode().isBidiRTL())
+        m_line.setContentNeedsBidiReordering();
+}
+
+LineBuilder::Result LineBuilder::handleInlineContent(const InlineItemRange& layoutRange, LineCandidate& lineCandidate)
 {
     auto result = LineBuilder::Result { };
     auto& inlineContent = lineCandidate.inlineContent;
@@ -1440,7 +1585,7 @@ InlineContentBreaker::Result LineBuilder::handleInlineContentWithClonedDecoratio
     return inlineContentBreaker().processInlineContent(continuousInlineContent, lineStatus);
 }
 
-void LineBuilder::commitCandidateContent(const LineCandidate& lineCandidate, std::optional<InlineContentBreaker::Result::PartialTrailingContent> partialTrailingContent)
+void LineBuilder::commitCandidateContent(LineCandidate& lineCandidate, std::optional<InlineContentBreaker::Result::PartialTrailingContent> partialTrailingContent)
 {
     auto& inlineContent = lineCandidate.inlineContent;
     auto& runs = inlineContent.continuousContent().runs();
@@ -1521,6 +1666,9 @@ void LineBuilder::commitCandidateContent(const LineCandidate& lineCandidate, std
         ASSERT_NOT_REACHED();
     };
 
+    if (partialTrailingContent && inlineContent.continuousContent().hasShapedContent())
+        shapePartialLineCandidate(lineCandidate, partialTrailingContent->trailingRunIndex);
+
     ASSERT(!partialTrailingContent || partialTrailingContent->trailingRunIndex <= runs.size());
     auto endOfNonPartialContent = (partialTrailingContent ? std::min(partialTrailingContent->trailingRunIndex, runs.size()) : runs.size());
     for (size_t index = 0; index < endOfNonPartialContent; ++index)
@@ -1553,7 +1701,7 @@ void LineBuilder::commitCandidateContent(const LineCandidate& lineCandidate, std
     }
 }
 
-LineBuilder::Result LineBuilder::processLineBreakingResult(const LineCandidate& lineCandidate, const InlineItemRange& layoutRange, const InlineContentBreaker::Result& lineBreakingResult)
+LineBuilder::Result LineBuilder::processLineBreakingResult(LineCandidate& lineCandidate, const InlineItemRange& layoutRange, const InlineContentBreaker::Result& lineBreakingResult)
 {
     auto& candidateRuns = lineCandidate.inlineContent.continuousContent().runs();
 
@@ -1597,7 +1745,7 @@ LineBuilder::Result LineBuilder::processLineBreakingResult(const LineCandidate& 
             m_wrapOpportunityList.removeLast();
             return { InlineContentBreaker::IsEndOfLine::Yes, { rebuildLineWithInlineContent(layoutRange, *m_wrapOpportunityList.last()), true } };
         }
-        return { InlineContentBreaker::IsEndOfLine::Yes, { }, { }, eligibleOverflowWidthAsLeading(candidateRuns, lineBreakingResult, isFirstFormattedLineCandidate()) };
+        return { InlineContentBreaker::IsEndOfLine::Yes, { }, { }, overflowWidthAsLeadingForNextLine(candidateRuns, lineBreakingResult) };
     }
     case InlineContentBreaker::Result::Action::WrapWithHyphen:
         ASSERT(lineBreakingResult.isEndOfLine == InlineContentBreaker::IsEndOfLine::Yes);
@@ -1633,7 +1781,7 @@ LineBuilder::Result LineBuilder::processLineBreakingResult(const LineCandidate& 
         auto& trailingInlineTextItem = downcast<InlineTextItem>(candidateRuns[trailingRunIndex].inlineItem);
         ASSERT(partialRun.length < trailingInlineTextItem.length());
         auto overflowLength = trailingInlineTextItem.length() - partialRun.length;
-        return { InlineContentBreaker::IsEndOfLine::Yes, { committedInlineItemCount, false }, overflowLength, eligibleOverflowWidthAsLeading(candidateRuns, lineBreakingResult, isFirstFormattedLineCandidate()) };
+        return { InlineContentBreaker::IsEndOfLine::Yes, { committedInlineItemCount, false }, overflowLength, overflowWidthAsLeadingForNextLine(candidateRuns, lineBreakingResult) };
     }
     }
     ASSERT_NOT_REACHED();
@@ -1720,7 +1868,7 @@ bool LineBuilder::isLastLineWithInlineContent(const LineContent& lineContent, si
             // This is both the first and the last line.
             return true;
         }
-        for (auto& lineRun : makeReversedRange(lineRuns)) {
+        for (auto& lineRun : lineRuns | std::views::reverse) {
             if (Line::Run::isContentfulOrHasDecoration(lineRun, formattingContext))
                 return true;
         }

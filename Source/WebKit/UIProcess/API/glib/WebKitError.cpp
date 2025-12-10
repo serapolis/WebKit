@@ -35,7 +35,7 @@ using namespace WebCore;
  */
 GQuark webkit_network_error_quark()
 {
-    return g_quark_from_static_string(reinterpret_cast<const char*>(API::Error::webKitNetworkErrorDomain().span8().data()));
+    return g_quark_from_string(API::Error::webKitNetworkErrorDomain().utf8().data());
 }
 
 /**
@@ -47,7 +47,7 @@ GQuark webkit_network_error_quark()
  */
 GQuark webkit_policy_error_quark()
 {
-    return g_quark_from_static_string(reinterpret_cast<const char*>(API::Error::webKitPolicyErrorDomain().span8().data()));
+    return g_quark_from_string(API::Error::webKitPolicyErrorDomain().utf8().data());
 }
 
 /**
@@ -59,7 +59,7 @@ GQuark webkit_policy_error_quark()
  */
 GQuark webkit_plugin_error_quark()
 {
-    return g_quark_from_static_string(reinterpret_cast<const char*>(API::Error::webKitPluginErrorDomain().span8().data()));
+    return g_quark_from_string(API::Error::webKitPluginErrorDomain().utf8().data());
 }
 
 /**
@@ -71,7 +71,7 @@ GQuark webkit_plugin_error_quark()
  */
 GQuark webkit_download_error_quark()
 {
-    return g_quark_from_static_string(reinterpret_cast<const char*>(API::Error::webKitDownloadErrorDomain().span8().data()));
+    return g_quark_from_string(API::Error::webKitDownloadErrorDomain().utf8().data());
 }
 
 #if PLATFORM(GTK)
@@ -84,7 +84,7 @@ GQuark webkit_download_error_quark()
  */
 GQuark webkit_print_error_quark()
 {
-    return g_quark_from_static_string(reinterpret_cast<const char*>(API::Error::webKitPrintErrorDomain().span8().data()));
+    return g_quark_from_string(API::Error::webKitPrintErrorDomain().utf8().data());
 }
 #endif
 
@@ -112,12 +112,30 @@ GQuark webkit_snapshot_error_quark()
     return g_quark_from_static_string("WebKitSnapshotError");
 }
 
+#if ENABLE(2022_GLIB_API)
+/**
+ * webkit_web_extension_error_quark:
+ *
+ * Gets the quark for the domain of Web Extension errors.
+ *
+ * Returns: web extension error domain.
+ * 
+ * Since: 2.52
+ */
+GQuark webkit_web_extension_error_quark()
+{
+    return g_quark_from_static_string("WebKitWebExtensionError");
+}
+#endif
+
 /**
  * webkit_web_extension_match_pattern_error_quark:
  *
  * Gets the quark for the domain of Web Extension Match Pattern errors.
  *
  * Returns: web extension match pattern error domain.
+ * 
+ * Since: 2.48
  */
 GQuark webkit_web_extension_match_pattern_error_quark()
 {

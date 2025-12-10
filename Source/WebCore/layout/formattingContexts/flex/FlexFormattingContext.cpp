@@ -33,8 +33,8 @@
 #include "LayoutChildIterator.h"
 #include "LayoutContext.h"
 #include "LayoutState.h"
-#include "LengthFunctions.h"
 #include "RenderStyleInlines.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <ranges>
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -89,11 +89,12 @@ FlexLayout::LogicalFlexItems FlexFormattingContext::convertFlexItemsToLogicalSpa
             auto mainAxis = LogicalFlexItem::MainAxisGeometry { };
             auto crossAxis = LogicalFlexItem::CrossAxisGeometry { };
 
-            auto propertyValueForLength = [&](auto& propertyValue, auto availableSize) -> std::optional<LayoutUnit> {
+            auto propertyValueForLength = [&](const auto& propertyValue, auto availableSize) -> std::optional<LayoutUnit> {
                 if (auto fixedPropertyValue = propertyValue.tryFixed())
-                    return LayoutUnit { fixedPropertyValue->value };
+                    return Style::evaluate<LayoutUnit>(*fixedPropertyValue, style->usedZoomForLength());
+
                 if (propertyValue.isSpecified() && availableSize)
-                    return Style::evaluate(propertyValue, *availableSize, 1.0f /* FIXME FIND ZOOM */);
+                    return Style::evaluate<LayoutUnit>(propertyValue, *availableSize, style->usedZoomForLength());
                 return { };
             };
 

@@ -199,6 +199,14 @@ void RecorderImpl::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph
 {
     if (decomposeDrawGlyphsIfNeeded(font, glyphs, advances, localAnchor, smoothingMode))
         return;
+
+#if USE(SKIA)
+    if (drawGlyphsMode() == Recorder::DrawGlyphsMode::TextBlob) {
+        m_items.append(DrawTextBlob(Ref { font }, Vector(glyphs), Vector(advances), localAnchor, smoothingMode));
+        return;
+    }
+#endif
+
     drawGlyphsImmediate(font, glyphs, advances, localAnchor, smoothingMode);
 }
 
@@ -220,7 +228,7 @@ void RecorderImpl::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& de
     m_items.append(DrawImageBuffer(imageBuffer, destRect, srcRect, options));
 }
 
-void RecorderImpl::drawNativeImageInternal(NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RecorderImpl::drawNativeImage(NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawNativeImage(image, destRect, srcRect, options));
@@ -365,7 +373,7 @@ void RecorderImpl::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RecorderImpl::drawVideoFrame(VideoFrame&, const FloatRect&, ImageOrientation, bool)
+void RecorderImpl::drawVideoFrame(const VideoFrame&, const FloatRect&, ImageOrientation, bool)
 {
     appendStateChangeItemIfNecessary();
     // FIXME: TODO
@@ -486,6 +494,11 @@ void RecorderImpl::appendStateChangeItemIfNecessary()
 
     state.didApplyChanges();
     currentState().lastDrawingState = state;
+}
+
+void RecorderImpl::drawPlaceholder(Function<void(GraphicsContext&)>&& function)
+{
+    m_items.append(DrawPlaceholder(WTFMove(function)));
 }
 
 } // namespace DisplayList

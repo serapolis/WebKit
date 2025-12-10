@@ -75,6 +75,11 @@
 #include <WebCore/SharedBuffer.h>
 #include <pal/SessionID.h>
 
+#if USE(LIBRICE)
+#include "RiceBackendProxy.h"
+#include "RiceBackendProxyMessages.h"
+#endif
+
 #if ENABLE(APPLE_PAY_REMOTE_UI)
 #include "WebPaymentCoordinatorMessages.h"
 #endif
@@ -153,6 +158,14 @@ bool NetworkProcessConnection::dispatchMessage(IPC::Connection& connection, IPC:
     }
 #endif
 
+#if USE(LIBRICE)
+    if (decoder.messageReceiverName() == Messages::RiceBackendProxy::messageReceiverName()) {
+        if (RefPtr agent = WebProcess::singleton().gstreamerIceBackend(RiceBackendIdentifier(decoder.destinationID())))
+            agent->didReceiveMessage(connection, decoder);
+        return true;
+    }
+#endif
+
     if (decoder.messageReceiverName() == Messages::WebIDBConnectionToServer::messageReceiverName()) {
         if (RefPtr webIDBConnection = m_webIDBConnection)
             webIDBConnection->didReceiveMessage(connection, decoder);
@@ -182,8 +195,8 @@ bool NetworkProcessConnection::dispatchMessage(IPC::Connection& connection, IPC:
 
 #if ENABLE(APPLE_PAY_REMOTE_UI)
     if (decoder.messageReceiverName() == Messages::WebPaymentCoordinator::messageReceiverName()) {
-        if (auto webPage = WebProcess::singleton().webPage(ObjectIdentifier<PageIdentifierType>(decoder.destinationID())))
-            webPage->paymentCoordinator()->didReceiveMessage(connection, decoder);
+        if (RefPtr webPage = WebProcess::singleton().webPage(ObjectIdentifier<PageIdentifierType>(decoder.destinationID())))
+            RefPtr { webPage->paymentCoordinator() }->didReceiveMessage(connection, decoder);
         return true;
     }
 #endif
@@ -194,8 +207,8 @@ bool NetworkProcessConnection::dispatchSyncMessage(IPC::Connection& connection, 
 {
 #if ENABLE(APPLE_PAY_REMOTE_UI)
     if (decoder.messageReceiverName() == Messages::WebPaymentCoordinator::messageReceiverName()) {
-        if (auto webPage = WebProcess::singleton().webPage(ObjectIdentifier<PageIdentifierType>(decoder.destinationID()))) {
-            webPage->paymentCoordinator()->didReceiveSyncMessage(connection, decoder, replyEncoder);
+        if (RefPtr webPage = WebProcess::singleton().webPage(ObjectIdentifier<PageIdentifierType>(decoder.destinationID()))) {
+            RefPtr { webPage->paymentCoordinator() }->didReceiveSyncMessage(connection, decoder, replyEncoder);
             return true;
         }
         return false;

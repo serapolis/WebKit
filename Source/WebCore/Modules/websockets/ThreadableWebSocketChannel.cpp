@@ -34,12 +34,13 @@
 
 #include "ContentRuleListResults.h"
 #include "Document.h"
-#include "DocumentInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
+#include "DocumentQuirks.h"
+#include "DocumentSecurityOrigin.h"
 #include "FrameLoader.h"
 #include "HTTPHeaderValues.h"
-#include "Page.h"
-#include "Quirks.h"
 #include "ScriptExecutionContext.h"
 #include "SocketProvider.h"
 #include "ThreadableWebSocketChannelClientWrapper.h"
@@ -61,8 +62,8 @@ RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(Document& 
 RefPtr<ThreadableWebSocketChannel> ThreadableWebSocketChannel::create(ScriptExecutionContext& context, WebSocketChannelClient& client, SocketProvider& provider)
 {
     if (RefPtr workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(context)) {
-        WorkerRunLoop& runLoop = workerGlobalScope->thread().runLoop();
-        return WorkerThreadableWebSocketChannel::create(*workerGlobalScope, client, makeString("webSocketChannelMode"_s, runLoop.createUniqueId()), provider);
+        auto identifier = workerGlobalScope->thread()->runLoop().createUniqueId();
+        return WorkerThreadableWebSocketChannel::create(*workerGlobalScope, client, makeString("webSocketChannelMode"_s, identifier), provider);
     }
 
     return create(downcast<Document>(context), client, provider);
@@ -113,7 +114,7 @@ std::optional<ResourceRequest> ThreadableWebSocketChannel::webSocketConnectReque
     request.setDomainForCachePartition(document.domainForCachePartition());
     request.setAllowCookies(validatedURL->areCookiesAllowed);
     request.setFirstPartyForCookies(document.firstPartyForCookies());
-    request.setHTTPHeaderField(HTTPHeaderName::Origin, document.securityOrigin().toString());
+    request.setHTTPHeaderField(HTTPHeaderName::Origin, document.protectedSecurityOrigin()->toString());
 
     if (RefPtr documentLoader = document.loader())
         request.setIsAppInitiated(documentLoader->lastNavigationWasAppInitiated());

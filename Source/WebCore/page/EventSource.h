@@ -43,6 +43,7 @@
 namespace WebCore {
 
 class MessageEvent;
+class SecurityOrigin;
 class TextResourceDecoder;
 class ThreadableLoader;
 template<typename> class ExceptionOr;
@@ -131,7 +132,7 @@ private:
     String m_currentlyParsedEventId;
     String m_lastEventId;
     uint64_t m_reconnectDelay { defaultReconnectDelay };
-    String m_eventStreamOrigin;
+    RefPtr<SecurityOrigin> m_eventStreamOrigin;
 };
 
 inline const String& EventSource::url() const

@@ -326,6 +326,10 @@ private:
     void didCleanupFullscreen() final { }
 #endif
 
+#if ENABLE(VIDEO)
+    void showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier, const WebCore::ResolvedCaptionDisplaySettingsOptions&, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&&) final;
+#endif
+
     CheckedPtr<WebViewImpl> checkedImpl() const { return m_impl.get(); }
 
     bool isViewVisible(NSView *, NSWindow *);

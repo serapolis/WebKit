@@ -32,6 +32,7 @@
 #include "HTMLNames.h"
 #include "HTMLOListElement.h"
 #include "PseudoElement.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderListItem.h"
 #include "RenderObjectInlines.h"
@@ -67,7 +68,7 @@ static Element* ancestorStyleContainmentObject(const Element& element)
     Element* ancestor = pseudoElement ? pseudoElement->hostElement() : element.parentElement();
     while (ancestor) {
         if (auto* style = ancestor->existingComputedStyle()) {
-            if (style->containsStyle())
+            if (style->usedContain().contains(Style::ContainValue::Style))
                 break;
         }
         // FIXME: this should use parentInComposedTree but for now matches the rest of RenderCounter.
@@ -132,7 +133,7 @@ static Element* previousSiblingOrParentElement(const Element& element)
     auto* parent = element.parentElement();
     if (parent && !parent->renderer())
         parent = previousSiblingOrParentElement(*parent);
-    if (parent && parent->renderer() && parent->renderer()->style().containsStyle())
+    if (parent && parent->renderer() && parent->renderer()->style().usedContain().contains(Style::ContainValue::Style))
         return nullptr;
     return parent;
 }
@@ -205,18 +206,19 @@ static std::optional<CounterPlan> planCounter(RenderElement& renderer, const Ato
 
     auto& style = renderer.style();
 
-    switch (style.pseudoElementType()) {
-    case PseudoId::None:
+    if (style.pseudoElementType()) {
+        switch (*style.pseudoElementType()) {
+        case PseudoElementType::Before:
+        case PseudoElementType::After:
+            break;
+        default:
+            return std::nullopt; // Counters are forbidden from all other pseudo elements.
+        }
+    } else {
         // Sometimes elements have more then one renderer. Only the first one gets the counter
         // LayoutTests/http/tests/css/counter-crash.html
         if (generatingElement->renderer() != &renderer)
             return std::nullopt;
-        break;
-    case PseudoId::Before:
-    case PseudoId::After:
-        break;
-    default:
-        return std::nullopt; // Counters are forbidden from all other pseudo elements.
     }
 
     auto directives = style.counterDirectives().map.get(identifier);
@@ -408,7 +410,7 @@ static CounterNode* makeCounterNode(RenderElement& renderer, const AtomString& i
     renderer.setHasCounterNodeMap(true);
 
     if (newNode->parent() || renderer.shouldApplyStyleContainment())
-        return newNode.ptr();
+        return newNode.unsafePtr();
 
     // Check if some nodes that were previously root nodes should become children of this node now.
     auto* currentRenderer = &renderer;
@@ -429,7 +431,7 @@ static CounterNode* makeCounterNode(RenderElement& renderer, const AtomString& i
         newNode->insertAfter(*currentCounter, newNode->lastChild(), identifier);
     }
 
-    return newNode.ptr();
+    return newNode.unsafePtr();
 }
 
 RenderCounter::RenderCounter(Document& document, const Style::Content::Counter& counter)
@@ -492,7 +494,7 @@ void RenderCounter::updateCounter()
             if (!beforeAfterContainer->isAnonymous() && !beforeAfterContainer->isPseudoElement())
                 return;
             auto containerStyle = beforeAfterContainer->style().pseudoElementType();
-            if (containerStyle == PseudoId::Before || containerStyle == PseudoId::After)
+            if (containerStyle == PseudoElementType::Before || containerStyle == PseudoElementType::After)
                 break;
             beforeAfterContainer = beforeAfterContainer->parent();
         }

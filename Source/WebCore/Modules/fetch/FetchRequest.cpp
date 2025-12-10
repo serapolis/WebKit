@@ -31,13 +31,11 @@
 #include "FetchRequest.h"
 
 #include "ContextDestructionObserverInlines.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentQuirks.h"
 #include "HTTPParsers.h"
 #include "JSAbortSignal.h"
 #include "Logging.h"
 #include "OriginAccessPatterns.h"
-#include "Quirks.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "Settings.h"
@@ -320,8 +318,10 @@ ExceptionOr<void> FetchRequest::setBody(FetchRequest& request)
     if (!request.isBodyNull()) {
         if (!methodCanHaveBody(m_request))
             return Exception { ExceptionCode::TypeError, makeString("Request has method '"_s, m_request.httpMethod(), "' and cannot have a body"_s) };
-        // FIXME: If body has a readable stream, we should pipe it to this new body stream.
-        m_body = WTFMove(*request.m_body);
+
+        RefPtr context = scriptExecutionContext();
+        auto* globalObject = context ? JSC::jsCast<JSDOMGlobalObject*>(context->globalObject()) : nullptr;
+        m_body = request.m_body->createProxy(*globalObject);
         request.setDisturbed();
     }
 
@@ -387,7 +387,7 @@ ResourceRequest FetchRequest::resourceRequest() const
     return request;
 }
 
-ExceptionOr<Ref<FetchRequest>> FetchRequest::clone()
+ExceptionOr<Ref<FetchRequest>> FetchRequest::clone(JSDOMGlobalObject& globalObject)
 {
     if (isDisturbedOrLocked())
         return Exception { ExceptionCode::TypeError, "Body is disturbed or locked"_s };
@@ -396,7 +396,7 @@ ExceptionOr<Ref<FetchRequest>> FetchRequest::clone()
         return Exception { ExceptionCode::InvalidStateError, "Cannot clone FetchRequest without a valid script execution context"_s };
     auto clone = adoptRef(*new FetchRequest(*context, std::nullopt, FetchHeaders::create(m_headers.get()), ResourceRequest { m_request }, FetchOptions { m_options }, String { m_referrer }));
     clone->suspendIfNeeded();
-    clone->cloneBody(*this);
+    clone->cloneBody(globalObject, *this);
     clone->setNavigationPreloadIdentifier(m_navigationPreloadIdentifier);
     clone->m_enableContentExtensionsCheck = m_enableContentExtensionsCheck;
     if (RefPtr document = dynamicDowncast<Document>(*context); document && document->settings().localNetworkAccessEnabled())

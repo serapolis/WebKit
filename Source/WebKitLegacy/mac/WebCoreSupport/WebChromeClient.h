@@ -33,8 +33,11 @@
 #import <wtf/TZoneMalloc.h>
 
 namespace WebCore {
+class Frame;
 class HTMLImageElement;
+enum class BroadcastFocusedElement : bool;
 enum class PointerLockRequestResult : uint8_t;
+struct FocusOptions;
 }
 
 @class WebView;
@@ -63,7 +66,7 @@ private:
     bool canTakeFocus(WebCore::FocusDirection) const final;
     void takeFocus(WebCore::FocusDirection) override;
 
-    void focusedElementChanged(WebCore::Element*) override;
+    void focusedElementChanged(WebCore::Element*, WebCore::LocalFrame*, WebCore::FocusOptions, WebCore::BroadcastFocusedElement) override;
     void focusedFrameChanged(WebCore::Frame*) final;
 
     RefPtr<WebCore::Page> createWindow(WebCore::LocalFrame&, const String& openedMainFrameName, const WebCore::WindowFeatures&, const WebCore::NavigationAction&) final;
@@ -147,8 +150,8 @@ private:
 
     RefPtr<WebCore::DateTimeChooser> createDateTimeChooser(WebCore::DateTimeChooserClient&) final;
 
-    void setTextIndicator(const WebCore::TextIndicatorData&) const final;
-    void updateTextIndicator(const WebCore::TextIndicatorData&) const final;
+    void setTextIndicator(RefPtr<WebCore::TextIndicator>&&) const final;
+    void updateTextIndicator(RefPtr<WebCore::TextIndicator>&&) const final;
 
 #if ENABLE(POINTER_LOCK)
     void requestPointerLock(CompletionHandler<void(WebCore::PointerLockRequestResult)>&&) final;
@@ -235,7 +238,7 @@ private:
     void showPlaybackTargetPicker(WebCore::PlaybackTargetClientContextIdentifier, const WebCore::IntPoint&, bool /* hasVideo */) final;
     void playbackTargetPickerClientStateDidChange(WebCore::PlaybackTargetClientContextIdentifier, WebCore::MediaProducerMediaStateFlags) final;
     void setMockMediaPlaybackTargetPickerEnabled(bool) final;
-    void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetContext::MockState) final;
+    void setMockMediaPlaybackTargetPickerState(const String&, WebCore::MediaPlaybackTargetMockState) final;
     void mockMediaPlaybackTargetPickerDismissPopup() override;
 #endif
 

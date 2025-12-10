@@ -53,13 +53,9 @@ WebGamepadProvider& WebGamepadProvider::singleton()
     return provider;
 }
 
-WebGamepadProvider::WebGamepadProvider()
-{
-}
+WebGamepadProvider::WebGamepadProvider() = default;
 
-WebGamepadProvider::~WebGamepadProvider()
-{
-}
+WebGamepadProvider::~WebGamepadProvider() = default;
 
 void WebGamepadProvider::setInitialGamepads(const Vector<std::optional<GamepadData>>& gamepadDatas)
 {
@@ -90,8 +86,8 @@ void WebGamepadProvider::gamepadConnected(const GamepadData& gamepadData, EventM
     m_gamepads[gamepadData.index()] = makeUnique<WebGamepad>(gamepadData);
     m_rawGamepads[gamepadData.index()] = m_gamepads[gamepadData.index()].get();
 
-    for (auto& client : m_clients)
-        client.platformGamepadConnected(*m_gamepads[gamepadData.index()], eventVisibility);
+    for (Ref client : m_clients)
+        client->platformGamepadConnected(*m_gamepads[gamepadData.index()], eventVisibility);
 }
 
 void WebGamepadProvider::gamepadDisconnected(unsigned index)
@@ -103,8 +99,8 @@ void WebGamepadProvider::gamepadDisconnected(unsigned index)
 
     LOG(Gamepad, "WebGamepadProvider::gamepadDisconnected - Gamepad index %u detached (m_gamepads size %zu, m_rawGamepads size %zu\n", index, m_gamepads.size(), m_rawGamepads.size());
 
-    for (auto& client : m_clients)
-        client.platformGamepadDisconnected(*disconnectedGamepad);
+    for (Ref client : m_clients)
+        client->platformGamepadDisconnected(*disconnectedGamepad);
 }
 
 void WebGamepadProvider::gamepadActivity(const Vector<std::optional<GamepadData>>& gamepadDatas, EventMakesGamepadsVisible eventVisibility)
@@ -118,8 +114,8 @@ void WebGamepadProvider::gamepadActivity(const Vector<std::optional<GamepadData>
             m_gamepads[i]->updateValues(*gamepadDatas[i]);
     }
 
-    for (auto& client : m_clients)
-        client.platformGamepadInputActivity(eventVisibility);
+    for (Ref client : m_clients)
+        client->platformGamepadInputActivity(eventVisibility);
 }
 
 void WebGamepadProvider::startMonitoringGamepads(GamepadProviderClient& client)

@@ -32,6 +32,7 @@ set(TestWTF_SOURCES
     Tests/WTF/BoxPtr.cpp
     Tests/WTF/BumpPointerAllocator.cpp
     Tests/WTF/CString.cpp
+    Tests/WTF/CStringView.cpp
     Tests/WTF/CharacterProperties.cpp
     Tests/WTF/CheckedArithmeticOperations.cpp
     Tests/WTF/CompactPtr.cpp
@@ -81,6 +82,7 @@ set(TestWTF_SOURCES
     Tests/WTF/NakedPtr.cpp
     Tests/WTF/NativePromise.cpp
     Tests/WTF/NeverDestroyed.cpp
+    Tests/WTF/OptionCountedSet.cpp
     Tests/WTF/OptionSet.cpp
     Tests/WTF/Packed.cpp
     Tests/WTF/PackedRef.cpp

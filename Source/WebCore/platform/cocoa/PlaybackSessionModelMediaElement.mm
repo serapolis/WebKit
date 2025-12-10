@@ -30,16 +30,16 @@
 
 #import "AddEventListenerOptionsInlines.h"
 #import "AudioTrackList.h"
-#import "DocumentInlines.h"
+#import "DocumentPage.h"
 #import "Event.h"
 #import "EventListener.h"
 #import "EventNames.h"
+#import "ExceptionOr.h"
 #import "HTMLVideoElement.h"
 #import "Logging.h"
 #import "MediaControlsHost.h"
 #import "MediaSelectionOption.h"
-#import "NodeInlines.h"
-#import "Page.h"
+#import "NodeDocument.h"
 #import "PageGroup.h"
 #import "TextTrackList.h"
 #import "TimeRanges.h"
@@ -59,7 +59,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PlaybackSessionModelMediaElement);
 PlaybackSessionModelMediaElement::PlaybackSessionModelMediaElement()
     : EventListener(EventListener::CPPEventListenerType)
     , m_soundStageSize { AudioSessionSoundStageSize::Automatic }
-    , m_videoTrackConfigurationObserver { [&] { videoTrackConfigurationChanged(); } }
+    , m_videoTrackConfigurationObserver { Observer<void()>::create([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->videoTrackConfigurationChanged();
+    }) }
 {
 }
 
@@ -477,7 +480,7 @@ void PlaybackSessionModelMediaElement::setPlayingOnSecondScreen(bool value)
 }
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-const String& PlaybackSessionModelMediaElement::spatialTrackingLabel() const
+String PlaybackSessionModelMediaElement::spatialTrackingLabel() const
 {
     if (RefPtr mediaElement = m_mediaElement)
         return mediaElement->spatialTrackingLabel();
@@ -506,7 +509,7 @@ void PlaybackSessionModelMediaElement::updateMediaSelectionOptions()
     if (!mediaElement->document().page())
         return;
 
-    auto& captionPreferences = mediaElement->document().page()->group().ensureCaptionPreferences();
+    auto& captionPreferences = mediaElement->document().page()->checkedGroup()->ensureCaptionPreferences();
     auto* textTracks = mediaElement->textTracks();
     if (textTracks && textTracks->length())
         m_legibleTracksForMenu = captionPreferences.sortedTrackListForMenu(textTracks, { TextTrack::Kind::Subtitles, TextTrack::Kind::Captions, TextTrack::Kind::Descriptions });
@@ -716,7 +719,7 @@ Vector<MediaSelectionOption> PlaybackSessionModelMediaElement::audioMediaSelecti
     if (!mediaElement || !mediaElement->document().page())
         return { };
 
-    auto& captionPreferences = mediaElement->document().page()->group().ensureCaptionPreferences();
+    auto& captionPreferences = mediaElement->document().page()->checkedGroup()->ensureCaptionPreferences();
     return m_audioTracksForMenu.map([&](auto& audioTrack) {
         return captionPreferences.mediaSelectionOptionForTrack(audioTrack.get());
     });
@@ -739,7 +742,7 @@ Vector<MediaSelectionOption> PlaybackSessionModelMediaElement::legibleMediaSelec
     if (!mediaElement || !mediaElement->document().page())
         return { };
 
-    auto& captionPreferences = mediaElement->document().page()->group().ensureCaptionPreferences();
+    auto& captionPreferences = mediaElement->document().page()->checkedGroup()->ensureCaptionPreferences();
     return m_legibleTracksForMenu.map([&](auto& track) {
         return captionPreferences.mediaSelectionOptionForTrack(track.get());
     });

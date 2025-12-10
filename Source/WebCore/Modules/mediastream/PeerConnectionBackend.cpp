@@ -34,8 +34,7 @@
 
 #if ENABLE(WEB_RTC)
 
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "EventNames.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSRTCCertificate.h"
@@ -111,22 +110,26 @@ std::optional<RTCRtpCapabilities> PeerConnectionBackend::senderCapabilities(Scri
 #if PLATFORM(WPE) || PLATFORM(GTK)
 class JSONFileHandler {
 public:
-    JSONFileHandler(const String& path)
-        : m_logFile(FilePrintStream::open(path.utf8().data(), "w"))
+    JSONFileHandler(String&& path)
+        : m_path(WTFMove(path))
     {
-        // Prefer unbuffered output, so that we get a full log upon crash or deadlock.
-        setvbuf(m_logFile->file(), nullptr, _IONBF, 0);
+        Locker lock(m_clientsLock);
+        open(true);
     }
 
     void log(String&& event)
     {
-        m_logFile->println(WTFMove(event));
+        Locker lock(m_clientsLock);
+        if (m_logFile)
+            m_logFile->println(WTFMove(event));
     }
 
     void addClient(uint64_t identifier)
     {
         Locker lock(m_clientsLock);
         m_clients.append(identifier);
+        if (!m_logFile)
+            open(false);
     }
 
     void removeClient(uint64_t identifier)
@@ -141,8 +144,20 @@ public:
     }
 
 private:
-    std::unique_ptr<FilePrintStream> m_logFile;
+    void open(bool overwrite)
+    {
+        ASSERT(!m_logFile);
+        ASSERT(m_clientsLock.isHeld());
+
+        m_logFile = FilePrintStream::open(m_path.utf8().data(), overwrite ? "w" : "a");
+
+        // Prefer unbuffered output, so that we get a full log upon crash or deadlock.
+        setvbuf(m_logFile->file(), nullptr, _IONBF, 0);
+    }
+
+    String m_path;
     Lock m_clientsLock;
+    std::unique_ptr<FilePrintStream> m_logFile WTF_GUARDED_BY_LOCK(m_clientsLock);
     Vector<uint64_t> m_clients WTF_GUARDED_BY_LOCK(m_clientsLock);
 };
 
@@ -150,7 +165,7 @@ JSONFileHandler& jsonFileHandler()
 {
     auto path = String::fromUTF8(getenv("WEBKIT_WEBRTC_JSON_EVENTS_FILE"));
     ASSERT(!path.isEmpty());
-    static NeverDestroyed<JSONFileHandler> sharedInstance(path);
+    static NeverDestroyed<JSONFileHandler> sharedInstance(WTFMove(path));
     return sharedInstance;
 }
 #endif
@@ -218,7 +233,7 @@ void PeerConnectionBackend::handleLogMessage(const WTFLogChannel& channel, WTFLo
         return;
 
     if (!m_logIdentifierString)
-        m_logIdentifierString = makeString(hex(m_logIdentifier));
+        m_logIdentifierString = makeString(m_logIdentifier);
 
     auto identifier = callSite.substring(leftParenthesisIndex + 1, rightParenthesisIndex - leftParenthesisIndex - 1);
     if (identifier != m_logIdentifierString)
@@ -253,7 +268,7 @@ void PeerConnectionBackend::createOfferSucceeded(String&& sdp)
     ASSERT(isMainThread());
 
 #if !RELEASE_LOG_DISABLED
-    logger().toObservers(LogWebRTC, WTFLogLevel::Always, LOGIDENTIFIER, "to:\n", sdp);
+    logger().toObservers(LogWebRTC, WTFLogLevel::Always, LOGIDENTIFIER, "SDP offer created:\n", sdp);
     RELEASE_LOG_FORWARDABLE(WebRTC, PEERCONNECTIONBACKEND_CREATEOFFERSUCCEEDED, logIdentifier(), sdp.utf8());
 #endif
 
@@ -289,7 +304,7 @@ void PeerConnectionBackend::createAnswerSucceeded(String&& sdp)
     ASSERT(isMainThread());
 
 #if !RELEASE_LOG_DISABLED
-    logger().toObservers(LogWebRTC, WTFLogLevel::Always, LOGIDENTIFIER, "to:\n", sdp);
+    logger().toObservers(LogWebRTC, WTFLogLevel::Always, LOGIDENTIFIER, "SDP answer created:\n", sdp);
     RELEASE_LOG_FORWARDABLE(WebRTC, PEERCONNECTIONBACKEND_CREATEANSWERSUCCEEDED, logIdentifier(), sdp.utf8());
 #endif
 
@@ -328,12 +343,12 @@ struct MediaStreamAndTrackItem {
 static void setAssociatedRemoteStreams(RTCRtpReceiver& receiver, const PeerConnectionBackend::TransceiverState& state, Vector<MediaStreamAndTrackItem>& addList, Vector<MediaStreamAndTrackItem>& removeList)
 {
     for (auto& currentStream : receiver.associatedStreams()) {
-        if (currentStream && !std::ranges::any_of(state.receiverStreams, [&currentStream](auto& stream) { return stream->id() == currentStream->id(); }))
+        if (currentStream && std::ranges::none_of(state.receiverStreams, [&currentStream](auto& stream) { return stream->id() == currentStream->id(); }))
             removeList.append({ Ref { *currentStream }, Ref { receiver.track() } });
     }
 
     for (auto& stream : state.receiverStreams) {
-        if (!std::ranges::any_of(receiver.associatedStreams(), [&stream](auto& currentStream) { return stream->id() == currentStream->id(); }))
+        if (std::ranges::none_of(receiver.associatedStreams(), [&stream](auto& currentStream) { return stream->id() == currentStream->id(); }))
             addList.append({ stream, Ref { receiver.track() } });
     }
 
@@ -466,7 +481,7 @@ void PeerConnectionBackend::setRemoteDescriptionSucceeded(std::optional<Descript
         Vector<MediaStreamAndTrackItem> removeList;
         if (transceiverStates) {
             for (auto& transceiver : peerConnection.currentTransceivers()) {
-                if (!std::ranges::any_of(*transceiverStates, [&transceiver](auto& state) { return state.mid == transceiver->mid(); })) {
+                if (std::ranges::none_of(*transceiverStates, [&transceiver](auto& state) { return state.mid == transceiver->mid(); })) {
                     for (auto& stream : transceiver->receiver().associatedStreams()) {
                         if (stream)
                             removeList.append({ Ref { *stream }, Ref { transceiver->receiver().track() } });

@@ -30,9 +30,8 @@
 
 #include "BitmapImage.h"
 #include "CachedImage.h"
-#include "CachedResourceLoader.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentResourceLoader.h"
+#include "ExceptionOr.h"
 #include "GraphicsContext.h"
 #include "Image.h"
 #include "ImageBuffer.h"
@@ -48,6 +47,11 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ArtworkImageLoader);
+
+Ref<ArtworkImageLoader> ArtworkImageLoader::create(Document& document, const String& src, ArtworkImageLoaderCallback&& callback)
+{
+    return adoptRef(*new ArtworkImageLoader(document, src, WTFMove(callback)));
+}
 
 ArtworkImageLoader::ArtworkImageLoader(Document& document, const String& src, ArtworkImageLoaderCallback&& callback)
     : m_document(document)
@@ -66,7 +70,7 @@ void ArtworkImageLoader::requestImageResource()
 {
     ASSERT(!m_cachedImage, "Can only call requestImageResource once");
     ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
-    Ref document = m_document.get();
+    RefPtr document = m_document.get();
     options.contentSecurityPolicyImposition = document->isInUserAgentShadowTree() ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
 
     CachedResourceRequest request(ResourceRequest(document->completeURL(m_src)), options);
@@ -264,7 +268,7 @@ void MediaMetadata::tryNextArtworkImage(uint32_t index, Vector<Pair>&& artworks)
 
     String artworkImageSrc = artworks[index].src;
 
-    m_artworkLoader = makeUnique<ArtworkImageLoader>(*document, artworkImageSrc, [this, index, artworkImageSrc, artworks = WTFMove(artworks)](Image* image) mutable {
+    m_artworkLoader = ArtworkImageLoader::create(*document, artworkImageSrc, [this, index, artworkImageSrc, artworks = WTFMove(artworks)](Image* image) mutable {
         if (image && image->data() && image->width() && image->height()) {
             IntSize size { int(image->width()), int(image->height()) };
             float imageScore = imageDimensionsScore(size.width(), size.height(), s_minimumSize, s_idealSize);

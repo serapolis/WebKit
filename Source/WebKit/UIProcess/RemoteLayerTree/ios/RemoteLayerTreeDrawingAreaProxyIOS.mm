@@ -77,7 +77,10 @@ static void* displayRefreshRateObservationContext = &displayRefreshRateObservati
         }
 #endif
         if (createDisplayLink) {
+        ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+            // FIXME: CoreAnimation version deprecated rdar://164090713
             _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkFired:)];
+        ALLOW_DEPRECATED_DECLARATIONS_END
             [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
             [_displayLink.display addObserver:self forKeyPath:@"refreshRate" options:NSKeyValueObservingOptionNew context:displayRefreshRateObservationContext];
             _displayLink.paused = YES;
@@ -273,6 +276,13 @@ void RemoteLayerTreeDrawingAreaProxyIOS::pauseDisplayRefreshCallbacksForAnimatio
 std::optional<WebCore::FramesPerSecond> RemoteLayerTreeDrawingAreaProxyIOS::displayNominalFramesPerSecond()
 {
     return [displayLinkHandler() nominalFramesPerSecond];
+}
+
+UIView *RemoteLayerTreeDrawingAreaProxyIOS::viewWithLayerIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
+{
+    if (RefPtr node = m_remoteLayerTreeHost->nodeForID(layerID))
+        return node->uiView();
+    return nil;
 }
 
 } // namespace WebKit

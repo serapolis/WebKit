@@ -70,6 +70,7 @@
 #import "WebPageProxy.h"
 #import "WebProcessProxy.h"
 #import "_WKDownloadInternal.h"
+#import <WebCore/AXObjectCache.h>
 #import <WebCore/Cursor.h>
 #import <WebCore/DOMPasteAccess.h>
 #import <WebCore/DictionaryLookup.h>
@@ -79,6 +80,7 @@
 #import <WebCore/NotImplemented.h>
 #import <WebCore/PlatformScreen.h>
 #import <WebCore/PromisedAttachmentInfo.h>
+#import <WebCore/ResolvedCaptionDisplaySettingsOptions.h>
 #import <WebCore/ScreenOrientationType.h>
 #import <WebCore/ShareData.h>
 #import <WebCore/SharedBuffer.h>
@@ -90,6 +92,10 @@
 
 #if HAVE(DIGITAL_CREDENTIALS_UI)
 #import <WebCore/DigitalCredentialsRequestData.h>
+#endif
+
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+#import "RemoteScrollingCoordinatorProxyIOS.h"
 #endif
 
 @interface UIWindow ()
@@ -265,6 +271,11 @@ UIView *PageClientImpl::createVisibilityPropagationView()
 {
     return [contentView() _createVisibilityPropagationView];
 }
+
+void PageClientImpl::removeVisibilityPropagationView(UIView *view)
+{
+    [contentView() _removeVisibilityPropagationView:view];
+}
 #endif
 #endif // HAVE(VISIBILITY_PROPAGATION_VIEW)
 
@@ -287,8 +298,14 @@ void PageClientImpl::modelProcessDidExit()
 void PageClientImpl::preferencesDidChange()
 {
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
-    if (RetainPtr webView = this->webView())
-        [webView _updateOverlayRegions];
+    RetainPtr webView = this->webView();
+    if (!webView)
+        return;
+
+    if (auto page = webView->_page) {
+        if (CheckedPtr scrollingCoordinator = page->scrollingCoordinatorProxy())
+            scrollingCoordinator->overlayRegionsEnabledChanged();
+    }
 #else
     notImplemented();
 #endif
@@ -345,9 +362,9 @@ void PageClientImpl::didCommitLoadForMainFrame(const String& mimeType, bool useC
     [webView _hidePasswordView];
     [webView _setHasCustomContentView:useCustomContentProvider loadedMIMEType:mimeType];
     [contentView() _didCommitLoadForMainFrame];
+
 #if ENABLE(TEXT_EXTRACTION_FILTER)
-    if (RefPtr filter = TextExtractionFilter::singletonIfCreated())
-        filter->resetCache();
+    [webView _clearTextExtractionFilterCache];
 #endif
 }
 
@@ -518,6 +535,40 @@ void PageClientImpl::relayAccessibilityNotification(String&& notificationName, R
         [contentView accessibilityRelayNotification:notificationName.createNSString().get() notificationData:notificationData.get()];
 }
 
+void PageClientImpl::relayAriaNotifyNotification(const WebCore::AriaNotifyData& notificationData)
+{
+    RetainPtr message = notificationData.message.createNSString();
+
+    RetainPtr attributes = adoptNS([[NSDictionary alloc] initWithObjectsAndKeys:
+        WebCore::notifyPriorityToAXValueString(notificationData.priority).get(), @"UIAccessibilityARIAAnnouncementPriority",
+        WebCore::interruptBehaviorToAXValueString(notificationData.interrupt).get(), @"UIAccessibilityARIAAnnouncementInterruptBehavior",
+        notificationData.language.createNSString().get(), @"UIAccessibilitySpeechAttributeLanguage",
+        nil]);
+
+    RetainPtr attributedString = adoptNS([[NSAttributedString alloc] initWithString:message.get() attributes:attributes.get()]);
+
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, attributedString.get());
+}
+
+
+static NSString * const UIAccessibilityPriorityLow = @"UIAccessibilityPriorityLow";
+static NSString * const UIAccessibilityPriorityDefault = @"UIAccessibilityPriorityDefault";
+static NSString * const UIAccessibilitySpeechAttributeAnnouncementPriority = @"UIAccessibilitySpeechAttributeAnnouncementPriority";
+static NSString * const UIAccessibilitySpeechAttributeIsLiveRegion = @"UIAccessibilitySpeechAttributeIsLiveRegion";
+
+void PageClientImpl::relayLiveRegionNotification(const WebCore::LiveRegionAnnouncementData& notificationData)
+{
+    // Assertive = UIAccessibilityPriorityDefault, Polite = UIAccessibilityPriorityLow
+    RetainPtr priority = (notificationData.status == WebCore::LiveRegionStatus::Assertive) ? UIAccessibilityPriorityDefault : UIAccessibilityPriorityLow;
+
+    RetainPtr nsAttributedString = notificationData.message.nsAttributedString();
+    auto mutableAttributedString = adoptNS([[NSMutableAttributedString alloc] initWithAttributedString:nsAttributedString.get()]);
+    [mutableAttributedString addAttribute:UIAccessibilitySpeechAttributeAnnouncementPriority value:priority.get() range:NSMakeRange(0, [mutableAttributedString length])];
+    [mutableAttributedString addAttribute:UIAccessibilitySpeechAttributeIsLiveRegion value:@(YES) range:NSMakeRange(0, [mutableAttributedString length])];
+
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, mutableAttributedString.get());
+}
+
 IntRect PageClientImpl::rootViewToAccessibilityScreen(const IntRect& rect)
 {
     CGRect rootViewRect = rect;
@@ -668,11 +719,16 @@ void PageClientImpl::didGetTapHighlightGeometries(WebKit::TapIdentifier requestI
     [contentView() _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads topLeftRadius:topLeftRadius topRightRadius:topRightRadius bottomLeftRadius:bottomLeftRadius bottomRightRadius:bottomRightRadius nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
-void PageClientImpl::didCommitLayerTree(const RemoteLayerTreeTransaction& layerTreeTransaction)
+void PageClientImpl::didCommitLayerTree(const RemoteLayerTreeTransaction& layerTreeTransaction, const std::optional<MainFrameData>& mainFrameData, const PageData& pageData, const TransactionID& transactionID)
 {
-    PageClientImplCocoa::didCommitLayerTree(layerTreeTransaction);
+    PageClientImplCocoa::didCommitLayerTree(layerTreeTransaction, mainFrameData, pageData, transactionID);
 
-    [contentView() _didCommitLayerTree:layerTreeTransaction];
+    [contentView() _didCommitLayerTree:layerTreeTransaction mainFrameData:mainFrameData pageData:pageData transactionID:transactionID];
+}
+
+void PageClientImpl::didCommitMainFrameData(const MainFrameData& mainFrameData)
+{
+    PageClientImplCocoa::didCommitMainFrameData(mainFrameData);
 }
 
 void PageClientImpl::layerTreeCommitComplete()
@@ -1185,9 +1241,9 @@ void PageClientImpl::setMouseEventPolicy(WebCore::MouseEventPolicy policy)
 }
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
-void PageClientImpl::showMediaControlsContextMenu(FloatRect&& targetFrame, Vector<MediaControlsContextMenuItem>&& items, CompletionHandler<void(MediaControlsContextMenuItem::ID)>&& completionHandler)
+void PageClientImpl::showMediaControlsContextMenu(FloatRect&& targetFrame, Vector<MediaControlsContextMenuItem>&& items, const FrameInfoData& frameInfo, HTMLMediaElementIdentifier identifier, CompletionHandler<void(MediaControlsContextMenuItem::ID)>&& completionHandler)
 {
-    [contentView() _showMediaControlsContextMenu:WTFMove(targetFrame) items:WTFMove(items) completionHandler:WTFMove(completionHandler)];
+    [contentView() _showMediaControlsContextMenu:WTFMove(targetFrame) items:WTFMove(items) frameInfo:frameInfo identifier:identifier completionHandler:WTFMove(completionHandler)];
 }
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
@@ -1322,7 +1378,7 @@ FloatPoint PageClientImpl::webViewToRootView(const FloatPoint& point) const
 }
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-const String& PageClientImpl::spatialTrackingLabel() const
+String PageClientImpl::spatialTrackingLabel() const
 {
     return [contentView() spatialTrackingLabel];
 }
@@ -1371,6 +1427,15 @@ void PageClientImpl::removeAnyPDFPageNumberIndicator()
 }
 
 #endif
+
+void PageClientImpl::showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentifier identifier, const WebCore::ResolvedCaptionDisplaySettingsOptions& options, CompletionHandler<void(Expected<void, WebCore::ExceptionData>&&)>&& completionHandler)
+{
+#if USE(UICONTEXTMENU)
+    [contentView() showCaptionDisplaySettingsMenu:identifier withOptions:options completionHandler:WTFMove(completionHandler)];
+#else
+    completionHandler(makeUnexpected<WebCore::ExceptionData>({ ExceptionCode::NotSupportedError, "Caption Display Settings are not supported."_s }));
+#endif
+}
 
 } // namespace WebKit
 

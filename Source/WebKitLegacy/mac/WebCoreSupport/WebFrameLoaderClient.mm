@@ -83,12 +83,15 @@
 #import <WebCore/Chrome.h>
 #import <WebCore/ContainerNodeInlines.h>
 #import <WebCore/DNS.h>
-#import <WebCore/Document.h>
 #import <WebCore/DocumentLoader.h>
+#import <WebCore/DocumentPage.h>
+#import <WebCore/DocumentView.h>
 #import <WebCore/EventHandler.h>
 #import <WebCore/EventNames.h>
 #import <WebCore/FocusController.h>
 #import <WebCore/FormState.h>
+#import <WebCore/FrameDestructionObserverInlines.h>
+#import <WebCore/FrameInlines.h>
 #import <WebCore/FrameLoader.h>
 #import <WebCore/FrameLoaderStateMachine.h>
 #import <WebCore/FrameLoaderTypes.h>
@@ -107,7 +110,6 @@
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/MIMETypeRegistry.h>
 #import <WebCore/MouseEvent.h>
-#import <WebCore/Page.h>
 #import <WebCore/PluginViewBase.h>
 #import <WebCore/ProtectionSpace.h>
 #import <WebCore/ResourceError.h>
@@ -116,6 +118,7 @@
 #import <WebCore/SharedBuffer.h>
 #import <WebCore/SubresourceLoader.h>
 #import <WebCore/WebCoreJITOperations.h>
+#import <WebCore/WebCoreMainThread.h>
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebScriptObjectPrivate.h>
 #import <WebCore/Widget.h>
@@ -289,7 +292,7 @@ void WebFrameLoaderClient::convertMainResourceLoadToDownload(WebCore::DocumentLo
     if (!mainResourceLoader) {
         // The resource has already been cached, or the conversion is being attmpted when not calling SubresourceLoader::didReceiveResponse().
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        auto webDownload = adoptNS([[WebDownload alloc] initWithRequest:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) delegate:[webView downloadDelegate]]);
+        RetainPtr webDownload = adoptNS([[WebDownload alloc] initWithRequest:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get() delegate:[webView downloadDelegate]]);
 ALLOW_DEPRECATED_DECLARATIONS_END
         webDownload.autorelease();
         return;
@@ -298,7 +301,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     auto* handle = mainResourceLoader->handle();
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    [WebDownload _downloadWithLoadingConnection:handle->connection() request:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) response:response.nsURLResponse() delegate:[webView downloadDelegate] proxy:nil];
+    [WebDownload _downloadWithLoadingConnection:handle->connection() request:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get() response:response.protectedNSURLResponse().get() delegate:[webView downloadDelegate] proxy:nil];
 ALLOW_DEPRECATED_DECLARATIONS_END
 }
 
@@ -308,14 +311,14 @@ bool WebFrameLoaderClient::dispatchDidLoadResourceFromMemoryCache(WebCore::Docum
     WebResourceDelegateImplementationCache* implementations = WebViewGetResourceLoadDelegateImplementations(webView);
 #if PLATFORM(IOS_FAMILY)
     if (implementations->webThreadDidLoadResourceFromMemoryCacheFunc) {
-        CallResourceLoadDelegateInWebThread(implementations->webThreadDidLoadResourceFromMemoryCacheFunc, webView, @selector(webThreadWebView:didLoadResourceFromMemoryCache:response:length:fromDataSource:), request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody), response.nsURLResponse(), length, dataSource(loader));
+        CallResourceLoadDelegateInWebThread(implementations->webThreadDidLoadResourceFromMemoryCacheFunc, webView, @selector(webThreadWebView:didLoadResourceFromMemoryCache:response:length:fromDataSource:), request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get(), response.protectedNSURLResponse().get(), length, dataSource(loader));
         return true;
     } 
 #endif
     if (!implementations->didLoadResourceFromMemoryCacheFunc)
         return false;
 
-    CallResourceLoadDelegate(implementations->didLoadResourceFromMemoryCacheFunc, webView, @selector(webView:didLoadResourceFromMemoryCache:response:length:fromDataSource:), request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody), response.nsURLResponse(), length, dataSource(loader));
+    CallResourceLoadDelegate(implementations->didLoadResourceFromMemoryCacheFunc, webView, @selector(webView:didLoadResourceFromMemoryCache:response:length:fromDataSource:), request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get(), response.protectedNSURLResponse().get(), length, dataSource(loader));
     return true;
 }
 
@@ -328,11 +331,11 @@ void WebFrameLoaderClient::assignIdentifierToInitialRequest(WebCore::ResourceLoa
 
 #if PLATFORM(IOS_FAMILY)
     if (implementations->webThreadIdentifierForRequestFunc) {
-        object = CallResourceLoadDelegateInWebThread(implementations->webThreadIdentifierForRequestFunc, webView, @selector(webThreadWebView:identifierForInitialRequest:fromDataSource:), request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody), dataSource(loader));
+        object = CallResourceLoadDelegateInWebThread(implementations->webThreadIdentifierForRequestFunc, webView, @selector(webThreadWebView:identifierForInitialRequest:fromDataSource:), request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get(), dataSource(loader));
     } else
 #endif
     if (implementations->identifierForRequestFunc)
-        object = CallResourceLoadDelegate(implementations->identifierForRequestFunc, webView, @selector(webView:identifierForInitialRequest:fromDataSource:), request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody), dataSource(loader));
+        object = CallResourceLoadDelegate(implementations->identifierForRequestFunc, webView, @selector(webView:identifierForInitialRequest:fromDataSource:), request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get(), dataSource(loader));
     else
         object = adoptNS([[NSObject alloc] init]);
 
@@ -347,26 +350,26 @@ void WebFrameLoaderClient::dispatchWillSendRequest(WebCore::DocumentLoader* load
     if (redirectResponse.isNull())
         static_cast<WebDocumentLoaderMac*>(loader)->increaseLoadCount(identifier);
 
-    NSURLRequest *currentURLRequest = request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
+    RetainPtr currentURLRequest = request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody);
 
 #if PLATFORM(MAC)
     if (WTF::MacApplication::isAppleMail() && loader->substituteData().isValid()) {
         // Mail.app checks for this property to detect data / archive loads.
-        [NSURLProtocol setProperty:@"" forKey:@"WebDataRequest" inRequest:(NSMutableURLRequest *)currentURLRequest];
+        [NSURLProtocol setProperty:@"" forKey:@"WebDataRequest" inRequest:(NSMutableURLRequest *)currentURLRequest.get()];
     }
 #endif
 
-    NSURLRequest *newURLRequest = currentURLRequest;
+    RetainPtr newURLRequest = currentURLRequest;
 #if PLATFORM(IOS_FAMILY)
     if (implementations->webThreadWillSendRequestFunc) {
-        newURLRequest = (NSURLRequest *)CallResourceLoadDelegateInWebThread(implementations->webThreadWillSendRequestFunc, webView, @selector(webThreadWebView:resource:willSendRequest:redirectResponse:fromDataSource:), [webView _objectForIdentifier:identifier], currentURLRequest, redirectResponse.nsURLResponse(), dataSource(loader));
+        newURLRequest = (NSURLRequest *)CallResourceLoadDelegateInWebThread(implementations->webThreadWillSendRequestFunc, webView, @selector(webThreadWebView:resource:willSendRequest:redirectResponse:fromDataSource:), [webView _objectForIdentifier:identifier], currentURLRequest.get(), redirectResponse.protectedNSURLResponse().get(), dataSource(loader));
     } else
 #endif
     if (implementations->willSendRequestFunc)
-        newURLRequest = (NSURLRequest *)CallResourceLoadDelegate(implementations->willSendRequestFunc, webView, @selector(webView:resource:willSendRequest:redirectResponse:fromDataSource:), [webView _objectForIdentifier:identifier], currentURLRequest, redirectResponse.nsURLResponse(), dataSource(loader));
+        newURLRequest = (NSURLRequest *)CallResourceLoadDelegate(implementations->willSendRequestFunc, webView, @selector(webView:resource:willSendRequest:redirectResponse:fromDataSource:), [webView _objectForIdentifier:identifier], currentURLRequest.get(), redirectResponse.protectedNSURLResponse().get(), dataSource(loader));
 
     if (newURLRequest != currentURLRequest)
-        request.updateFromDelegatePreservingOldProperties(WebCore::ResourceRequest(newURLRequest));
+        request.updateFromDelegatePreservingOldProperties(WebCore::ResourceRequest(newURLRequest.get()));
 }
 
 bool WebFrameLoaderClient::shouldUseCredentialStorage(WebCore::DocumentLoader* loader, WebCore::ResourceLoaderIdentifier identifier)
@@ -459,13 +462,13 @@ void WebFrameLoaderClient::dispatchDidReceiveResponse(WebCore::DocumentLoader* l
 #if PLATFORM(IOS_FAMILY)
     if (implementations->webThreadDidReceiveResponseFunc) {
         if (id resource = [webView _objectForIdentifier:identifier])
-            CallResourceLoadDelegateInWebThread(implementations->webThreadDidReceiveResponseFunc, webView, @selector(webThreadWebView:resource:didReceiveResponse:fromDataSource:), resource, response.nsURLResponse(), dataSource(loader));
+            CallResourceLoadDelegateInWebThread(implementations->webThreadDidReceiveResponseFunc, webView, @selector(webThreadWebView:resource:didReceiveResponse:fromDataSource:), resource, response.protectedNSURLResponse().get(), dataSource(loader));
         
     } else
 #endif
     if (implementations->didReceiveResponseFunc) {
         if (id resource = [webView _objectForIdentifier:identifier])
-            CallResourceLoadDelegate(implementations->didReceiveResponseFunc, webView, @selector(webView:resource:didReceiveResponse:fromDataSource:), resource, response.nsURLResponse(), dataSource(loader));
+            CallResourceLoadDelegate(implementations->didReceiveResponseFunc, webView, @selector(webView:resource:didReceiveResponse:fromDataSource:), resource, response.protectedNSURLResponse().get(), dataSource(loader));
     }
 }
 
@@ -564,7 +567,15 @@ void WebFrameLoaderClient::dispatchDidDispatchOnloadEvents()
 
 void WebFrameLoaderClient::dispatchDidReceiveServerRedirectForProvisionalLoad()
 {
-    m_webFrame->_private->provisionalURL = core(m_webFrame.get())->loader().provisionalDocumentLoader()->url().string().createNSString();
+    RefPtr frame = core(m_webFrame.get());
+    if (!frame)
+        return;
+
+    RefPtr provisionalDocumentLoader = frame->loader().provisionalDocumentLoader();
+    if (!provisionalDocumentLoader)
+        return;
+
+    m_webFrame->_private->provisionalURL = provisionalDocumentLoader->url().string().createNSString().autorelease();
 
     WebView *webView = getWebView(m_webFrame.get());
     WebFrameLoadDelegateImplementationCache* implementations = WebViewGetFrameLoadDelegateImplementations(webView);
@@ -852,7 +863,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForResponse(const WebCore::Resour
 
     [[webView _policyDelegateForwarder] webView:webView
         decidePolicyForMIMEType:response.mimeType().createNSString().get()
-        request:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody)
+        request:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get()
         frame:m_webFrame.get()
         decisionListener:setUpPolicyListener(WTFMove(function), WebCore::PolicyAction::Use, nil, nil).get()];
 }
@@ -892,7 +903,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const WebCore:
 
     [[webView _policyDelegateForwarder] webView:webView
         decidePolicyForNewWindowAction:actionDictionary(action, formState)
-        request:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody)
+        request:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get()
         newFrameName:frameName.createNSString().get()
         decisionListener:setUpPolicyListener(WTFMove(function), WebCore::PolicyAction::Ignore, appLinkURL.get(), referrerURL.get()).get()];
 }
@@ -912,7 +923,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const WebCore
 
     [[webView _policyDelegateForwarder] webView:webView
         decidePolicyForNavigationAction:actionDictionary(action, formState)
-        request:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody)
+        request:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get()
         frame:m_webFrame.get()
         decisionListener:setUpPolicyListener(WTFMove(function), WebCore::PolicyAction::Ignore, appLinkURL.get(), referrerURL.get()).get()];
 }
@@ -953,7 +964,7 @@ void WebFrameLoaderClient::dispatchWillSendSubmitEvent(Ref<WebCore::FormState>&&
     CallFormDelegate(getWebView(m_webFrame.get()), @selector(willSendSubmitEventToForm:inFrame:withValues:), formElement, m_webFrame.get(), values);
 }
 
-void WebFrameLoaderClient::dispatchWillSubmitForm(WebCore::FormState& formState, CompletionHandler<void()>&& completionHandler)
+void WebFrameLoaderClient::dispatchWillSubmitForm(WebCore::FormState& formState, URL&&, String&&, CompletionHandler<void()>&& completionHandler)
 {
     id <WebFormDelegate> formDelegate = [getWebView(m_webFrame.get()) _formDelegate];
     if (!formDelegate) {
@@ -1042,8 +1053,8 @@ void WebFrameLoaderClient::updateGlobalHistory()
         if (implementations->navigatedFunc) {
             auto data = adoptNS([[WebNavigationData alloc] initWithURLString:loader->url().string().createNSString().get()
                 title:nilOrNSString(loader->title().string)
-                originalRequest:loader->originalRequestCopy().nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody)
-                response:loader->response().nsURLResponse()
+                originalRequest:loader->originalRequestCopy().protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get()
+                response:loader->response().protectedNSURLResponse().get()
                 hasSubstituteData:loader->substituteData().isValid()
                 clientRedirectSource:loader->clientRedirectSourceForHistory().createNSString().get()]);
 
@@ -1122,7 +1133,7 @@ bool WebFrameLoaderClient::shouldFallBack(const WebCore::ResourceError& error) c
 
 bool WebFrameLoaderClient::canHandleRequest(const WebCore::ResourceRequest& request) const
 {
-    return [WebView _canHandleRequest:request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody) forMainFrame:core(m_webFrame.get())->isMainFrame()];
+    return [WebView _canHandleRequest:request.protectedNSURLRequest(WebCore::HTTPBodyUpdatePolicy::UpdateHTTPBody).get() forMainFrame:core(m_webFrame.get())->isMainFrame()];
 }
 
 bool WebFrameLoaderClient::canShowMIMEType(const String& MIMEType) const
@@ -1982,10 +1993,9 @@ void WebFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<WebCor
         }
 
         m_loadingIcon = true;
-        documentLoader->didGetLoadDecisionForIcon(true, icon->second, [this, weakThis = WeakPtr { *this }] (WebCore::FragmentedSharedBuffer* buffer) {
-            if (!weakThis)
-                return;
-            finishedLoadingIcon(buffer);
+        documentLoader->didGetLoadDecisionForIcon(true, icon->second, [weakThis = WeakPtr { *this }] (WebCore::FragmentedSharedBuffer* buffer) {
+            if (RefPtr protectedThis = weakThis.get())
+                protectedThis->finishedLoadingIcon(buffer);
         });
     }
 #else
@@ -2041,11 +2051,7 @@ void WebFrameLoaderClient::finishedLoadingIcon(WebCore::FragmentedSharedBuffer* 
 
 + (void)initialize
 {
-#if !PLATFORM(IOS_FAMILY)
-    JSC::initialize();
-    WTF::initializeMainThread();
-    WebCore::populateJITOperations();
-#endif
+    WebCore::initializeMainThreadIfNeeded();
 }
 
 - (id)initWithFrame:(NakedPtr<WebCore::LocalFrame>)frame policyFunction:(WebCore::FramePolicyFunction&&)policyFunction defaultPolicy:(WebCore::PolicyAction)defaultPolicy

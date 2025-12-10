@@ -33,7 +33,7 @@
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
 
 @interface _WKMockUserNotificationCenter ()
-- (instancetype)_internalInitWithBundleIdentifier:(NSString *)bundleIdentifier;
+- (instancetype)initWithBundleIdentifierInternal:(NSString *)bundleIdentifier;
 @end
 
 static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundleIdentifier)
@@ -41,7 +41,7 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
     static NeverDestroyed<RetainPtr<NSMutableDictionary>> centers = adoptNS([NSMutableDictionary new]);
 
     if (!centers->get()[bundleIdentifier])
-        centers->get()[bundleIdentifier] = adoptNS([[_WKMockUserNotificationCenter alloc] _internalInitWithBundleIdentifier:bundleIdentifier]).autorelease();
+        centers->get()[bundleIdentifier] = adoptNS([[_WKMockUserNotificationCenter alloc] initWithBundleIdentifierInternal:bundleIdentifier]).get();
 
     return centers->get()[bundleIdentifier];
 }
@@ -54,13 +54,13 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
     RetainPtr<NSNumber> m_appBadge;
 }
 
-- (instancetype)_internalInitWithBundleIdentifier:(NSString *)bundleIdentifier
+- (instancetype)initWithBundleIdentifierInternal:(NSString *)bundleIdentifier
 {
     self = [super init];
     if (!self)
         return nil;
 
-    m_queue = adoptOSObject(dispatch_queue_create(nullptr, DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL));
+    m_queue = adoptOSObject(dispatch_queue_create(nullptr, OSObjectPtr { DISPATCH_QUEUE_SERIAL_WITH_AUTORELEASE_POOL }.get()));
     m_bundleIdentifier = bundleIdentifier;
     m_notifications = adoptNS([[NSMutableArray alloc] init]);
 
@@ -107,7 +107,7 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 {
     RetainPtr toRemove = adoptNS([NSMutableArray new]);
     for (UNNotification *notification in m_notifications.get()) {
-        if ([identifiers containsObject:notification.request.identifier])
+        if ([identifiers containsObject:retainPtr(notification.request.identifier).get()])
             [toRemove addObject:notification];
     }
 
@@ -147,7 +147,7 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 {
     RetainPtr settings = [UNMutableNotificationSettings emptySettings];
     [settings setAuthorizationStatus:m_hasPermission ? UNAuthorizationStatusAuthorized : UNAuthorizationStatusNotDetermined];
-    return settings.get();
+    return settings.autorelease();
 }
 
 @end

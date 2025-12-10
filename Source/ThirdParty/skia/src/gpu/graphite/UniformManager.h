@@ -17,7 +17,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
 #include "include/private/base/SkAlign.h"
-#include "include/private/base/SkTDArray.h"
+#include "include/private/base/SkTArray.h"
 #include "src/base/SkHalf.h"
 #include "src/base/SkMathPriv.h"
 #include "src/core/SkColorData.h"
@@ -186,9 +186,9 @@ public:
 
     Layout layout() const { return fLayout; }
 
-    // NOTE: The returned size represents the last consumed byte (if the recorded
+    // NOTE: The returned size represents the last consumed byte, if the recorded
     // uniforms are embedded within a struct, this will need to be rounded up to a multiple of
-    // requiredAlignment()).
+    // requiredAlignment().
     int size() const { return fOffset; }
     int requiredAlignment() const { return fReqAlignment; }
 
@@ -221,19 +221,49 @@ class UniformManager {
 public:
     UniformManager(Layout layout) { this->resetWithNewLayout(layout); }
 
-    SkSpan<const char> finish() {
-        if (fStorage.empty()) {
-            return SkSpan<const char>();
-        } else {
+    SkSpan<const char> finish(int subspanStart) {
+        if (fReqAlignment) {
+            // A render step may have no uniforms, leaving fReqAlignment as 0 after a rewind. If
+            // paint data exists, storage will still be non-empty, so we guard against alignTo(0).
             this->alignTo(fReqAlignment);
-            return SkSpan(fStorage);
         }
+        fStorageHighWaterMark = std::max(fStorageHighWaterMark, fStorage.size());
+
+        // Reset tracking state for any 'new' block of data after finishing this one. The overall
+        // layout and whether a paint color was written (in the preserved part) should remain
+        // unchanged.
+        fReqAlignment = 0;
+        fStructBaseAlignment = 0;
+#ifdef SK_DEBUG
+        fOffsetCalculator = UniformOffsetCalculator::ForTopLevel(fLayout);
+        fSubstructCalculator = {};
+        fExpectedUniforms = {};
+        fExpectedUniformIndex = 0;
+#endif
+
+        return fStorage.empty() ? SkSpan<const char>() :
+                                  SkSpan<const char>(fStorage).subspan(subspanStart);
     }
 
-    size_t size() const { return fStorage.size(); }
+    SkSpan<const char> finish() {
+        return this->finish(fStartingOffset);
+    }
 
+    void markNewOffset() { fStartingOffset = fStorage.size(); }
     void resetWithNewLayout(Layout layout);
     void reset() { this->resetWithNewLayout(fLayout); }
+    void rewindToOffset();
+
+    int size() const { return fStorage.size(); }
+
+    void tryShrinkCapacity() {
+        int halfCapacity = fStorage.capacity() / 2;
+        if (fStorageHighWaterMark < halfCapacity) {
+            fStorageHighWaterMark = 0;
+            SkASSERT(fStorage.empty());
+            fStorage.reserve_exact(halfCapacity);
+        }
+    }
 
     // scalars
     void write(float f)     { this->write<SkSLType::kFloat>(&f); }
@@ -318,7 +348,8 @@ public:
         if (fWrotePaintColor) {
             // Validate expected uniforms, but don't write a second copy since the paint color
             // uniform can only ever be declared once in the final SkSL program.
-            SkASSERT(this->checkExpected(/*dst=*/nullptr, SkSLType::kFloat4, Uniform::kNonArray));
+            SkDEBUGCODE(
+                    this->checkExpected(/*dst=*/nullptr, SkSLType::kFloat4, Uniform::kNonArray));
         } else {
             this->write<SkSLType::kFloat4>(&color);
             fWrotePaintColor = true;
@@ -338,7 +369,7 @@ public:
     // write functions for each of the substruct's fields in order. Lastly, call endStruct() to
     // go back to writing fields in the top-level interface block.
     void beginStruct(int baseAlignment) {
-        SkASSERT(this->checkBeginStruct(baseAlignment)); // verifies baseAlignment matches layout
+        SkDEBUGCODE(this->checkBeginStruct(baseAlignment)); // verifies baseAlignment matches layout
 
         this->alignTo(baseAlignment);
         fStructBaseAlignment = baseAlignment;
@@ -347,7 +378,7 @@ public:
     void endStruct() {
         SkASSERT(fStructBaseAlignment >= 1); // Must have started a struct
         this->alignTo(fStructBaseAlignment);
-        SkASSERT(this->checkEndStruct()); // validate after padding out to struct's alignment
+        SkDEBUGCODE(this->checkEndStruct()); // validate after padding out to struct's alignment
         fStructBaseAlignment = 0;
     }
 
@@ -394,9 +425,11 @@ private:
     inline char* append(int alignment, int size);
     inline void alignTo(int alignment);
 
-    SkTDArray<char> fStorage;
+    skia_private::TArray<char> fStorage;
+    int fStorageHighWaterMark = 0;
 
     Layout fLayout;
+    int fStartingOffset = 0;
     int fReqAlignment = 0;
     int fStructBaseAlignment = 0;
     // The paint color is treated special and we only add its uniform once.
@@ -412,9 +445,9 @@ private:
     SkSpan<const Uniform> fExpectedUniforms;
     int fExpectedUniformIndex = 0;
 
-    bool checkExpected(const void* dst, SkSLType, int count);
-    bool checkBeginStruct(int baseAlignment);
-    bool checkEndStruct();
+    void checkExpected(const void* dst, SkSLType, int count);
+    void checkBeginStruct(int baseAlignment);
+    void checkEndStruct();
 #endif // SK_DEBUG
 };
 
@@ -485,7 +518,7 @@ void UniformManager::write(const void* src, SkSLType type) {
     char* dst = (N == 3 && LayoutRules::PadVec3Size(fLayout))
             ? this->append(L::kAlign, L::kSize + L::kElemSize)
             : this->append(L::kAlign, L::kSize);
-    SkASSERT(this->checkExpected(dst, type, Uniform::kNonArray));
+    SkDEBUGCODE(this->checkExpected(dst, type, Uniform::kNonArray));
 
     L::Copy(src, dst);
     if (N == 3 && LayoutRules::PadVec3Size(fLayout)) {
@@ -509,7 +542,7 @@ void UniformManager::writeArray(const void* src, int count, SkSLType type) {
 
         const char* srcBytes = reinterpret_cast<const char*>(src);
         char* dst = this->append(kStride, kStride*count);
-        SkASSERT(this->checkExpected(dst, type, count));
+        SkDEBUGCODE(this->checkExpected(dst, type, count));
 
         for (int i = 0; i < count; ++i) {
             L::Copy(srcBytes, dst);
@@ -524,7 +557,7 @@ void UniformManager::writeArray(const void* src, int count, SkSLType type) {
         // A dense array with no type conversion, so copy in one go.
         SkASSERT(L::kAlign == L::kSize && kSrcStride == L::kSize);
         char* dst = this->append(L::kAlign, L::kSize*count);
-        SkASSERT(this->checkExpected(dst, type, count));
+        SkDEBUGCODE(this->checkExpected(dst, type, count));
 
         memcpy(dst, src, L::kSize*count);
     }
@@ -532,7 +565,9 @@ void UniformManager::writeArray(const void* src, int count, SkSLType type) {
 
 void UniformManager::alignTo(int alignment) {
     SkASSERT(alignment >= 1 && SkIsPow2(alignment));
-    if ((fStorage.size() & (alignment - 1)) != 0) {
+    SkASSERT(fStorage.size() >= fStartingOffset);
+    const int relativeOffset = fStorage.size() - fStartingOffset;
+    if ((relativeOffset & (alignment - 1)) != 0) {
         this->append(alignment, /*size=*/0);
     }
 }
@@ -543,15 +578,15 @@ char* UniformManager::append(int alignment, int size) {
     // less than or equal to that base alignment.
     SkASSERT(fStructBaseAlignment <= 0 || alignment <= fStructBaseAlignment);
 
-    const int offset = fStorage.size();
-    const int padding = SkAlignTo(offset, alignment) - offset;
+    const int relativeOffset = fStorage.size() - fStartingOffset;
+    const int padding = SkAlignTo(relativeOffset, alignment) - relativeOffset;
 
     // These are just asserts not aborts because SkSL compilation imposes limits on the size of
     // runtime effect arrays, and internal shaders should not be using excessive lengths.
-    SkASSERT(std::numeric_limits<int>::max() - alignment >= offset);
+    SkASSERT(std::numeric_limits<int>::max() - alignment >= relativeOffset);
     SkASSERT(std::numeric_limits<int>::max() - size >= padding);
 
-    char* dst = fStorage.append(size + padding);
+    char* dst = fStorage.push_back_n(size + padding);
     if (padding > 0) {
         memset(dst, 0, padding);
         dst += padding;

@@ -61,13 +61,15 @@ public:
     void setFillColor(const WebCore::Color&);
     void setFillCachedGradient(RemoteGradientIdentifier, const WebCore::AffineTransform&);
     void setFillGradient(Ref<WebCore::Gradient>&&, const WebCore::AffineTransform&);
-    void setFillPattern(WebCore::RenderingResourceIdentifier tileImageIdentifier, const WebCore::PatternParameters&);
+    void setFillPatternNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::PatternParameters&);
+    void setFillPatternImageBuffer(WebCore::RenderingResourceIdentifier bufferIdentifier, const WebCore::PatternParameters&);
     void setFillRule(WebCore::WindRule);
     void setStrokePackedColor(WebCore::PackedColor::RGBA);
     void setStrokeColor(const WebCore::Color&);
     void setStrokeCachedGradient(RemoteGradientIdentifier, const WebCore::AffineTransform&);
     void setStrokeGradient(Ref<WebCore::Gradient>&&, const WebCore::AffineTransform&);
-    void setStrokePattern(WebCore::RenderingResourceIdentifier tileImageIdentifier, const WebCore::PatternParameters&);
+    void setStrokePatternNativeImage(WebCore::RenderingResourceIdentifier imageIdentifier, const WebCore::PatternParameters&);
+    void setStrokePatternImageBuffer(WebCore::RenderingResourceIdentifier bufferIdentifier, const WebCore::PatternParameters&);
     void setStrokePackedColorAndThickness(WebCore::PackedColor::RGBA, float);
     void setStrokeThickness(float);
     void setStrokeStyle(WebCore::StrokeStyle);
@@ -171,7 +173,7 @@ protected:
     RefPtr<WebCore::ImageBuffer> imageBuffer(WebCore::RenderingResourceIdentifier) const;
     std::optional<WebCore::SourceImage> sourceImage(WebCore::RenderingResourceIdentifier) const;
 
-    void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
+    void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) override;
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     SharedVideoFrameReader& sharedVideoFrameReader();

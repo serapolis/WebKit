@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Alex Milowski (alex@milowski.com). All rights reserved.
- * Copyright (C) 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2016 Igalia S.L.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,6 +43,7 @@
 #include "RenderTableCell.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
+#include "Settings.h"
 #include <wtf/SortedArrayMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -75,11 +76,12 @@ const MathMLElement::BooleanValue& MathMLPresentationElement::cachedBooleanAttri
     if (attribute)
         return attribute.value();
 
-    // In MathML, attribute values are case-sensitive.
+    // In MathML Core, attribute values are ASCII case-insensitive.
+    // https://w3c.github.io/mathml-core/#dfn-boolean
     const AtomString& value = attributeWithoutSynchronization(name);
-    if (value == trueAtom())
+    if (equalIgnoringASCIICase(value, trueAtom()))
         attribute = BooleanValue::True;
-    else if (value == falseAtom())
+    else if (equalIgnoringASCIICase(value, falseAtom()))
         attribute = BooleanValue::False;
     else
         attribute = BooleanValue::Default;
@@ -208,7 +210,7 @@ const MathMLElement::Length& MathMLPresentationElement::cachedMathMLLength(const
     return length.value();
 }
 
-MathMLElement::MathVariant MathMLPresentationElement::parseMathVariantAttribute(const AtomString& attributeValue)
+MathVariant MathMLPresentationElement::parseMathVariantAttribute(const AtomString& attributeValue)
 {
     // The mathvariant attribute values is case-sensitive.
     static constexpr std::pair<ComparableASCIILiteral, MathVariant> mappings[] = {
@@ -235,7 +237,7 @@ MathMLElement::MathVariant MathMLPresentationElement::parseMathVariantAttribute(
     return map.get(attributeValue, MathVariant::None);
 }
 
-std::optional<MathMLElement::MathVariant> MathMLPresentationElement::specifiedMathVariant()
+std::optional<MathVariant> MathMLPresentationElement::specifiedMathVariant()
 {
     if (!acceptsMathVariantAttribute())
         return std::nullopt;

@@ -49,14 +49,10 @@ public:
     static constexpr unsigned smallStringThreshold = numberOfCharactersInLargestBulkForWYHash * 2;
 
     struct DefaultConverter {
-        template<typename CharacterType>
-        static constexpr char16_t convert(CharacterType character)
+        template<typename CharType>
+        static constexpr char16_t convert(CharType character)
         {
             return unsignedCast(character);
-        }
-        static constexpr char16_t convert(Latin1Character character)
-        {
-            return character;
         }
     };
 

@@ -275,9 +275,9 @@ const NoPtrTag = constexpr NoPtrTag
 const VMTrapsAsyncEvents = constexpr VMTraps::AsyncEvents
 
 # VM offsets
-const VMTrapAwareSoftStackLimitOffset = VM::m_traps + VMTraps::m_stack + StackManager::m_trapAwareSoftStackLimit
-const VMCLoopStackLimitOffset = VM::m_traps + VMTraps::m_stack + StackManager::m_cloopStackLimit
-const VMSoftStackLimitOffset = VM::m_traps + VMTraps::m_stack + StackManager::m_softStackLimit
+const VMTrapAwareSoftStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_trapAwareSoftStackLimit
+const VMCLoopStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_cloopStackLimit
+const VMSoftStackLimitOffset = VM::m_threadContext + VMThreadContext::m_traps + VMTraps::m_stack + StackManager::m_softStackLimit
 
 # Registers
 
@@ -472,26 +472,26 @@ end
 
 macro validateOpcodeConfig(scratchReg)
     if ARM64E
-        leap _g_opcodeConfigStorage, scratchReg
+        leap _os_script_config_storage, scratchReg
         loadp [scratchReg], scratchReg
     end
 end
 
 macro nextInstruction()
     loadb [PB, PC, 1], t0
-    leap _g_opcodeConfigStorage, t1
+    leap _os_script_config_storage, t1
     jmp JSC::LLInt::OpcodeConfig::opcodeMap[t1, t0, PtrSize]
 end
 
 macro nextInstructionWide16()
     loadb OpcodeIDNarrowSize[PB, PC, 1], t0
-    leap _g_opcodeConfigStorage, t1
+    leap _os_script_config_storage, t1
     jmp JSC::LLInt::OpcodeConfig::opcodeMapWide16[t1, t0, PtrSize]
 end
 
 macro nextInstructionWide32()
     loadb OpcodeIDNarrowSize[PB, PC, 1], t0
-    leap _g_opcodeConfigStorage, t1
+    leap _os_script_config_storage, t1
     jmp JSC::LLInt::OpcodeConfig::opcodeMapWide32[t1, t0, PtrSize]
 end
 
@@ -1217,11 +1217,11 @@ end
 macro restoreStackPointerAfterCall()
     loadp CodeBlock[cfr], t2
     getFrameRegisterSizeForCodeBlock(t2, t2)
-    if ARMv7
+    if ARM64 or ARM64E
+        subp cfr, t2, sp
+    else
         subp cfr, t2, t2
         move t2, sp
-    else
-        subp cfr, t2, sp
     end
 end
 
@@ -1861,7 +1861,8 @@ if (ARM64E or ARM64) and ADDRESS64
         functionPrologue()
         pushCalleeSaves()
         vmEntryRecord(cfr, sp)
-        storep a1, VMEntryRecord::m_vm[sp]
+        move 0, t9
+        storepairq a1, t9, VMEntryRecord::m_vm[sp]
         loadpairq VM::topCallFrame[a1], t8, t9 # topCallFrame and topEntryFrame
         storepairq t8, t9, VMEntryRecord::m_prevTopCallFrame[sp]
     end
@@ -1956,6 +1957,7 @@ if ARM64E
     jmp t5, YarrEntryPtrTag
     _vmEntryToYarrJITAfter:
 end
+    move cfr, sp
     functionEpilogue()
     ret
 
@@ -2511,7 +2513,7 @@ end)
 macro checkTraps(dispatch)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
-    loadi VM::m_traps+VMTraps::m_trapBits[t1], t0
+    loadi VM::m_threadContext+VMThreadContext::m_traps+VMTraps::m_trapBits[t1], t0
     andi VMTrapsAsyncEvents, t0
     btpnz t0, .handleTraps
 .afterHandlingTraps:
@@ -3039,10 +3041,6 @@ op(ipint_trampoline, macro ()
 end)
 
 op(ipint_entry, macro ()
-    crash()
-end)
-
-op(ipint_simd_entry, macro ()
     crash()
 end)
 

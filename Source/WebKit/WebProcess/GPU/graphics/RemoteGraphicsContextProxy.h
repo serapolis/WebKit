@@ -70,9 +70,12 @@ public:
 protected:
     RemoteGraphicsContextProxy(const WebCore::DestinationColorSpace&, std::optional<WebCore::ContentsFormat>, WebCore::RenderingMode, const WebCore::FloatRect& initialClip, const WebCore::AffineTransform&, DrawGlyphsMode, RemoteGraphicsContextIdentifier, RemoteRenderingBackendProxy&);
 
-private:
     template<typename T> void send(T&& message);
+
+private:
     void didBecomeUnresponsive() const;
+
+    bool knownToHaveFloatBasedBacking() const final;
 
     WebCore::RenderingMode renderingMode() const final;
 
@@ -100,7 +103,7 @@ private:
     void endTransparencyLayer() final;
     void drawFilteredImageBuffer(WebCore::ImageBuffer*, const WebCore::FloatRect&, WebCore::Filter&, WebCore::FilterResults&) final;
     void drawImageBuffer(WebCore::ImageBuffer&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImagePaintingOptions) final;
-    void drawNativeImageInternal(WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImagePaintingOptions) final;
+    void drawNativeImage(WebCore::NativeImage&, const WebCore::FloatRect& destRect, const WebCore::FloatRect& srcRect, WebCore::ImagePaintingOptions) final;
     void drawSystemImage(WebCore::SystemImage&, const WebCore::FloatRect&) final;
     void drawRect(const WebCore::FloatRect&, float) final;
     void drawLine(const WebCore::FloatPoint& point1, const WebCore::FloatPoint& point2) final;
@@ -122,7 +125,7 @@ private:
     void fillRectWithRoundedHole(const WebCore::FloatRect&, const WebCore::FloatRoundedRect&, const WebCore::Color&) final;
     void fillEllipse(const WebCore::FloatRect&) final;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ImageOrientation, bool shouldDiscardAlpha) final;
+    void drawVideoFrame(const WebCore::VideoFrame&, const WebCore::FloatRect& distination, WebCore::ImageOrientation, bool shouldDiscardAlpha) final;
 #endif
     void strokePath(const WebCore::Path&) final;
     void strokeRect(const WebCore::FloatRect&, float) final;
@@ -142,8 +145,8 @@ private:
     void endPage() final;
     void setURLForRect(const URL&, const WebCore::FloatRect&) final;
 
-    bool recordResourceUse(WebCore::NativeImage&);
-    bool recordResourceUse(WebCore::ImageBuffer&);
+    [[nodiscard]] bool recordResourceUse(WebCore::NativeImage&);
+    [[nodiscard]] bool recordResourceUse(WebCore::ImageBuffer&);
     bool recordResourceUse(const WebCore::SourceImage&);
     bool recordResourceUse(WebCore::Font&);
     std::optional<RemoteGradientIdentifier> recordResourceUse(WebCore::Gradient&);
@@ -151,7 +154,10 @@ private:
     std::optional<RemoteDisplayListIdentifier> recordResourceUse(const WebCore::DisplayList::DisplayList&);
 
     // Synchronizes draw state.
+protected:
     void appendStateChangeItemIfNecessary() final;
+
+private:
     struct InlineStrokeData {
         std::optional<WebCore::PackedColor::RGBA> color;
         std::optional<float> thickness;

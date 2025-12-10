@@ -31,14 +31,17 @@
 #import "VideoPresentationManager.h"
 #import "VideoPresentationManagerProxyMessages.h"
 #import "WebPage.h"
-#import <WebCore/DocumentInlines.h>
+#import <WebCore/DocumentPage.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/HTMLVideoElement.h>
 #import <WebCore/NativeImage.h>
-#import <WebCore/NodeInlines.h>
+#import <WebCore/NodeDocument.h>
 #import <WebCore/Page.h>
+#import <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebTextTrackRepresentationCocoa);
 
 WebTextTrackRepresentationCocoa::WebTextTrackRepresentationCocoa(WebCore::TextTrackRepresentationClient& client, WebCore::HTMLMediaElement& mediaElement)
     : WebCore::TextTrackRepresentationCocoa(client)
@@ -50,9 +53,10 @@ WebTextTrackRepresentationCocoa::WebTextTrackRepresentationCocoa(WebCore::TextTr
 
 void WebTextTrackRepresentationCocoa::update()
 {
-    if (!m_page)
+    RefPtr page = m_page.get();
+    if (!page)
         return;
-    Ref fullscreenManager = m_page->videoPresentationManager();
+    Ref fullscreenManager = page->videoPresentationManager();
     if (!m_mediaElement || !is<WebCore::HTMLVideoElement>(m_mediaElement))
         return;
     
@@ -77,9 +81,10 @@ void WebTextTrackRepresentationCocoa::update()
 void WebTextTrackRepresentationCocoa::setContentScale(float scale)
 {
     WebCore::TextTrackRepresentationCocoa::setContentScale(scale);
-    if (!m_page)
+    RefPtr page = m_page.get();
+    if (!page)
         return;
-    Ref fullscreenManager = m_page->videoPresentationManager();
+    Ref fullscreenManager = page->videoPresentationManager();
     RefPtr videoElement = dynamicDowncast<WebCore::HTMLVideoElement>(m_mediaElement.get());
     if (!videoElement)
         return;
@@ -89,9 +94,10 @@ void WebTextTrackRepresentationCocoa::setContentScale(float scale)
 void WebTextTrackRepresentationCocoa::setHidden(bool hidden) const
 {
     WebCore::TextTrackRepresentationCocoa::setHidden(hidden);
-    if (!m_page)
+    RefPtr page = m_page.get();
+    if (!page)
         return;
-    Ref fullscreenManager = m_page->videoPresentationManager();
+    Ref fullscreenManager = page->videoPresentationManager();
     RefPtr videoElement = dynamicDowncast<WebCore::HTMLVideoElement>(m_mediaElement.get());
     if (!videoElement)
         return;

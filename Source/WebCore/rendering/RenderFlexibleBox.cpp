@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2011 Google Inc. All rights reserved.
+ * Copyright (C) 2025 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -43,7 +44,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderChildIterator.h"
-#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderLayer.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectEnums.h"
@@ -51,6 +52,7 @@
 #include "RenderReplaced.h"
 #include "RenderSVGRoot.h"
 #include "RenderStyleConstants.h"
+#include "RenderStyleInlines.h"
 #include "RenderTable.h"
 #include "RenderView.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
@@ -64,6 +66,44 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderFlexibleBox);
+
+RenderFlexibleBox::FlexLayoutItem::FlexLayoutItem(RenderBox& flexItem, LayoutUnit flexBaseContentSize, LayoutUnit mainAxisBorderAndPadding, LayoutUnit mainAxisMargin, std::pair<LayoutUnit, LayoutUnit> minMaxSizes, bool everHadLayout)
+    : renderer(flexItem)
+    , flexBaseContentSize(flexBaseContentSize)
+    , mainAxisBorderAndPadding(mainAxisBorderAndPadding)
+    , mainAxisMargin(mainAxisMargin)
+    , minMaxSizes(minMaxSizes)
+    , hypotheticalMainContentSize(constrainSizeByMinMax(flexBaseContentSize))
+    , frozen(false)
+    , everHadLayout(everHadLayout)
+{
+    ASSERT(!flexItem.isOutOfFlowPositioned());
+}
+
+LayoutUnit RenderFlexibleBox::FlexLayoutItem::hypotheticalMainAxisMarginBoxSize() const
+{
+    return hypotheticalMainContentSize + mainAxisBorderAndPadding + mainAxisMargin;
+}
+
+LayoutUnit RenderFlexibleBox::FlexLayoutItem::flexBaseMarginBoxSize() const
+{
+    return flexBaseContentSize + mainAxisBorderAndPadding + mainAxisMargin;
+}
+
+LayoutUnit RenderFlexibleBox::FlexLayoutItem::flexedMarginBoxSize() const
+{
+    return flexedContentSize + mainAxisBorderAndPadding + mainAxisMargin;
+}
+
+const RenderStyle& RenderFlexibleBox::FlexLayoutItem::style() const
+{
+    return renderer->style();
+}
+
+LayoutUnit RenderFlexibleBox::FlexLayoutItem::constrainSizeByMinMax(const LayoutUnit size) const
+{
+    return std::max(minMaxSizes.first, std::min(size, minMaxSizes.second));
+}
 
 struct RenderFlexibleBox::LineState {
     LineState(LayoutUnit crossAxisOffset, LayoutUnit crossAxisExtent, std::optional<BaselineAlignmentState> baselineAlignmentState, FlexLayoutItems&& flexLayoutItems)
@@ -334,15 +374,27 @@ void RenderFlexibleBox::styleDidChange(StyleDifference diff, const RenderStyle* 
     if (!oldStyle || diff != StyleDifference::Layout)
         return;
 
-    auto oldStyleAlignItemsIsStretch = oldStyle->resolvedAlignItems(selfAlignmentNormalBehavior()).position() == ItemPosition::Stretch;
+    auto oldStyleAlignItemsIsStretch = oldStyle->alignItems().resolve(selfAlignmentNormalBehavior()).position() == ItemPosition::Stretch;
     for (auto& flexItem : childrenOfType<RenderBox>(*this)) {
         // Flex items that were previously stretching need to be relayed out so we
         // can compute new available cross axis space. This is only necessary for
         // stretching since other alignment values don't change the size of the
         // box.
         if (oldStyleAlignItemsIsStretch) {
-            ItemPosition previousAlignment = flexItem.style().resolvedAlignSelf(oldStyle, selfAlignmentNormalBehavior()).position();
-            if (previousAlignment == ItemPosition::Stretch && previousAlignment != flexItem.style().resolvedAlignSelf(&style(), selfAlignmentNormalBehavior()).position())
+            auto normalBehavior = selfAlignmentNormalBehavior();
+
+            auto previousAlignment = [&] {
+                if (!flexItem.style().alignSelf().isAuto())
+                    return flexItem.style().alignSelf().resolve(normalBehavior).position();
+                return oldStyle->alignItems().resolve(normalBehavior).position();
+            }();
+            auto newAlignment = [&] {
+                if (!flexItem.style().alignSelf().isAuto())
+                    return flexItem.style().alignSelf().resolve(normalBehavior).position();
+                return style().alignItems().resolve(normalBehavior).position();
+            }();
+
+            if (previousAlignment == ItemPosition::Stretch && previousAlignment != newAlignment)
                 flexItem.setChildNeedsLayout(MarkOnlyThis);
         }
     }
@@ -395,7 +447,7 @@ void RenderFlexibleBox::layoutBlock(RelayoutChildren relayoutChildren, LayoutUni
     bool oldInLayout = m_inLayout;
     m_inLayout = true;
 
-    if (!style().marginTrim().isEmpty())
+    if (!style().marginTrim().isNone())
         initializeMarginTrimState();
 
     if (recomputeLogicalWidth())
@@ -493,7 +545,6 @@ void RenderFlexibleBox::paintChildren(PaintInfo& paintInfo, const LayoutPoint& p
 
 void RenderFlexibleBox::repositionLogicalHeightDependentFlexItems(FlexLineStates& lineStates, LayoutUnit gapBetweenLines)
 {
-    auto flexLayoutScope = SetForScope(m_inCrossAxisLayout, true);
     LayoutUnit crossAxisStartEdge = lineStates.isEmpty() ? 0_lu : lineStates[0].crossAxisOffset;
     // If we have a single line flexbox, the line height is all the available space. For flex-direction: row,
     // this means we need to use the height, so we do this after calling updateLogicalHeight.
@@ -899,16 +950,16 @@ void RenderFlexibleBox::initializeMarginTrimState()
     // these margins do not incorrectly constribute to the box's min/max width
     auto marginTrim = style().marginTrim();
     auto isRowsFlexbox = isHorizontalFlow();
-    if (auto flexItem = firstInFlowChildBox(); flexItem && marginTrim.contains(MarginTrimType::InlineStart))
+    if (auto flexItem = firstInFlowChildBox(); flexItem && marginTrim.contains(Style::MarginTrimSide::InlineStart))
         isRowsFlexbox ? m_marginTrimItems.m_itemsAtFlexLineStart.add(*flexItem) : m_marginTrimItems.m_itemsOnFirstFlexLine.add(*flexItem);
-    if (auto flexItem = lastInFlowChildBox(); flexItem && marginTrim.contains(MarginTrimType::InlineEnd))
+    if (auto flexItem = lastInFlowChildBox(); flexItem && marginTrim.contains(Style::MarginTrimSide::InlineEnd))
         isRowsFlexbox ? m_marginTrimItems.m_itemsAtFlexLineEnd.add(*flexItem) : m_marginTrimItems.m_itemsOnLastFlexLine.add(*flexItem);
 }
 
 bool RenderFlexibleBox::canFitItemWithTrimmedMarginEnd(const FlexLayoutItem& flexLayoutItem, LayoutUnit sumHypotheticalMainSize, LayoutUnit lineBreakLength) const
 {
     auto marginTrim = style().marginTrim();
-    if ((isHorizontalFlow() && marginTrim.contains(MarginTrimType::InlineEnd)) || (isColumnFlow() && marginTrim.contains(MarginTrimType::BlockEnd)))
+    if ((isHorizontalFlow() && marginTrim.contains(Style::MarginTrimSide::InlineEnd)) || (isColumnFlow() && marginTrim.contains(Style::MarginTrimSide::BlockEnd)))
         return sumHypotheticalMainSize + flexLayoutItem.hypotheticalMainAxisMarginBoxSize() - flowAwareMarginEndForFlexItem(flexLayoutItem.renderer) <= lineBreakLength;
     return false;
 }
@@ -952,45 +1003,45 @@ LayoutUnit RenderFlexibleBox::crossAxisMarginExtentForFlexItem(const RenderBox& 
     return marginStart + marginEnd;
 }
 
-bool RenderFlexibleBox::isChildEligibleForMarginTrim(MarginTrimType marginTrimType, const RenderBox& flexItem) const
+bool RenderFlexibleBox::isChildEligibleForMarginTrim(Style::MarginTrimSide marginTrimSide, const RenderBox& flexItem) const
 {
-    ASSERT(style().marginTrim().contains(marginTrimType));
-    auto isMarginParallelWithMainAxis = [this](MarginTrimType marginTrimType) {
+    ASSERT(style().marginTrim().contains(marginTrimSide));
+    auto isMarginParallelWithMainAxis = [this](Style::MarginTrimSide marginTrimSide) {
         if (isHorizontalFlow())
-            return marginTrimType == MarginTrimType::BlockStart || marginTrimType == MarginTrimType::BlockEnd;
-        return marginTrimType == MarginTrimType::InlineStart || marginTrimType == MarginTrimType::InlineEnd;
+            return marginTrimSide == Style::MarginTrimSide::BlockStart || marginTrimSide == Style::MarginTrimSide::BlockEnd;
+        return marginTrimSide == Style::MarginTrimSide::InlineStart || marginTrimSide == Style::MarginTrimSide::InlineEnd;
     };
-    if (isMarginParallelWithMainAxis(marginTrimType))
-        return (marginTrimType == MarginTrimType::BlockStart || marginTrimType == MarginTrimType::InlineStart) ? m_marginTrimItems.m_itemsOnFirstFlexLine.contains(flexItem) : m_marginTrimItems.m_itemsOnLastFlexLine.contains(flexItem);
-    return (marginTrimType == MarginTrimType::BlockStart || marginTrimType == MarginTrimType::InlineStart) ? m_marginTrimItems.m_itemsAtFlexLineStart.contains(flexItem) : m_marginTrimItems.m_itemsAtFlexLineEnd.contains(flexItem);
+    if (isMarginParallelWithMainAxis(marginTrimSide))
+        return (marginTrimSide == Style::MarginTrimSide::BlockStart || marginTrimSide == Style::MarginTrimSide::InlineStart) ? m_marginTrimItems.m_itemsOnFirstFlexLine.contains(flexItem) : m_marginTrimItems.m_itemsOnLastFlexLine.contains(flexItem);
+    return (marginTrimSide == Style::MarginTrimSide::BlockStart || marginTrimSide == Style::MarginTrimSide::InlineStart) ? m_marginTrimItems.m_itemsAtFlexLineStart.contains(flexItem) : m_marginTrimItems.m_itemsAtFlexLineEnd.contains(flexItem);
 }
 
 bool RenderFlexibleBox::shouldTrimMainAxisMarginStart() const
 {
     if (isHorizontalFlow())
-        return style().marginTrim().contains(MarginTrimType::InlineStart);
-    return style().marginTrim().contains(MarginTrimType::BlockStart);
+        return style().marginTrim().contains(Style::MarginTrimSide::InlineStart);
+    return style().marginTrim().contains(Style::MarginTrimSide::BlockStart);
 }
 
 bool RenderFlexibleBox::shouldTrimMainAxisMarginEnd() const
 {
     if (isHorizontalFlow())
-        return style().marginTrim().contains(MarginTrimType::InlineEnd);
-    return style().marginTrim().contains(MarginTrimType::BlockEnd);
+        return style().marginTrim().contains(Style::MarginTrimSide::InlineEnd);
+    return style().marginTrim().contains(Style::MarginTrimSide::BlockEnd);
 }
 
 bool RenderFlexibleBox::shouldTrimCrossAxisMarginStart() const
 {
     if (isHorizontalFlow())
-        return style().marginTrim().contains(MarginTrimType::BlockStart);
-    return style().marginTrim().contains(MarginTrimType::InlineStart);
+        return style().marginTrim().contains(Style::MarginTrimSide::BlockStart);
+    return style().marginTrim().contains(Style::MarginTrimSide::InlineStart);
 }
 
 bool RenderFlexibleBox::shouldTrimCrossAxisMarginEnd() const
 {
     if (isHorizontalFlow())
-        return style().marginTrim().contains(MarginTrimType::BlockEnd);
-    return style().marginTrim().contains(MarginTrimType::InlineEnd);
+        return style().marginTrim().contains(Style::MarginTrimSide::BlockEnd);
+    return style().marginTrim().contains(Style::MarginTrimSide::InlineEnd);
 }
 
 void RenderFlexibleBox::trimMainAxisMarginStart(const FlexLayoutItem& flexLayoutItem)
@@ -1000,9 +1051,9 @@ void RenderFlexibleBox::trimMainAxisMarginStart(const FlexLayoutItem& flexLayout
         ? flexLayoutItem.renderer->marginStart(writingMode())
         : flexLayoutItem.renderer->marginBefore(writingMode());
     if (horizontalFlow)
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineStart);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::InlineStart);
     else
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::BlockStart);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::BlockStart);
     m_marginTrimItems.m_itemsAtFlexLineStart.add(flexLayoutItem.renderer);
 }
 
@@ -1013,27 +1064,27 @@ void RenderFlexibleBox::trimMainAxisMarginEnd(const FlexLayoutItem& flexLayoutIt
         ? flexLayoutItem.renderer->marginEnd(writingMode())
         : flexLayoutItem.renderer->marginAfter(writingMode());
     if (horizontalFlow)
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineEnd);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::InlineEnd);
     else
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::BlockEnd);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::BlockEnd);
     m_marginTrimItems.m_itemsAtFlexLineEnd.add(flexLayoutItem.renderer);
 }
 
 void RenderFlexibleBox::trimCrossAxisMarginStart(const FlexLayoutItem& flexLayoutItem)
 {
     if (isHorizontalFlow())
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::BlockStart);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::BlockStart);
     else
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineStart);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::InlineStart);
     m_marginTrimItems.m_itemsOnFirstFlexLine.add(flexLayoutItem.renderer);
 }
 
 void RenderFlexibleBox::trimCrossAxisMarginEnd(const FlexLayoutItem& flexLayoutItem)
 {
     if (isHorizontalFlow())
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::BlockEnd);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::BlockEnd);
     else
-        setTrimmedMarginForChild(flexLayoutItem.renderer, MarginTrimType::InlineEnd);
+        setTrimmedMarginForChild(flexLayoutItem.renderer, Style::MarginTrimSide::InlineEnd);
     m_marginTrimItems.m_itemsOnLastFlexLine.add(flexLayoutItem.renderer);
 }
 
@@ -1112,17 +1163,17 @@ template<typename SizeType> LayoutUnit RenderFlexibleBox::computeMainSizeFromAsp
 
     auto crossSizeOptional = WTF::switchOn(crossSizeLength,
         [&](const SizeType::Fixed& fixedCrossSizeLength) -> std::optional<LayoutUnit> {
-            return LayoutUnit(fixedCrossSizeLength.value);
+            return LayoutUnit(fixedCrossSizeLength.resolveZoom(flexItem.style().usedZoomForLength()));
         },
         [&](const SizeType::Percentage& percentageCrossSizeLength) -> std::optional<LayoutUnit> {
             return mainAxisIsFlexItemInlineAxis(flexItem)
-                ? flexItem.computePercentageLogicalHeight(percentageCrossSizeLength)
-                : adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate(percentageCrossSizeLength, contentBoxWidth(), 1.0f /* FIXME FIND ZOOM */));
+                ? flexItem.computePercentageLogicalHeight(SizeType { percentageCrossSizeLength })
+                : adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate<LayoutUnit>(percentageCrossSizeLength, contentBoxWidth()));
         },
         [&](const SizeType::Calc& calcCrossSizeLength) -> std::optional<LayoutUnit> {
             return mainAxisIsFlexItemInlineAxis(flexItem)
                 ? flexItem.computePercentageLogicalHeight(calcCrossSizeLength)
-                : adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate(calcCrossSizeLength, contentBoxWidth(), 1.0f /* FIXME FIND ZOOM */));
+                : adjustBorderBoxLogicalWidthForBoxSizing(Style::evaluate<LayoutUnit>(calcCrossSizeLength, contentBoxWidth(), flexItem.style().usedZoomForLength()));
         },
         [&](const CSS::Keyword::Auto&) -> std::optional<LayoutUnit> {
             ASSERT(flexItemCrossSizeShouldUseContainerCrossSize(flexItem));
@@ -1650,7 +1701,7 @@ LayoutUnit RenderFlexibleBox::computeFlexItemMarginValue(const Style::MarginEdge
 {
     // When resolving the margins, we use the content size for resolving percent and calc (for percents in calc expressions) margins.
     // Fortunately, percent margins are always computed with respect to the block's width, even for margin-top and margin-bottom.
-    return Style::evaluateMinimum(margin, contentBoxLogicalWidth(), 1.0f /* FIXME FIND ZOOM */);
+    return Style::evaluateMinimum<LayoutUnit>(margin, contentBoxLogicalWidth(), style().usedZoomForLength());
 }
 
 void RenderFlexibleBox::prepareOrderIteratorAndMargins()
@@ -1733,36 +1784,37 @@ bool RenderFlexibleBox::canUseFlexItemForPercentageResolution(const RenderBox& f
     ASSERT(flexItem.isFlexItem());
 
     auto canUseByLayoutPhase = [&] {
-        if (m_inSimplifiedLayout) {
-            // While in simplified layout, we should only re-compute overflow and/or re-position out-of-flow boxes, some renderers (e.g. RenderReplaced and subclasses)
-            // currently ignore this optimization and run regular layout.
+        if (m_inFlexItemIntrinsicWidthComputation)
+            return flexItemCrossSizeShouldUseContainerCrossSize(flexItem) && !isFlexItem();
+
+        if (m_afterMainAxisItemSizing) {
+            // Final sizes for flex items are available only along the main axis.
+            // Percentages can be resolved only against those items when they are orthogonal to the flex container (i.e., their logical height is computed and final)
+            return !mainAxisIsFlexItemInlineAxis(flexItem);
+        }
+
+        if (m_afterCrossAxisItemSizing) {
+            // Final sizes for flex items are known in both the main and cross directions, so it's fine to resolve percentage heights using those final values.
             return true;
         }
 
         if (m_inPostFlexUpdateScrollbarLayout) {
-            // Unfortunately we run layout on flex content _after_ performing flex layout to ensure scrollbars are up to date (see endAndCommitUpdateScrollInfoAfterLayoutTransaction/updateScrollInfoAfterLayout).
-            // We need to let this content run percent resolution as if we were still in flex item layout.
+            // We run layout on flex content _after_ performing flex layout (see endAndCommitUpdateScrollInfoAfterLayoutTransaction/updateScrollInfoAfterLayout).
+            // Final sizes for flex items are known in both the main and cross directions.
             return true;
         }
 
-        if (m_inFlexItemLayout) {
-            // While running flex _item_ layout, we may only resolve percentage against the flex item when it is orthogonal to the flex container.
+        if (m_inSimplifiedLayout) {
+            // While in simplified layout, we should only re-compute overflow and/or re-position out-of-flow boxes, some renderers (e.g. RenderReplaced and subclasses)
+            // currently ignore this optimization and run regular layout.
+            // Final sizes for flex items are known in both the main and cross directions, computed during previous layout(s).
+            return true;
+        }
+
+        if (&flexItem == view().frameView().layoutContext().subtreeLayoutRoot())
             return !mainAxisIsFlexItemInlineAxis(flexItem);
-        }
 
-        if (m_inFlexItemIntrinsicWidthComputation)
-            return flexItemCrossSizeShouldUseContainerCrossSize(flexItem) && !isFlexItem();
-
-        if (m_inCrossAxisLayout)
-            return true;
-
-        if (&flexItem == view().frameView().layoutContext().subtreeLayoutRoot()) {
-            ASSERT(!needsLayout());
-            // When the flex item is the root of a subtree layout, flex layout is not running (as we only layout the flex item's subtree).
-            return false;
-        }
-
-        // Let's decide based on style when we are outside of layout (i.e. relative percent position).
+        // Outside of layout (i.e. when using relative percentage positioning), base the decision on style.
         return !m_inLayout;
     };
     if (!canUseByLayoutPhase())
@@ -1837,7 +1889,7 @@ RenderFlexibleBox::FlexLayoutItem RenderFlexibleBox::constructFlexLayoutItem(Ren
     if (CheckedPtr flexibleBox = dynamicDowncast<RenderFlexibleBox>(flexItem))
         flexibleBox->resetHasDefiniteHeight();
 
-    if (everHadLayout && flexItem.hasTrimmedMargin(std::optional<MarginTrimType> { }))
+    if (everHadLayout && flexItem.hasTrimmedMargin(std::optional<Style::MarginTrimSide> { }))
         flexItem.clearTrimmedMarginsMarkings();
     
     if (flexItem.shouldInvalidatePreferredWidths())
@@ -1938,11 +1990,11 @@ bool RenderFlexibleBox::resolveFlexibleLengths(FlexSign flexSign, FlexLayoutItem
     return !totalViolation;
 }
 
-inline ContentPosition resolveLeftRightAlignment(ContentPosition position, const RenderStyle& style, bool isReversed)
+inline ContentPosition resolveLeftRightAlignment(ContentPosition position, StyleContentAlignmentData justifyContent, const RenderStyle& style, bool isReversed)
 {
     if (position == ContentPosition::Left || position == ContentPosition::Right) {
         auto leftRightAxisDirection = RenderFlexibleBox::leftRightAxisDirectionFromStyle(style);
-        position = (style.justifyContent().isEndward(leftRightAxisDirection, isReversed))
+        position = (justifyContent.isEndward(leftRightAxisDirection, isReversed))
             ? ContentPosition::End : ContentPosition::Start;
     }
     return position;
@@ -1950,27 +2002,29 @@ inline ContentPosition resolveLeftRightAlignment(ContentPosition position, const
 
 static LayoutUnit initialJustifyContentOffset(const RenderStyle& style, LayoutUnit availableFreeSpace, unsigned numberOfFlexItems, bool isReversed)
 {
-    ContentPosition justifyContent = style.resolvedJustifyContentPosition(contentAlignmentNormalBehavior());
-    ContentDistribution justifyContentDistribution = style.resolvedJustifyContentDistribution(contentAlignmentNormalBehavior());
+    auto resolvedJustifyContent = style.justifyContent().resolve(contentAlignmentNormalBehavior());
+    auto justifyContentPosition = resolvedJustifyContent.position();
+    auto justifyContentDistribution = resolvedJustifyContent.distribution();
 
-    if (availableFreeSpace < 0 && style.justifyContent().overflow() == OverflowAlignment::Safe) {
-        ASSERT(justifyContent != ContentPosition::Normal);
-        justifyContent = ContentPosition::Start;
+    if (availableFreeSpace < 0 && resolvedJustifyContent.overflow() == OverflowAlignment::Safe) {
+        ASSERT(justifyContentPosition != ContentPosition::Normal);
+        justifyContentPosition = ContentPosition::Start;
+    } else {
+        // First of all resolve Left and Right so we could convert it to their equivalent properties handled bellow.
+        // If the property's axis is not parallel with either left<->right axis, this value behaves as start. Currently,
+        // the only case where the property's axis is not parallel with either left<->right axis is in a column flexbox.
+        // https: //www.w3.org/TR/css-align-3/#valdef-justify-content-left
+        justifyContentPosition = resolveLeftRightAlignment(justifyContentPosition, resolvedJustifyContent, style, isReversed);
     }
 
-    // First of all resolve Left and Right so we could convert it to their equivalent properties handled bellow.
-    // If the property's axis is not parallel with either left<->right axis, this value behaves as start. Currently,
-    // the only case where the property's axis is not parallel with either left<->right axis is in a column flexbox.
-    // https: //www.w3.org/TR/css-align-3/#valdef-justify-content-left
-    justifyContent = resolveLeftRightAlignment(justifyContent, style, isReversed);
-    ASSERT(justifyContent != ContentPosition::Left);
-    ASSERT(justifyContent != ContentPosition::Right);
+    ASSERT(justifyContentPosition != ContentPosition::Left);
+    ASSERT(justifyContentPosition != ContentPosition::Right);
 
-    if (justifyContent == ContentPosition::FlexEnd
-        || (justifyContent == ContentPosition::End && !isReversed)
-        || (justifyContent == ContentPosition::Start && isReversed))
+    if (justifyContentPosition == ContentPosition::FlexEnd
+        || (justifyContentPosition == ContentPosition::End && !isReversed)
+        || (justifyContentPosition == ContentPosition::Start && isReversed))
         return availableFreeSpace;
-    if (justifyContent == ContentPosition::Center)
+    if (justifyContentPosition == ContentPosition::Center)
         return availableFreeSpace / 2;
     if (justifyContentDistribution == ContentDistribution::SpaceAround) {
         if (!numberOfFlexItems)
@@ -2116,17 +2170,17 @@ LayoutUnit RenderFlexibleBox::computeCrossSizeForFlexItemUsingContainerCrossSize
         ASSERT(size.isFixed() || (size.isPercent() && availableLogicalHeightForPercentageComputation()));
         LayoutUnit definiteValue;
         if (auto fixedSize = size.tryFixed())
-            definiteValue = LayoutUnit { fixedSize->value };
+            definiteValue = LayoutUnit { fixedSize->resolveZoom(style().usedZoomForLength()) };
         else if (size.isPercent())
             definiteValue = availableLogicalHeightForPercentageComputation().value_or(0_lu);
 
         auto maximumSize = isHorizontal ? style().maxHeight() : style().maxWidth();
         if (auto fixedMaximumSize = maximumSize.tryFixed())
-            definiteValue = std::min(definiteValue, LayoutUnit { fixedMaximumSize->value });
+            definiteValue = std::min(definiteValue, LayoutUnit { fixedMaximumSize->resolveZoom(style().usedZoomForLength()) });
 
         auto minimumSize = isHorizontal ? style().minHeight() : style().minWidth();
         if (auto fixedMinimumSize = minimumSize.tryFixed())
-            definiteValue = std::max(definiteValue, LayoutUnit { fixedMinimumSize->value });
+            definiteValue = std::max(definiteValue, LayoutUnit { fixedMinimumSize->resolveZoom(style().usedZoomForLength()) });
 
         return definiteValue;
     };
@@ -2155,12 +2209,21 @@ void RenderFlexibleBox::prepareFlexItemForPositionedLayout(RenderBox& flexItem)
 
 inline OverflowAlignment RenderFlexibleBox::overflowAlignmentForFlexItem(const RenderBox& flexItem) const
 {
-    return flexItem.style().resolvedAlignSelf(&style(), selfAlignmentNormalBehavior()).overflow();
+    auto normalBehavior = selfAlignmentNormalBehavior();
+    if (!flexItem.style().alignSelf().isAuto())
+        return flexItem.style().alignSelf().resolve(normalBehavior).overflow();
+    return style().alignItems().resolve(normalBehavior).overflow();
 }
 
 ItemPosition RenderFlexibleBox::alignmentForFlexItem(const RenderBox& flexItem) const
 {
-    ItemPosition align = flexItem.style().resolvedAlignSelf(&style(), selfAlignmentNormalBehavior()).position();
+    auto align = [&] {
+        auto normalBehavior = selfAlignmentNormalBehavior();
+        if (!flexItem.style().alignSelf().isAuto())
+            return flexItem.style().alignSelf().resolve(normalBehavior).position();
+        return style().alignItems().resolve(normalBehavior).position();
+    }();
+
     ASSERT(align != ItemPosition::Auto && align != ItemPosition::Normal);
     // Left and Right are only for justify-*.
     ASSERT(align != ItemPosition::Left && align != ItemPosition::Right);
@@ -2346,10 +2409,10 @@ void RenderFlexibleBox::layoutAndPlaceFlexItems(LayoutUnit& crossAxisOffset, Fle
         mainAxisOffset += isHorizontalFlow() ? verticalScrollbarWidth() : horizontalScrollbarHeight();
 
     if (availableFreeSpace < 0) {
-        ContentPosition position = style().resolvedJustifyContentPosition(contentAlignmentNormalBehavior());
-        ContentDistribution distribution = style().resolvedJustifyContentDistribution(contentAlignmentNormalBehavior());
-        OverflowAlignment safety = style().justifyContent().overflow();
-        position = resolveLeftRightAlignment(position, style(), isColumnOrRowReverse());
+        auto resolvedJustifyContent = style().justifyContent().resolve(contentAlignmentNormalBehavior());
+        auto distribution = resolvedJustifyContent.distribution();
+        auto safety = resolvedJustifyContent.overflow();
+        auto position = resolveLeftRightAlignment(resolvedJustifyContent.position(), resolvedJustifyContent, style(), isColumnOrRowReverse());
         LayoutUnit overflow = contentAlignmentStartOverflow(availableFreeSpace, position, distribution, safety, isColumnOrRowReverse());
         m_justifyContentStartOverflow = std::max(m_justifyContentStartOverflow, overflow);
     }
@@ -2362,9 +2425,9 @@ void RenderFlexibleBox::layoutAndPlaceFlexItems(LayoutUnit& crossAxisOffset, Fle
     LayoutUnit lastBaselineMaxAscent;
     std::optional<BaselineAlignmentState> baselineAlignmentState;
 
-    ContentDistribution distribution = style().resolvedJustifyContentDistribution(contentAlignmentNormalBehavior());
+    auto resolvedJustifyContent = style().justifyContent().resolve(contentAlignmentNormalBehavior());
+    auto distribution = resolvedJustifyContent.distribution();
     bool shouldFlipMainAxis = !isColumnFlow() && !isLeftToRightFlow();
-    auto flexLayoutScope = SetForScope(m_inFlexItemLayout, true);
     for (size_t i = 0; i < flexLayoutItems.size(); ++i) {
         auto& flexLayoutItem = flexLayoutItems[i];
         auto& flexItem = flexLayoutItem.renderer.get();
@@ -2397,7 +2460,10 @@ void RenderFlexibleBox::layoutAndPlaceFlexItems(LayoutUnit& crossAxisOffset, Fle
             flexItem.markForPaginationRelayoutIfNeeded();
         if (flexItem.needsLayout())
             m_relaidOutFlexItems.add(flexItem);
-        flexItem.layoutIfNeeded();
+        {
+            auto flexLayoutScope = SetForScope(m_afterMainAxisItemSizing, true);
+            flexItem.layoutIfNeeded();
+        }
         if (!flexLayoutItem.everHadLayout && flexItem.checkForRepaintDuringLayout()) {
             flexItem.repaint();
             flexItem.repaintOverhangingFloats(true);
@@ -2476,7 +2542,7 @@ void RenderFlexibleBox::layoutColumnReverse(const FlexLayoutItems& flexLayoutIte
     mainAxisOffset -= initialJustifyContentOffset(style(), availableFreeSpace, flexLayoutItems.size(), isColumnOrRowReverse());
     mainAxisOffset -= isHorizontalFlow() ? verticalScrollbarWidth() : horizontalScrollbarHeight();
 
-    ContentDistribution distribution = style().resolvedJustifyContentDistribution(contentAlignmentNormalBehavior());
+    auto distribution = style().justifyContent().resolve(contentAlignmentNormalBehavior()).distribution();
 
     for (size_t i = 0; i < flexLayoutItems.size(); ++i) {
         auto& flexItem = flexLayoutItems[i].renderer;
@@ -2538,9 +2604,11 @@ void RenderFlexibleBox::alignFlexLines(FlexLineStates& lineStates, LayoutUnit ga
     if (lineStates.isEmpty() || !isMultiline())
         return;
 
-    ContentPosition position = style().resolvedAlignContentPosition(contentAlignmentNormalBehavior());
-    ContentDistribution distribution = style().resolvedAlignContentDistribution(contentAlignmentNormalBehavior());
-    OverflowAlignment safety = style().alignContent().overflow();
+    auto alignedContent = style().alignContent().resolve(contentAlignmentNormalBehavior());
+    auto position = alignedContent.position();
+    auto distribution = alignedContent.distribution();
+    auto safety = alignedContent.overflow();
+
     bool isWrapReverse = this->isWrapReverse();
 
     if (position == ContentPosition::FlexStart && !gapBetweenLines && safety != OverflowAlignment::Safe && !isWrapReverse)
@@ -2660,6 +2728,7 @@ void RenderFlexibleBox::performBaselineAlignment(LineState& lineState)
 
 void RenderFlexibleBox::applyStretchAlignmentToFlexItem(RenderBox& flexItem, LayoutUnit lineCrossAxisExtent)
 {
+    auto flexLayoutScope = SetForScope(m_afterCrossAxisItemSizing, true);
     if (mainAxisIsFlexItemInlineAxis(flexItem) && flexItem.style().logicalHeight().isAuto()) {
         LayoutUnit stretchedLogicalHeight = std::max(flexItem.borderAndPaddingLogicalHeight(),
         lineCrossAxisExtent - crossAxisMarginExtentForFlexItem(flexItem));
@@ -2785,7 +2854,7 @@ LayoutUnit RenderFlexibleBox::computeGap(RenderFlexibleBox::GapType gapType) con
         return { };
 
     auto availableSize = usesRowGap ? availableLogicalHeightForPercentageComputation().value_or(0_lu) : contentBoxLogicalWidth();
-    return Style::evaluateMinimum(gap, availableSize, 1.0f /* FIXME FIND ZOOM */);
+    return Style::evaluateMinimum<LayoutUnit>(gap, availableSize, Style::ZoomNeeded { });
 }
 
 bool RenderFlexibleBox::layoutUsingFlexFormattingContext()

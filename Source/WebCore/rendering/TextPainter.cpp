@@ -1,7 +1,7 @@
 /*
  * (C) 1999 Lars Knoll (knoll@kde.org)
  * (C) 2000 Dirk Mueller (mueller@kde.org)
- * Copyright (C) 2004-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2025 Samuel Weinig <sam@webkit.org>
  *
  * This library is free software; you can redistribute it and/or
@@ -54,8 +54,9 @@ ShadowApplier::ShadowApplier(const RenderStyle& style, GraphicsContext& context,
         return;
     }
 
-    auto shadowOffset = TextBoxPainter::rotateShadowOffset(shadow->location, ignoreWritingMode ? WritingMode() : style.writingMode());
-    auto shadowRadius = shadow->blur.value;
+    const auto& zoomFactor = style.usedZoomForLength();
+    auto shadowOffset = TextBoxPainter::rotateShadowOffset(shadow->location, ignoreWritingMode ? WritingMode() : style.writingMode(), zoomFactor);
+    auto shadowRadius = shadow->blur.resolveZoom(zoomFactor);
     auto shadowColor = style.colorResolvingCurrentColor(shadow->color);
 
     colorFilter.transformColor(shadowColor);
@@ -65,7 +66,7 @@ ShadowApplier::ShadowApplier(const RenderStyle& style, GraphicsContext& context,
     // often draw the *last* shadow and the text itself in a single call.
     if (m_onlyDrawsShadow) {
         FloatRect shadowRect(textRect);
-        shadowRect.inflate(Style::paintingExtent(*shadow) + 3 * textRect.height());
+        shadowRect.inflate(Style::paintingExtent(*shadow, zoomFactor) + 3 * textRect.height());
         shadowRect.move(shadowOffset);
         context.save();
         context.clip(shadowRect);
@@ -163,17 +164,16 @@ void TextPainter::paintTextWithShadows(const Style::TextShadows* shadows, const 
 void TextPainter::paintTextAndEmphasisMarksIfNeeded(const TextRun& textRun, const FloatRect& boxRect, const FloatPoint& textOrigin, unsigned startOffset, unsigned endOffset,
     const TextPaintStyle& paintStyle, const Style::TextShadows& shadow, const Style::AppleColorFilter& shadowColorFilter)
 {
-    if (paintStyle.paintOrder == PaintOrder::Normal) {
+    if (paintStyle.paintOrder.isNormal()) {
         // FIXME: Truncate right-to-left text correctly.
         paintTextWithShadows(&shadow, shadowColorFilter, m_font, textRun, boxRect, textOrigin, startOffset, endOffset, nullAtom(), 0, paintStyle.strokeWidth > 0);
     } else {
         auto textDrawingMode = m_context.textDrawingMode();
-        auto paintOrder = RenderStyle::paintTypesForPaintOrder(paintStyle.paintOrder);
         auto shadowToUse = &shadow;
 
-        for (auto order : paintOrder) {
-            switch (order) {
-            case PaintType::Fill: {
+        for (auto paintType : paintStyle.paintOrder) {
+            switch (paintType) {
+            case Style::PaintType::Fill: {
                 auto textDrawingModeWithoutStroke = textDrawingMode;
                 textDrawingModeWithoutStroke.remove(TextDrawingMode::Stroke);
                 m_context.setTextDrawingMode(textDrawingModeWithoutStroke);
@@ -182,7 +182,7 @@ void TextPainter::paintTextAndEmphasisMarksIfNeeded(const TextRun& textRun, cons
                 m_context.setTextDrawingMode(textDrawingMode);
                 break;
             }
-            case PaintType::Stroke: {
+            case Style::PaintType::Stroke: {
                 auto textDrawingModeWithoutFill = textDrawingMode;
                 textDrawingModeWithoutFill.remove(TextDrawingMode::Fill);
                 m_context.setTextDrawingMode(textDrawingModeWithoutFill);
@@ -191,7 +191,7 @@ void TextPainter::paintTextAndEmphasisMarksIfNeeded(const TextRun& textRun, cons
                 m_context.setTextDrawingMode(textDrawingMode);
             }
                 break;
-            case PaintType::Markers:
+            case Style::PaintType::Markers:
                 continue;
             }
         }

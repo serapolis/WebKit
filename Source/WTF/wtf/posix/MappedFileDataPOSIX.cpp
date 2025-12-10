@@ -24,12 +24,12 @@
  */
 
 #include "config.h"
-#include "MappedFileData.h"
+#include <wtf/MappedFileData.h>
 
 namespace WTF::FileSystemImpl {
 
 #if HAVE(MMAP)
-MappedFileData::MappedFileData(MallocSpan<uint8_t, Mmap>&& fileData)
+MappedFileData::MappedFileData(MmapSpan<uint8_t>&& fileData)
     : m_fileData(WTFMove(fileData))
 { }
 

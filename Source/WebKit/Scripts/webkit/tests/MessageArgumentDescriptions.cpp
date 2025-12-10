@@ -126,6 +126,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_TemplateTest>(globalObject, decoder);
     case MessageName::TestWithLegacyReceiver_SetVideoLayerID:
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_SetVideoLayerID>(globalObject, decoder);
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion:
+        return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_DidCreateWebProcessConnection:
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_DidCreateWebProcessConnection>(globalObject, decoder);
@@ -146,6 +148,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_RunJavaScriptAlertReply>(globalObject, decoder);
     case MessageName::TestWithLegacyReceiver_GetPluginsReply:
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_GetPluginsReply>(globalObject, decoder);
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertionReply:
+        return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertionReply>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_InterpretKeyEventReply:
         return jsValueForDecodedMessage<MessageName::TestWithLegacyReceiver_InterpretKeyEventReply>(globalObject, decoder);
@@ -198,6 +202,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_TemplateTest>(globalObject, decoder);
     case MessageName::TestWithoutAttributes_SetVideoLayerID:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_SetVideoLayerID>(globalObject, decoder);
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion:
+        return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_DidCreateWebProcessConnection:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_DidCreateWebProcessConnection>(globalObject, decoder);
@@ -218,6 +224,8 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_RunJavaScriptAlertReply>(globalObject, decoder);
     case MessageName::TestWithoutAttributes_GetPluginsReply:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_GetPluginsReply>(globalObject, decoder);
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertionReply:
+        return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertionReply>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_InterpretKeyEventReply:
         return jsValueForDecodedMessage<MessageName::TestWithoutAttributes_InterpretKeyEventReply>(globalObject, decoder);
@@ -313,6 +321,12 @@ std::optional<JSC::JSValue> jsValueForArguments(JSC::JSGlobalObject* globalObjec
         return jsValueForDecodedMessage<MessageName::TestWithSuperclassAndWantsDispatch_LoadURL>(globalObject, decoder);
     case MessageName::TestWithSuperclassAndWantsDispatch_TestSyncMessage:
         return jsValueForDecodedMessage<MessageName::TestWithSuperclassAndWantsDispatch_TestSyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestAsyncMessage:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestSyncMessage:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestSyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestAsyncMessageReply:
+        return jsValueForDecodedMessage<MessageName::TestWithSwift_TestAsyncMessageReply>(globalObject, decoder);
     case MessageName::TestWithValidator_AlwaysEnabled:
         return jsValueForDecodedMessage<MessageName::TestWithValidator_AlwaysEnabled>(globalObject, decoder);
     case MessageName::TestWithValidator_EnabledIfPassValidation:
@@ -359,6 +373,8 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
         return jsValueForDecodedMessageReply<MessageName::TestWithLegacyReceiver_GetPluginProcessConnection>(globalObject, decoder);
     case MessageName::TestWithLegacyReceiver_TestMultipleAttributes:
         return jsValueForDecodedMessageReply<MessageName::TestWithLegacyReceiver_TestMultipleAttributes>(globalObject, decoder);
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion:
+        return jsValueForDecodedMessageReply<MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_InterpretKeyEvent:
         return jsValueForDecodedMessageReply<MessageName::TestWithLegacyReceiver_InterpretKeyEvent>(globalObject, decoder);
@@ -375,6 +391,8 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
         return jsValueForDecodedMessageReply<MessageName::TestWithoutAttributes_GetPluginProcessConnection>(globalObject, decoder);
     case MessageName::TestWithoutAttributes_TestMultipleAttributes:
         return jsValueForDecodedMessageReply<MessageName::TestWithoutAttributes_TestMultipleAttributes>(globalObject, decoder);
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion:
+        return jsValueForDecodedMessageReply<MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion>(globalObject, decoder);
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_InterpretKeyEvent:
         return jsValueForDecodedMessageReply<MessageName::TestWithoutAttributes_InterpretKeyEvent>(globalObject, decoder);
@@ -420,6 +438,10 @@ std::optional<JSC::JSValue> jsValueForReplyArguments(JSC::JSGlobalObject* global
         return jsValueForDecodedMessageReply<MessageName::TestWithSuperclassAndWantsAsyncDispatch_TestSyncMessage>(globalObject, decoder);
     case MessageName::TestWithSuperclassAndWantsDispatch_TestSyncMessage:
         return jsValueForDecodedMessageReply<MessageName::TestWithSuperclassAndWantsDispatch_TestSyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestAsyncMessage:
+        return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestAsyncMessage>(globalObject, decoder);
+    case MessageName::TestWithSwift_TestSyncMessage:
+        return jsValueForDecodedMessageReply<MessageName::TestWithSwift_TestSyncMessage>(globalObject, decoder);
     case MessageName::TestWithValidator_MessageWithReply:
         return jsValueForDecodedMessageReply<MessageName::TestWithValidator_MessageWithReply>(globalObject, decoder);
     case MessageName::TestWithWantsAsyncDispatch_TestSyncMessage:
@@ -459,6 +481,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::MediaKeySystemRequestIdentifier"_s,
         "WebCore::MediaPlayerClientIdentifier"_s,
         "WebCore::MediaPlayerIdentifier"_s,
+        "WebCore::MediaSessionGroupIdentifier"_s,
         "WebCore::MediaSessionIdentifier"_s,
         "WebCore::ModelPlayerIdentifier"_s,
         "WebCore::MediaUniqueIdentifier"_s,
@@ -475,6 +498,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::RenderingResourceIdentifier"_s,
         "WebCore::ResourceLoaderIdentifier"_s,
         "WebCore::SWServerConnectionIdentifier"_s,
+        "WebCore::SamplesRendererTrackIdentifier"_s,
         "WebCore::ScrollingNodeIdentifier"_s,
         "WebCore::ServiceWorkerIdentifier"_s,
         "WebCore::ServiceWorkerJobIdentifier"_s,
@@ -482,11 +506,11 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::SharedWorkerIdentifier"_s,
         "WebCore::SharedWorkerObjectIdentifierID"_s,
         "WebCore::SleepDisablerIdentifier"_s,
-        "WebCore::SnapshotIdentifier"_s,
         "WebCore::SpeechRecognitionConnectionClientIdentifier"_s,
         "WebCore::TextCheckingRequestIdentifier"_s,
         "WebCore::TextManipulationItemIdentifier"_s,
         "WebCore::TextManipulationTokenIdentifier"_s,
+        "WebCore::TimelineIdentifier"_s,
         "WebCore::IDBDatabaseConnectionIdentifier"_s,
         "WebCore::IDBResourceObjectIdentifier"_s,
         "WebCore::UserGestureTokenIdentifierID"_s,
@@ -494,18 +518,21 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::WebLockIdentifierID"_s,
         "WebCore::WebProcessJSHandleIdentifier"_s,
         "WebCore::WebSocketIdentifier"_s,
+        "WebCore::WebTransportSendGroupIdentifier"_s,
         "WebCore::WebTransportStreamIdentifier"_s,
         "WebCore::WindowIdentifier"_s,
         "WebKit::AudioMediaStreamTrackRendererInternalUnitIdentifier"_s,
         "WebKit::AuthenticationChallengeIdentifier"_s,
-        "WebKit::ContentWorldIdentifier"_s,
+        "WebKit::DDModelIdentifier"_s,
         "WebKit::DataTaskIdentifier"_s,
         "WebKit::DisplayLinkObserverID"_s,
         "WebKit::DownloadID"_s,
         "WebKit::DrawingAreaIdentifier"_s,
         "WebKit::GeolocationIdentifier"_s,
         "WebKit::GPUProcessConnectionIdentifier"_s,
+        "WebKit::ImageBufferSetIdentifier"_s,
         "WebKit::RemoteGraphicsContextGLIdentifier"_s,
+        "WebKit::RiceBackendIdentifier"_s,
         "WebKit::IPCConnectionTesterIdentifier"_s,
         "WebKit::IPCStreamTesterIdentifier"_s,
         "WebKit::JSObjectID"_s,
@@ -515,12 +542,13 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebKit::MarkSurfacesAsVolatileRequestIdentifier"_s,
         "WebKit::MessageBatchIdentifier"_s,
         "WebKit::NetworkResourceLoadIdentifier"_s,
+        "WebKit::NonProcessQualifiedContentWorldIdentifier"_s,
         "WebKit::PDFPluginIdentifier"_s,
         "WebKit::PageGroupIdentifier"_s,
         "WebKit::QuotaIncreaseRequestIdentifier"_s,
         "WebKit::RemoteAudioDestinationIdentifier"_s,
         "WebKit::RemoteAudioHardwareListenerIdentifier"_s,
-        "WebKit::RemoteImageBufferSetIdentifier"_s,
+        "WebKit::RemoteAudioVideoRendererIdentifier"_s,
         "WebKit::RemoteCDMIdentifier"_s,
         "WebKit::RemoteCDMInstanceIdentifier"_s,
         "WebKit::RemoteCDMInstanceSessionIdentifier"_s,
@@ -534,6 +562,8 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebKit::RemoteMediaSourceIdentifier"_s,
         "WebKit::RemoteRemoteCommandListenerIdentifier"_s,
         "WebKit::RemoteSerializedImageBufferIdentifier"_s,
+        "WebKit::RemoteSnapshotIdentifier"_s,
+        "WebKit::RemoteSnapshotRecorderIdentifier"_s,
         "WebKit::RemoteSourceBufferIdentifier"_s,
         "WebKit::RemoteVideoFrameIdentifier"_s,
         "WebKit::RemoteRenderingBackendIdentifier"_s,
@@ -735,6 +765,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "videoLayerID"_s, "WebCore::PlatformLayerIdentifier"_s },
         };
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion:
+        return Vector<ArgumentDescription> {
+            { "ping"_s, "NotDispatchableFromWebContent"_s },
+        };
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_DidCreateWebProcessConnection:
         return Vector<ArgumentDescription> {
@@ -767,6 +801,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
     case MessageName::TestWithLegacyReceiver_GetPluginsReply:
         return Vector<ArgumentDescription> {
             { "plugins"_s, "Vector<WebCore::PluginInfo>"_s },
+        };
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertionReply:
+        return Vector<ArgumentDescription> {
+            { "pong"_s, "NotDispatchableFromWebContent"_s },
         };
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_InterpretKeyEventReply:
@@ -864,6 +902,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "videoLayerID"_s, "WebCore::PlatformLayerIdentifier"_s },
         };
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion:
+        return Vector<ArgumentDescription> {
+            { "ping"_s, "NotDispatchableFromWebContent"_s },
+        };
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_DidCreateWebProcessConnection:
         return Vector<ArgumentDescription> {
@@ -896,6 +938,10 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
     case MessageName::TestWithoutAttributes_GetPluginsReply:
         return Vector<ArgumentDescription> {
             { "plugins"_s, "Vector<WebCore::PluginInfo>"_s },
+        };
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertionReply:
+        return Vector<ArgumentDescription> {
+            { "pong"_s, "NotDispatchableFromWebContent"_s },
         };
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_InterpretKeyEventReply:
@@ -1055,6 +1101,18 @@ std::optional<Vector<ArgumentDescription>> messageArgumentDescriptions(MessageNa
         return Vector<ArgumentDescription> {
             { "param"_s, "uint32_t"_s },
         };
+    case MessageName::TestWithSwift_TestAsyncMessage:
+        return Vector<ArgumentDescription> {
+            { "param"_s, "uint32_t"_s },
+        };
+    case MessageName::TestWithSwift_TestSyncMessage:
+        return Vector<ArgumentDescription> {
+            { "param"_s, "uint32_t"_s },
+        };
+    case MessageName::TestWithSwift_TestAsyncMessageReply:
+        return Vector<ArgumentDescription> {
+            { "reply"_s, "uint8_t"_s },
+        };
     case MessageName::TestWithValidator_AlwaysEnabled:
         return Vector<ArgumentDescription> {
             { "url"_s, "String"_s },
@@ -1132,6 +1190,10 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
         };
     case MessageName::TestWithLegacyReceiver_TestMultipleAttributes:
         return Vector<ArgumentDescription> { };
+    case MessageName::TestWithLegacyReceiver_OpaqueTypeSecurityAssertion:
+        return Vector<ArgumentDescription> {
+            { "pong"_s, "NotDispatchableFromWebContent"_s },
+        };
 #if PLATFORM(MAC)
     case MessageName::TestWithLegacyReceiver_InterpretKeyEvent:
         return Vector<ArgumentDescription> {
@@ -1156,6 +1218,10 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
         };
     case MessageName::TestWithoutAttributes_TestMultipleAttributes:
         return Vector<ArgumentDescription> { };
+    case MessageName::TestWithoutAttributes_OpaqueTypeSecurityAssertion:
+        return Vector<ArgumentDescription> {
+            { "pong"_s, "NotDispatchableFromWebContent"_s },
+        };
 #if PLATFORM(MAC)
     case MessageName::TestWithoutAttributes_InterpretKeyEvent:
         return Vector<ArgumentDescription> {
@@ -1229,6 +1295,14 @@ std::optional<Vector<ArgumentDescription>> messageReplyArgumentDescriptions(Mess
             { "reply"_s, "uint8_t"_s },
         };
     case MessageName::TestWithSuperclassAndWantsDispatch_TestSyncMessage:
+        return Vector<ArgumentDescription> {
+            { "reply"_s, "uint8_t"_s },
+        };
+    case MessageName::TestWithSwift_TestAsyncMessage:
+        return Vector<ArgumentDescription> {
+            { "reply"_s, "uint8_t"_s },
+        };
+    case MessageName::TestWithSwift_TestSyncMessage:
         return Vector<ArgumentDescription> {
             { "reply"_s, "uint8_t"_s },
         };

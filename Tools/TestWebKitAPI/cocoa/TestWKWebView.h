@@ -29,9 +29,12 @@
 #import <wtf/Forward.h>
 #import <wtf/IterationStatus.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/text/WTFString.h>
 #endif
 
+@class _WKContextMenuElementInfo;
 @class _WKFrameTreeNode;
+@class _WKJSHandle;
 @class _WKProcessPoolConfiguration;
 
 #if PLATFORM(IOS_FAMILY)
@@ -145,12 +148,14 @@ class Color;
 - (id)objectByEvaluatingJavaScript:(NSString *)script;
 - (id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(WKFrameInfo *)frame;
 - (id)objectByEvaluatingJavaScript:(NSString *)script inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world;
+- (id)objectByEvaluatingJavaScriptWithUserGesture:(NSString *)script inFrame:(WKFrameInfo *)frame;
 - (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments;
 - (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments error:(NSError **)errorOut;
 - (id)objectByCallingAsyncFunction:(NSString *)script withArguments:(NSDictionary *)arguments inFrame:(WKFrameInfo *)frame inContentWorld:(WKContentWorld *)world;
 - (unsigned)waitUntilClientWidthIs:(unsigned)expectedClientWidth;
 - (CGRect)elementRectFromSelector:(NSString *)selector;
 - (CGPoint)elementMidpointFromSelector:(NSString *)selector;
+- (_WKJSHandle *)querySelector:(NSString *)selector frame:(WKFrameInfo *)frame world:(WKContentWorld *)world;
 @end
 
 #endif // __cplusplus
@@ -261,6 +266,17 @@ class Color;
 - (WKFrameInfo *)secondChildFrame;
 - (void)evaluateJavaScript:(NSString *)string inFrame:(WKFrameInfo *)frame completionHandler:(void(^)(id, NSError *))completionHandler;
 - (WKFindResult *)findStringAndWait:(NSString *)string withConfiguration:(WKFindConfiguration *)configuration;
+@end
+
+#if PLATFORM(MAC)
+using MenuItemFilter = BOOL(^)(NSMenuItem *);
+#endif
+
+@interface TestWKWebView (ContextMenu)
+#if PLATFORM(MAC)
+- (void)rightClick:(NSPoint)clickLocation andSelectItemMatching:(MenuItemFilter)filter;
+- (_WKContextMenuElementInfo *)rightClickAtPointAndWaitForContextMenu:(NSPoint)clickLocation;
+#endif
 @end
 
 #endif // __cplusplus

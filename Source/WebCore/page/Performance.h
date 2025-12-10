@@ -55,6 +55,7 @@ class Document;
 class DocumentLoadTiming;
 class DocumentLoader;
 class EventCounts;
+class LargestContentfulPaint;
 class NetworkLoadMetrics;
 class PerformanceUserTiming;
 class PerformanceEntry;
@@ -79,6 +80,11 @@ class Performance final : public RefCounted<Performance>, public ContextDestruct
 public:
     static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }
     ~Performance();
+
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
@@ -113,7 +119,8 @@ public:
     void navigationFinished(MonotonicTime loadEventEnd);
     void addResourceTiming(ResourceTiming&&);
 
-    void reportFirstContentfulPaint();
+    void reportFirstContentfulPaint(DOMHighResTimeStamp);
+    void enqueueLargestContentfulPaint(Ref<LargestContentfulPaint>&&);
 
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
@@ -178,6 +185,7 @@ private:
 
     RefPtr<PerformanceNavigationTiming> m_navigationTiming;
     RefPtr<PerformancePaintTiming> m_firstContentfulPaint;
+    RefPtr<PerformanceEntry> m_largestContentfulPaint;
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;

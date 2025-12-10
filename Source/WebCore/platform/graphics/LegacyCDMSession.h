@@ -28,23 +28,14 @@
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
 
 #include <JavaScriptCore/Forward.h>
-#include <wtf/AbstractRefCounted.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Forward.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-class LegacyCDMSessionClient;
-}
 
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::LegacyCDMSessionClient> : std::true_type { };
-}
-
-namespace WebCore {
-
-class LegacyCDMSessionClient : public CanMakeWeakPtr<LegacyCDMSessionClient> {
+class LegacyCDMSessionClient : public AbstractRefCountedAndCanMakeWeakPtr<LegacyCDMSessionClient> {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(LegacyCDMSessionClient);
 public:
     virtual ~LegacyCDMSessionClient() = default;
@@ -83,7 +74,7 @@ public:
     virtual ~LegacyCDMSession() = default;
     virtual void invalidate() { }
 
-    virtual LegacyCDMSessionType type() { return CDMSessionTypeUnknown; }
+    virtual LegacyCDMSessionType type() const { return CDMSessionTypeUnknown; }
     virtual const String& sessionId() const = 0;
     virtual RefPtr<Uint8Array> generateKeyRequest(const String& mimeType, Uint8Array* initData, String& destinationURL, unsigned short& errorCode, uint32_t& systemCode) = 0;
     virtual void releaseKeys() = 0;

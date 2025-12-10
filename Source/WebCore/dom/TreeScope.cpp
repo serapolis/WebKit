@@ -34,7 +34,11 @@
 #include "CSSStyleSheetObservableArray.h"
 #include "ContainerNodeInlines.h"
 #include "CustomElementRegistry.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "FocusController.h"
+#include "FrameDestructionObserverInlines.h"
+#include "FrameInlines.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HTMLImageElement.h"
@@ -437,7 +441,7 @@ RefPtr<Element> TreeScope::elementFromPoint(double clientX, double clientY, HitT
         node = retargetToScope(*node);
     }
 
-    return static_pointer_cast<Element>(WTFMove(node));
+    return uncheckedDowncast<Element>(WTFMove(node));
 }
 
 Vector<RefPtr<Element>> TreeScope::elementsFromPoint(double clientX, double clientY, HitTestSource source)
@@ -486,7 +490,7 @@ Vector<RefPtr<Element>> TreeScope::elementsFromPoint(double clientX, double clie
         if (node == lastNode)
             continue;
 
-        elements.append(static_pointer_cast<Element>(node));
+        elements.append(uncheckedDowncast<Element>(node));
         lastNode = node;
     }
 
@@ -666,7 +670,7 @@ LegacyRenderSVGResourceContainer* TreeScope::lookupLegacySVGResoureById(const At
         return nullptr;
 
     if (auto resource = svgResourcesMap().legacyResources.get(id))
-        return resource.get();
+        return resource;
 
     return nullptr;
 }
@@ -694,7 +698,9 @@ bool TreeScope::isElementWithPendingSVGResources(SVGElement& element) const
 {
     // This algorithm takes time proportional to the number of pending resources and need not.
     // If performance becomes an issue we can keep a counted set of elements and answer the question efficiently.
-    return std::ranges::any_of(svgResourcesMap().pendingResources.values(), std::bind(&WeakSVGElementSet::contains<SVGElement>, std::placeholders::_1, std::ref(element)));
+    return std::ranges::any_of(svgResourcesMap().pendingResources.values(), [&] (const WeakSVGElementSet& set) {
+        return set.contains(element);
+    });
 }
 
 bool TreeScope::isPendingSVGResource(SVGElement& element, const AtomString& id) const

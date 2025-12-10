@@ -27,14 +27,14 @@
 #include "WebInspectorBackendClient.h"
 
 #include "DrawingArea.h"
-#include "WebInspectorInternal.h"
+#include "WebInspectorBackend.h"
 #include "WebPage.h"
 #include <WebCore/GraphicsLayer.h>
 #include <WebCore/GraphicsLayerAnimation.h>
 #include <WebCore/GraphicsLayerFactory.h>
-#include <WebCore/InspectorController.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/Page.h>
+#include <WebCore/PageInspectorController.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/Settings.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -53,7 +53,7 @@ public:
         : m_inspectorBackendClient(inspectorBackendClient)
     {
     }
-    virtual ~RepaintIndicatorLayerClient() { }
+    virtual ~RepaintIndicatorLayerClient() = default;
 private:
     void notifyAnimationEnded(const GraphicsLayer* layer, const String&) override
     {
@@ -100,7 +100,7 @@ void WebInspectorBackendClient::frontendCountChanged(unsigned count)
         page->inspectorFrontendCountChanged(count);
 }
 
-Inspector::FrontendChannel* WebInspectorBackendClient::openLocalFrontend(InspectorController* controller)
+Inspector::FrontendChannel* WebInspectorBackendClient::openLocalFrontend(PageInspectorController* controller)
 {
     if (RefPtr page = m_page.get())
         page->protectedInspector()->openLocalInspectorFrontend();
@@ -219,7 +219,7 @@ void WebInspectorBackendClient::showPaintRect(const FloatRect& rect)
     Ref opacityAnimation = GraphicsLayerAnimation::create();
     opacityAnimation->setDuration(0.25);
 
-    paintLayer->addAnimation(fadeKeyframes, FloatSize(), opacityAnimation.ptr(), "opacity"_s, 0);
+    paintLayer->addAnimation(fadeKeyframes, opacityAnimation.ptr(), "opacity"_s, 0);
 
     Ref rawLayer = paintLayer.get();
     m_paintRectLayers.add(WTFMove(paintLayer));

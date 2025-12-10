@@ -28,7 +28,9 @@
 
 #import "AuxiliaryProcess.h"
 #import "Logging.h"
+#import "MachPort.h"
 #import "WebPreferencesDefaultValues.h"
+#import "WebProcessPool.h"
 #import "XPCUtilities.h"
 #import <crt_externs.h>
 #import <mach-o/dyld.h>
@@ -64,7 +66,6 @@
 #import <BrowserEngineKit/BENetworkingProcess.h>
 #import <BrowserEngineKit/BERenderingProcess.h>
 #import <BrowserEngineKit/BEWebContentProcess.h>
-
 #endif // USE(EXTENSIONKIT)
 
 namespace WebKit {
@@ -76,12 +77,27 @@ static std::pair<ASCIILiteral, RetainPtr<NSString>> serviceNameAndIdentifier(Pro
     switch (processType) {
     case ProcessLauncher::ProcessType::Web: {
         bool useCaptivePortal = client && client->shouldEnableLockdownMode();
+        bool useEnhancedSecurity = client && client->shouldEnableEnhancedSecurity();
+        if (client && !useCaptivePortal && lockdownModeEnabledBySystem())
+            useEnhancedSecurity = true;
         if (!hasExtensionsInAppBundle) {
-            if (!useCaptivePortal)
+            if (!useCaptivePortal && !useEnhancedSecurity)
                 return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent" };
+
+            if (useEnhancedSecurity)
+                return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.EnhancedSecurity" };
+
             return { "com.apple.WebKit.WebContent"_s, @"com.apple.WebKit.WebContent.CaptivePortal" };
         }
-        NSString *webContentAppex = !useCaptivePortal ? @"WebContentExtension" : @"WebContentCaptivePortalExtension";
+        NSString *webContentAppex = nil;
+
+        if (useCaptivePortal)
+            webContentAppex = @"WebContentCaptivePortalExtension";
+        else if (useEnhancedSecurity)
+            webContentAppex = @"WebContentEnhancedSecurityExtension";
+        else
+            webContentAppex = @"WebContentExtension";
+
         return { "com.apple.WebKit.WebContent"_s, [NSString stringWithFormat:@"%@.%@", [[NSBundle mainBundle] bundleIdentifier], webContentAppex] };
     }
     case ProcessLauncher::ProcessType::Network:
@@ -100,13 +116,9 @@ static std::pair<ASCIILiteral, RetainPtr<NSString>> serviceNameAndIdentifier(Pro
 bool ProcessLauncher::hasExtensionsInAppBundle()
 {
 #if PLATFORM(IOS)
-    static bool hasExtensions = false;
-    static dispatch_once_t flag;
-    dispatch_once(&flag, ^{
-        hasExtensions = [[NSBundle mainBundle] pathForResource:@"WebContentExtension" ofType:@"appex" inDirectory:@"Extensions"]
+    static bool hasExtensions = [[NSBundle mainBundle] pathForResource:@"WebContentExtension" ofType:@"appex" inDirectory:@"Extensions"]
             && [[NSBundle mainBundle] pathForResource:@"NetworkingExtension" ofType:@"appex" inDirectory:@"Extensions"]
             && [[NSBundle mainBundle] pathForResource:@"GPUExtension" ofType:@"appex" inDirectory:@"Extensions"];
-    });
     return hasExtensions;
 #else
     return false;
@@ -119,21 +131,21 @@ static void launchWithExtensionKit(ProcessLauncher& processLauncher, ProcessLaun
 
     switch (processType) {
     case ProcessLauncher::ProcessType::Web: {
-        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BEWebContentProcess *_Nullable process, NSError *_Nullable error) {
+        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BEWebContentProcess *_Nullable process, NSError *_Nullable error) mutable {
             handler(WTFMove(weakProcessLauncher), process, name, error);
         });
         [BEWebContentProcess webContentProcessWithBundleID:identifier.get() interruptionHandler:^{ } completion:block.get()];
         break;
     }
     case ProcessLauncher::ProcessType::Network: {
-        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BENetworkingProcess *_Nullable process, NSError *_Nullable error) {
+        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BENetworkingProcess *_Nullable process, NSError *_Nullable error) mutable {
             handler(WTFMove(weakProcessLauncher), process, name, error);
         });
         [BENetworkingProcess networkProcessWithBundleID:identifier.get() interruptionHandler:^{ } completion:block.get()];
         break;
     }
     case ProcessLauncher::ProcessType::GPU: {
-        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BERenderingProcess *_Nullable process, NSError *_Nullable error) {
+        auto block = makeBlockPtr([handler = WTFMove(handler), weakProcessLauncher = ThreadSafeWeakPtr { processLauncher }, name = name](BERenderingProcess *_Nullable process, NSError *_Nullable error) mutable {
             handler(WTFMove(weakProcessLauncher), process, name, error);
         });
         [BERenderingProcess renderingProcessWithBundleID:identifier.get() interruptionHandler:^{ } completion:block.get()];
@@ -146,8 +158,16 @@ static void launchWithExtensionKit(ProcessLauncher& processLauncher, ProcessLaun
 #if !USE(EXTENSIONKIT) || !PLATFORM(IOS)
 static ASCIILiteral webContentServiceName(const ProcessLauncher::LaunchOptions& launchOptions, ProcessLauncher::Client* client)
 {
-    if (client && client->shouldEnableLockdownMode())
+    bool useCaptivePortal = client && client->shouldEnableLockdownMode();
+    bool useEnhancedSecurity = client && client->shouldEnableEnhancedSecurity();
+    if (client && !useCaptivePortal && lockdownModeEnabledBySystem())
+        useEnhancedSecurity = true;
+
+    if (useCaptivePortal)
         return "com.apple.WebKit.WebContent.CaptivePortal"_s;
+
+    if (useEnhancedSecurity)
+        return "com.apple.WebKit.WebContent.EnhancedSecurity"_s;
 
     return launchOptions.nonValidInjectedCodeAllowed ? "com.apple.WebKit.WebContent.Development"_s : "com.apple.WebKit.WebContent"_s;
 }
@@ -224,7 +244,8 @@ void ProcessLauncher::launchProcess()
                 if (!launcher)
                     return;
                 auto name = serviceName(launcher->m_launchOptions, launcher->m_client);
-                launcher->m_xpcConnection = adoptOSObject(xpc_connection_create(name, nullptr));
+                // FIXME: This is a false positive. <rdar://164843889>
+                SUPPRESS_RETAINPTR_CTOR_ADOPT launcher->m_xpcConnection = adoptXPCObject(xpc_connection_create(name, nullptr));
                 launcher->finishLaunchingProcess(name);
             });
 #endif
@@ -261,7 +282,8 @@ void ProcessLauncher::launchProcess()
     launchWithExtensionKit(*this, m_launchOptions.processType, m_client.get(), WTFMove(handler));
 #else
     auto name = serviceName(m_launchOptions, m_client.get());
-    m_xpcConnection = adoptOSObject(xpc_connection_create(name, nullptr));
+    // FIXME: This is a false positive. <rdar://164843889>
+    SUPPRESS_RETAINPTR_CTOR_ADOPT m_xpcConnection = adoptXPCObject(xpc_connection_create(name, nullptr));
     finishLaunchingProcess(name);
 #endif
 }
@@ -278,16 +300,17 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
     // 1.1. An important case is WebKitTestRunner, where we should use English localizations for all system frameworks.
     // 2. When AppleLanguages is passed as command line argument for UI process, or set in its preferences, we should respect it in child processes.
 #if !USE(EXTENSIONKIT)
-    auto initializationMessage = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    // FIXME: This is a false positive. <rdar://164843889>
+    SUPPRESS_RETAINPTR_CTOR_ADOPT auto initializationMessage = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
     _CFBundleSetupXPCBootstrap(initializationMessage.get());
     xpc_connection_set_bootstrap(m_xpcConnection.get(), initializationMessage.get());
 #endif
 
     // Create the listening port.
     mach_port_t listeningPort = MACH_PORT_NULL;
-    auto kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &listeningPort);
+    auto kr = IPC::allocateImmovableConnectionPort(&listeningPort);
     if (kr != KERN_SUCCESS) {
-        LOG_ERROR("Could not allocate mach port, error %x: %s", kr, mach_error_string(kr));
+        RELEASE_LOG_ERROR(IPC, "Could not allocate mach port, error: %{private}s (%x)", mach_error_string(kr), kr);
         CRASH();
     }
 
@@ -311,7 +334,8 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
         clientIdentifier = [[NSBundle mainBundle] bundleIdentifier];
 
     // FIXME: Switch to xpc_connection_set_bootstrap once it's available everywhere we need.
-    auto bootstrapMessage = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    // FIXME: This is a false positive. <rdar://164843889>
+    SUPPRESS_RETAINPTR_CTOR_ADOPT auto bootstrapMessage = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
     xpc_dictionary_set_string(bootstrapMessage.get(), "WebKitBundleVersion", WEBKIT_BUNDLE_VERSION);
@@ -320,7 +344,8 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
     auto languagesIterator = m_launchOptions.extraInitializationData.find<HashTranslatorASCIILiteral>("OverrideLanguages"_s);
     if (languagesIterator != m_launchOptions.extraInitializationData.end()) {
         LOG_WITH_STREAM(Language, stream << "Process Launcher is copying OverrideLanguages into initialization message: " << languagesIterator->value);
-        auto languages = adoptOSObject(xpc_array_create(nullptr, 0));
+        // FIXME: This is a false positive. <rdar://164843889>
+        SUPPRESS_RETAINPTR_CTOR_ADOPT auto languages = adoptXPCObject(xpc_array_create(nullptr, 0));
         for (auto language : StringView(languagesIterator->value).split(','))
             xpc_array_set_string(languages.get(), XPC_ARRAY_APPEND, language.utf8().data());
         xpc_dictionary_set_value(bootstrapMessage.get(), "OverrideLanguages", languages.get());
@@ -328,7 +353,8 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
 
 #if PLATFORM(IOS_FAMILY)
     // Clients that set these environment variables explicitly do not have the values automatically forwarded by libxpc.
-    auto containerEnvironmentVariables = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    // FIXME: This is a false positive. <rdar://164843889>
+    SUPPRESS_RETAINPTR_CTOR_ADOPT auto containerEnvironmentVariables = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
     if (const char* environmentHOME = getenv("HOME"))
         xpc_dictionary_set_string(containerEnvironmentVariables.get(), "HOME", environmentHOME);
     if (const char* environmentCFFIXED_USER_HOME = getenv("CFFIXED_USER_HOME"))
@@ -385,7 +411,8 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
     auto sdkBehaviorBytes = sdkBehaviors.storageBytes();
     xpc_dictionary_set_data(bootstrapMessage.get(), "client-sdk-aligned-behaviors", sdkBehaviorBytes.data(), sdkBehaviorBytes.size());
 
-    auto extraInitializationData = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
+    // FIXME: This is a false positive. <rdar://164843889>
+    SUPPRESS_RETAINPTR_CTOR_ADOPT auto extraInitializationData = adoptXPCObject(xpc_dictionary_create(nullptr, nullptr, 0));
 
     for (const auto& keyValuePair : m_launchOptions.extraInitializationData)
         xpc_dictionary_set_string(extraInitializationData.get(), keyValuePair.key.utf8().data(), keyValuePair.value.utf8().data());
@@ -433,7 +460,7 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
     Function<void(xpc_object_t)> eventHandler = [errorHandlerImpl = WTFMove(errorHandlerImpl), xpcEventHandler = client->xpcEventHandler()] (xpc_object_t event) mutable {
 
         if (!event || xpc_get_type(event) == XPC_TYPE_ERROR) {
-            RunLoop::mainSingleton().dispatch([errorHandlerImpl = std::exchange(errorHandlerImpl, nullptr), event = OSObjectPtr(event)] {
+            RunLoop::mainSingleton().dispatch([errorHandlerImpl = std::exchange(errorHandlerImpl, nullptr), event = XPCObjectPtr<xpc_object_t> { event }] {
                 if (errorHandlerImpl)
                     errorHandlerImpl(event.get());
                 else if (event.get() != XPC_ERROR_CONNECTION_INVALID)
@@ -443,7 +470,7 @@ void ProcessLauncher::finishLaunchingProcess(ASCIILiteral name)
         }
 
         if (xpcEventHandler) {
-            RunLoop::mainSingleton().dispatch([xpcEventHandler = xpcEventHandler, event = OSObjectPtr(event)] {
+            RunLoop::mainSingleton().dispatch([xpcEventHandler = xpcEventHandler, event = XPCObjectPtr<xpc_object_t> { event }] {
                 xpcEventHandler->handleXPCEvent(event.get());
             });
         }

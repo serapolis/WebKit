@@ -27,6 +27,7 @@
 #include "SVGElement.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGUseElement.h"
+#include "StyleSVGMarkerResource.h"
 #include "XLinkNames.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
@@ -38,11 +39,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGURIReference);
 SVGURIReference::SVGURIReference(SVGElement* contextElement)
     : m_href(SVGAnimatedString::create(contextElement, IsHrefProperty::Yes))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::hrefAttr, &SVGURIReference::m_href>();
         PropertyRegistry::registerProperty<XLinkNames::hrefAttr, &SVGURIReference::m_href>();
-    });
+    }
 }
 
 bool SVGURIReference::isKnownAttribute(const QualifiedName& attributeName)
@@ -85,6 +87,13 @@ AtomString SVGURIReference::fragmentIdentifierFromIRIString(const String& url, c
 AtomString SVGURIReference::fragmentIdentifierFromIRIString(const Style::URL& url, const Document& document)
 {
     return fragmentIdentifierFromIRIString(url.resolved.string(), document);
+}
+
+AtomString SVGURIReference::fragmentIdentifierFromIRIString(const Style::SVGMarkerResource& markerResource, const Document& document)
+{
+    if (auto url = markerResource.tryURL())
+        return fragmentIdentifierFromIRIString(*url, document);
+    return emptyAtom();
 }
 
 auto SVGURIReference::targetElementFromIRIString(const String& iri, const TreeScope& treeScope, RefPtr<Document> externalDocument) -> TargetElementResult

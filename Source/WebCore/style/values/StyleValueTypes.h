@@ -48,6 +48,25 @@ struct Context;
 
 class BuilderState;
 
+// MARK: - ValueRepresentation
+
+// All leaf types that want to conform to ValueRepresentation must implement
+// the following:
+//
+//    template<> struct WebCore::Style::ValueRepresentation<StyleType> {
+//        template<typename... F> bool operator()(const StyleType&, F&&... f);
+//    };
+
+template<typename> struct ValueRepresentation;
+
+struct ValueRepresentationInvoker {
+    template<typename StyleType, typename... F> decltype(auto) operator()(const StyleType& value, F&&... f) const
+    {
+        return ValueRepresentation<StyleType>{}(value, std::forward<F>(f)...);
+    }
+};
+inline constexpr ValueRepresentationInvoker valueRepresentation{};
+
 // Types can specialize this and set the value to true to be treated as "non-converting"
 // for css to style / style to css conversion algorithms. This means the type is identical
 // for both CSS and Style systems (e.g. a constant value or an enum).
@@ -89,6 +108,9 @@ template<CSSValueID C> inline constexpr bool TreatAsNonConverting<Constant<C>> =
 
 // Specialize `TreatAsNonConverting` for `CustomIdentifier`, to indicate that its type does not change from the CSS representation.
 template<> inline constexpr bool TreatAsNonConverting<CustomIdentifier> = true;
+
+// Specialize `TreatAsNonConverting` for `PropertyIdentifier`, to indicate that its type does not change from the CSS representation.
+template<> inline constexpr bool TreatAsNonConverting<PropertyIdentifier> = true;
 
 // Specialize `TreatAsNonConverting` for `WTF::AtomString`, to indicate that its type does not change from the CSS representation.
 template<> inline constexpr bool TreatAsNonConverting<WTF::AtomString> = true;
@@ -376,16 +398,15 @@ template<TupleLike StyleType> struct CSSValueCreation<StyleType> {
     {
         if constexpr (std::tuple_size_v<StyleType> == 1 && SerializationSeparator<StyleType> == SerializationSeparatorType::None) {
             return createCSSValue(pool, style, get<0>(value), std::forward<Rest>(rest)...);
+        } else if constexpr (std::tuple_size_v<StyleType> == 2 && SerializationCoalescing<StyleType> == SerializationCoalescingType::Minimal) {
+            return CSS::makeCoalescingPairCSSValue<SerializationSeparator<StyleType>>(createCSSValue(pool, style, get<0>(value), rest...), createCSSValue(pool, style, get<1>(value), rest...));
+        } else if constexpr (std::tuple_size_v<StyleType> == 4 && SerializationCoalescing<StyleType> == SerializationCoalescingType::Minimal) {
+            return CSS::makeCoalescingQuadCSSValue<SerializationSeparator<StyleType>>(createCSSValue(pool, style, get<0>(value), rest...), createCSSValue(pool, style, get<1>(value), rest...), createCSSValue(pool, style, get<2>(value), rest...), createCSSValue(pool, style, get<3>(value), rest...));
         } else {
             CSSValueListBuilder list;
 
             auto caller = WTF::makeVisitor(
-                [&]<typename T>(const std::optional<T>& element) {
-                    if (!element)
-                        return;
-                    list.append(createCSSValue(pool, style, *element, rest...));
-                },
-                [&]<typename T>(const Markable<T>& element) {
+                [&]<OptionalLike T>(const T& element) {
                     if (!element)
                         return;
                     list.append(createCSSValue(pool, style, *element, rest...));
@@ -426,30 +447,6 @@ template<CSSValueID Name, typename StyleType> struct CSSValueCreation<FunctionNo
     template<typename... Rest> Ref<CSSValue> operator()(CSSValuePool& pool, const RenderStyle& style, const FunctionNotation<Name, StyleType>& value, Rest&&... rest)
     {
         return CSS::makeFunctionCSSValue(value.name, createCSSValue(pool, style, value.parameters, std::forward<Rest>(rest)...));
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedPair`.
-template<typename CSSType> struct CSSValueCreation<MinimallySerializingSpaceSeparatedPair<CSSType>> {
-    template<typename... Rest> Ref<CSSValue> operator()(CSSValuePool& pool, const RenderStyle& style, const MinimallySerializingSpaceSeparatedPair<CSSType>& value, Rest&&... rest)
-    {
-        return CSS::makeSpaceSeparatedCoalescingPairCSSValue(createCSSValue(pool, style, get<0>(value), rest...), createCSSValue(pool, style, get<1>(value), rest...));
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedPoint`.
-template<typename CSSType> struct CSSValueCreation<MinimallySerializingSpaceSeparatedPoint<CSSType>> {
-    template<typename... Rest> Ref<CSSValue> operator()(CSSValuePool& pool, const RenderStyle& style, const MinimallySerializingSpaceSeparatedPoint<CSSType>& value, Rest&&... rest)
-    {
-        return CSS::makeSpaceSeparatedCoalescingPairCSSValue(createCSSValue(pool, style, get<0>(value), rest...), createCSSValue(pool, style, get<1>(value), rest...));
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedSize`.
-template<typename CSSType> struct CSSValueCreation<MinimallySerializingSpaceSeparatedSize<CSSType>> {
-    template<typename... Rest> Ref<CSSValue> operator()(CSSValuePool& pool, const RenderStyle& style, const MinimallySerializingSpaceSeparatedSize<CSSType>& value, Rest&&... rest)
-    {
-        return CSS::makeSpaceSeparatedCoalescingPairCSSValue(createCSSValue(pool, style, get<0>(value), rest...), createCSSValue(pool, style, get<1>(value), rest...));
     }
 };
 
@@ -575,13 +572,7 @@ template<typename StyleType, typename... Rest> void serializationForCSSOnTupleLi
 {
     auto swappedSeparator = ""_s;
     auto caller = WTF::makeVisitor(
-        [&]<typename T>(const std::optional<T>& element) {
-            if (!element)
-                return;
-            builder.append(std::exchange(swappedSeparator, separator));
-            serializationForCSS(builder, context, style, *element, rest...);
-        },
-        [&]<typename T>(const Markable<T>& element) {
+        [&]<OptionalLike T>(const T& element) {
             if (!element)
                 return;
             builder.append(std::exchange(swappedSeparator, separator));
@@ -594,6 +585,31 @@ template<typename StyleType, typename... Rest> void serializationForCSSOnTupleLi
     );
 
     WTF::apply([&](const auto& ...x) { (..., caller(x)); }, value);
+}
+
+template<typename StyleType, typename... Rest> void serializationForCSSOnTupleLikeCoalescing(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const StyleType& value, ASCIILiteral separator, Rest&&... rest)
+{
+    if constexpr (std::tuple_size_v<StyleType> == 2) {
+        if (get<0>(value) != get<1>(value)) {
+            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value) }, separator, std::forward<Rest>(rest)...);
+            return;
+        }
+        serializationForCSS(builder, context, style, get<0>(value), std::forward<Rest>(rest)...);
+    } else if constexpr (std::tuple_size_v<StyleType> == 4) {
+        if (get<3>(value) != get<1>(value)) {
+            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value), get<2>(value), get<3>(value) }, separator, std::forward<Rest>(rest)...);
+            return;
+        }
+        if (get<2>(value) != get<0>(value)) {
+            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value), get<2>(value) }, separator, std::forward<Rest>(rest)...);
+            return;
+        }
+        if (get<1>(value) != get<0>(value)) {
+            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value) }, separator, std::forward<Rest>(rest)...);
+            return;
+        }
+        serializationForCSS(builder, context, style, get<0>(value), std::forward<Rest>(rest)...);
+    }
 }
 
 template<typename StyleType, typename... Rest> void serializationForCSSOnRangeLike(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const StyleType& value, ASCIILiteral separator, Rest&&... rest)
@@ -629,7 +645,10 @@ template<OptionalLike StyleType> struct Serialize<StyleType> {
 template<TupleLike StyleType> struct Serialize<StyleType> {
     template<typename... Rest> void operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const StyleType& value, Rest&&... rest)
     {
-        serializationForCSSOnTupleLike(builder, context, style, value, SerializationSeparatorString<StyleType>, std::forward<Rest>(rest)...);
+        if constexpr (SerializationCoalescing<StyleType> == SerializationCoalescingType::Minimal)
+            serializationForCSSOnTupleLikeCoalescing(builder, context, style, value, SerializationSeparatorString<StyleType>, std::forward<Rest>(rest)...);
+        else
+            serializationForCSSOnTupleLike(builder, context, style, value, SerializationSeparatorString<StyleType>, std::forward<Rest>(rest)...);
     }
 };
 
@@ -667,70 +686,6 @@ template<CSSValueID Name, typename StyleType> struct Serialize<FunctionNotation<
     }
 };
 
-// Specialization for `MinimallySerializingSpaceSeparatedPair`.
-template<typename CSSType> struct Serialize<MinimallySerializingSpaceSeparatedPair<CSSType>> {
-    template<typename... Rest> void operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const MinimallySerializingSpaceSeparatedPair<CSSType>& value, Rest&&... rest)
-    {
-        constexpr auto separator = SerializationSeparatorString<MinimallySerializingSpaceSeparatedPair<CSSType>>;
-
-        if (get<0>(value) != get<1>(value)) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value) }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        serializationForCSS(builder, context, style, get<0>(value), std::forward<Rest>(rest)...);
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedPoint`.
-template<typename CSSType> struct Serialize<MinimallySerializingSpaceSeparatedPoint<CSSType>> {
-    template<typename... Rest> void operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const MinimallySerializingSpaceSeparatedPoint<CSSType>& value, Rest&&... rest)
-    {
-        constexpr auto separator = SerializationSeparatorString<MinimallySerializingSpaceSeparatedPoint<CSSType>>;
-
-        if (get<0>(value) != get<1>(value)) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value) }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        serializationForCSS(builder, context, style, get<0>(value), std::forward<Rest>(rest)...);
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedSize`.
-template<typename CSSType> struct Serialize<MinimallySerializingSpaceSeparatedSize<CSSType>> {
-    template<typename... Rest> void operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const MinimallySerializingSpaceSeparatedSize<CSSType>& value, Rest&&... rest)
-    {
-        constexpr auto separator = SerializationSeparatorString<MinimallySerializingSpaceSeparatedSize<CSSType>>;
-
-        if (get<0>(value) != get<1>(value)) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { get<0>(value), get<1>(value) }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        serializationForCSS(builder, context, style, get<0>(value), std::forward<Rest>(rest)...);
-    }
-};
-
-// Specialization for `MinimallySerializingSpaceSeparatedRectEdges`.
-template<typename StyleType> struct Serialize<MinimallySerializingSpaceSeparatedRectEdges<StyleType>> {
-    template<typename... Rest> void operator()(StringBuilder& builder, const CSS::SerializationContext& context, const RenderStyle& style, const MinimallySerializingSpaceSeparatedRectEdges<StyleType>& value, Rest&&... rest)
-    {
-        constexpr auto separator = SerializationSeparatorString<MinimallySerializingSpaceSeparatedRectEdges<StyleType>>;
-
-        if (value.left() != value.right()) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { value.top(), value.right(), value.bottom(), value.left() }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        if (value.bottom() != value.top()) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { value.top(), value.right(), value.bottom() }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        if (value.right() != value.top()) {
-            serializationForCSSOnTupleLike(builder, context, style, std::tuple { value.top(), value.right() }, separator, std::forward<Rest>(rest)...);
-            return;
-        }
-        serializationForCSS(builder, context, style, value.top(), std::forward<Rest>(rest)...);
-    }
-};
-
 // MARK: - Evaluation
 
 // Types that want to participate in evaluation overloading must specialize the following interface:
@@ -739,51 +694,53 @@ template<typename StyleType> struct Serialize<MinimallySerializingSpaceSeparated
 //        decltype(auto) operator()(const StyleType&, ...);
 //    };
 
-template<typename> struct Evaluation;
+template<typename, typename> struct Evaluation;
 
-template<typename StyleType, typename Reference> concept HasTwoParameterEvaluate = requires {
-    Evaluation<StyleType> { }(std::declval<const StyleType&>(), std::declval<Reference>());
+template<typename StyleType, typename Result, typename T1> concept HasTwoParameterEvaluate = requires {
+    Evaluation<StyleType, Result> { }(std::declval<const StyleType&>(), std::declval<T1>());
 };
 
-template<typename StyleType, typename Reference, typename Zoom> concept HasThreeParameterEvaluate = requires {
-    Evaluation<StyleType> { }(std::declval<const StyleType&>(), std::declval<Reference>(), std::declval<Zoom>());
+template<typename StyleType, typename Result, typename T1, typename T2> concept HasThreeParameterEvaluate = requires {
+    Evaluation<StyleType, Result> { }(std::declval<const StyleType&>(), std::declval<T1>(), std::declval<T2>());
 };
 
-// `Evaluation` Invokers
-template<typename StyleType> decltype(auto) evaluate(const StyleType& value)
-{
-    return Evaluation<StyleType> { }(value);
-}
+template<typename Result> struct EvaluationInvoker {
+    template<typename StyleType> Result operator()(const StyleType& value) const
+    {
+        return Evaluation<StyleType, Result> { }(value);
+    }
 
-template<typename StyleType, typename Reference> decltype(auto) evaluate(const StyleType& value, Reference&& reference)
-{
-    if constexpr (HasTwoParameterEvaluate<StyleType, Reference>)
-        return Evaluation<StyleType> { }(value, std::forward<Reference>(reference));
-    else
-        return evaluate(value);
-}
+    template<typename StyleType, typename T1> Result operator()(const StyleType& value, T1&& t1) const
+    {
+        if constexpr (HasTwoParameterEvaluate<StyleType, Result, T1>)
+            return Evaluation<StyleType, Result> { }(value, std::forward<T1>(t1));
+        else
+            return operator()(value);
+    }
 
-template<typename StyleType, typename Reference, typename Zoom> decltype(auto) evaluate(const StyleType& value, Reference&& reference, Zoom&& zoom)
-{
-    if constexpr (HasThreeParameterEvaluate<StyleType, Reference, Zoom>)
-        return Evaluation<StyleType> { }(value, std::forward<Reference>(reference), std::forward<Zoom>(zoom));
-    else
-        return evaluate(value, std::forward<Reference>(reference));
-}
+    template<typename StyleType, typename T1, typename T2> Result operator()(const StyleType& value, T1&& t1, T2&& t2) const
+    {
+        if constexpr (HasThreeParameterEvaluate<StyleType, Result, T1, T2>)
+            return Evaluation<StyleType, Result> { }(value, std::forward<T1>(t1), std::forward<T2>(t2));
+        else
+            return operator()(value, std::forward<T1>(t1));
+    }
+};
+template<typename Result> inline constexpr EvaluationInvoker<Result> evaluate{};
 
 // Constrained for `TreatAsVariantLike`.
-template<VariantLike StyleType> struct Evaluation<StyleType> {
-    template<typename... Rest> decltype(auto) operator()(const StyleType& value, Rest&&... rest)
+template<VariantLike StyleType, typename Result> struct Evaluation<StyleType, Result> {
+    template<typename... Rest> Result operator()(const StyleType& value, Rest&&... rest)
     {
-        return WTF::switchOn(value, [&](const auto& alternative) { return evaluate(alternative, std::forward<Rest>(rest)...); });
+        return WTF::switchOn(value, [&](const auto& alternative) { return evaluate<Result>(alternative, std::forward<Rest>(rest)...); });
     }
 };
 
 // Specialization for `TupleLike` (wrapper).
-template<TupleLike StyleType> requires (std::tuple_size_v<StyleType> == 1) struct Evaluation<StyleType> {
-    template<typename... Rest> decltype(auto) operator()(const StyleType& value, Rest&&... rest)
+template<TupleLike StyleType, typename Result> requires (std::tuple_size_v<StyleType> == 1) struct Evaluation<StyleType, Result> {
+    template<typename... Rest> Result operator()(const StyleType& value, Rest&&... rest)
     {
-        return evaluate(get<0>(value), std::forward<Rest>(rest)...);
+        return evaluate<Result>(get<0>(value), std::forward<Rest>(rest)...);
     }
 };
 
@@ -1448,6 +1405,49 @@ template<VariantLike T> struct IsZero<T> {
     }
 };
 
+// MARK: - IsKnownZero
+
+// All leaf types that want to conform to IsKnownZero must implement
+// the following:
+//
+//    template<> struct WebCore::Style::IsKnownZero<StyleType> {
+//        bool operator()(const StyleType&);
+//    };
+//
+// or have a member function such that the type matches the
+// `HasIsKnownZero` concept.
+
+template<typename> struct IsKnownZero;
+
+struct IsKnownZeroInvoker {
+    template<typename T> bool operator()(const T& value) const
+    {
+        if constexpr (HasIsKnownZero<T>)
+            return value.isKnownZero();
+        else if constexpr (HasIsZero<T>)
+            return !value.isZero();
+        else
+            return IsKnownZero<T>{}(value);
+    }
+};
+inline constexpr IsKnownZeroInvoker isKnownZero{};
+
+// Constrained for `TreatAsTupleLike`.
+template<TupleLike T> struct IsKnownZero<T> {
+    bool operator()(const T& value)
+    {
+        return WTF::apply([&](const auto& ...x) { return (isKnownZero(x) && ...); }, value);
+    }
+};
+
+// Constrained for `TreatAsVariantLike`.
+template<VariantLike T> struct IsKnownZero<T> {
+    bool operator()(const T& value)
+    {
+        return WTF::switchOn(value, [&](const auto& alternative) { return isKnownZero(alternative); });
+    }
+};
+
 // MARK: - IsEmpty
 
 // All leaf types that want to conform to IsEmpty must implement
@@ -1494,6 +1494,57 @@ template<typename T> struct IsEmpty<MinimallySerializingSpaceSeparatedSize<T>> {
     bool operator()(const auto& value)
     {
         return isZero(value.width()) || isZero(value.height());
+    }
+};
+
+// MARK: - IsKnownEmpty
+
+// All leaf types that want to conform to IsKnownEmpty must implement
+// the following:
+//
+//    template<> struct WebCore::Style::IsKnownEmpty<StyleType> {
+//        bool operator()(const StyleType&);
+//    };
+//
+// or have a member function such that the type matches the
+// `HasIsKnownEmpty` concept.
+
+template<typename> struct IsKnownEmpty;
+
+struct IsKnownEmptyInvoker {
+    template<typename T> bool operator()(const T& value) const
+    {
+        if constexpr (HasIsKnownEmpty<T>)
+            return value.isKnownEmpty();
+        else if constexpr (HasIsEmpty<T>)
+            return value.isEmpty();
+        else
+            return IsKnownEmpty<T>{}(value);
+    }
+};
+inline constexpr IsKnownEmptyInvoker isKnownEmpty{};
+
+// Specialization for `SpaceSeparatedSize`.
+template<typename T> struct IsKnownEmpty<SpaceSeparatedSize<T>> {
+    bool operator()(const auto& value)
+    {
+        return isKnownZero(value.width()) || isKnownZero(value.height());
+    }
+};
+
+// Specialization for `MinimallySerializingSpaceSeparatedPoint`.
+template<typename T> struct IsKnownEmpty<MinimallySerializingSpaceSeparatedPoint<T>> {
+    bool operator()(const auto& value)
+    {
+        return isKnownZero(value.x()) || isKnownZero(value.y());
+    }
+};
+
+// Specialization for `MinimallySerializingSpaceSeparatedSize`.
+template<typename T> struct IsKnownEmpty<MinimallySerializingSpaceSeparatedSize<T>> {
+    bool operator()(const auto& value)
+    {
+        return isKnownZero(value.width()) || isKnownZero(value.height());
     }
 };
 

@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/AXID.h>
+#include <WebCore/AXStitchGroup.h>
 #include <WebCore/AXTextRun.h>
 #include <WebCore/AccessibilityRole.h>
 #include <WebCore/CharacterRange.h>
@@ -76,7 +78,7 @@ class AccessibilityObjectAtspi;
 
 typedef WebCore::AccessibilityObjectAtspi AccessibilityObjectWrapper;
 
-#elif PLATFORM(PLAYSTATION)
+#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
 class AccessibilityObjectWrapper : public RefCounted<AccessibilityObjectWrapper> { };
 #else
 class AccessibilityObjectWrapper;
@@ -108,6 +110,14 @@ struct AccessibilityText;
 struct CharacterRange;
 struct ScrollRectToVisibleOptions;
 
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+struct ModelPlayerAccessibilityChildren;
+#endif
+
+namespace Style {
+struct SpeakAs;
+}
+
 enum class ClickHandlerFilter : bool {
     ExcludeBody,
     IncludeBody,
@@ -116,9 +126,6 @@ enum class ClickHandlerFilter : bool {
 enum class PreSortedObjectType : uint8_t { LiveRegion, WebArea };
 
 enum class DateComponentsType : uint8_t;
-
-enum class AXIDType { };
-using AXID = ObjectIdentifier<AXIDType>;
 
 enum class AXAncestorFlag : uint8_t {
     // When the flags aren't initialized, it means the object hasn't been inserted into the tree,
@@ -250,6 +257,7 @@ enum class AccessibilityOrientation : uint8_t {
 
 enum class DidTimeout : bool { No, Yes };
 enum class IncludeListMarkerText : bool { No, Yes };
+enum class IncludeImageAltText : bool { No, Yes };
 enum class TrimWhitespace : bool { No, Yes };
 
 struct TextUnderElementMode {
@@ -432,6 +440,7 @@ public:
     virtual bool isAccessibilityNodeObject() const = 0;
     virtual bool isAccessibilityRenderObject() const = 0;
     virtual bool isAXIsolatedObjectInstance() const = 0;
+    virtual bool isAXLocalFrame() const = 0;
     virtual bool isAXRemoteFrame() const = 0;
 
     bool isHeading() const { return role() == AccessibilityRole::Heading; }
@@ -564,6 +573,7 @@ public:
     bool isTreeItem() const { return role() == AccessibilityRole::TreeItem; }
     bool isScrollbar() const { return role() == AccessibilityRole::ScrollBar; }
     bool isRemoteFrame() const { return role() == AccessibilityRole::RemoteFrame; }
+    bool isLocalFrame() const { return role() == AccessibilityRole::LocalFrame; }
 #if PLATFORM(COCOA)
     virtual RetainPtr<id> remoteFramePlatformElement() const = 0;
 #endif
@@ -743,6 +753,7 @@ public:
     virtual AXCoreObject* accessibilityHitTest(const IntPoint&) const = 0;
 
     virtual AXCoreObject* focusedUIElement() const = 0;
+    virtual AXCoreObject* focusedUIElementInAnyLocalFrame() const = 0;
 
 #if PLATFORM(COCOA)
     virtual RetainPtr<RemoteAXObjectRef> remoteParent() const = 0;
@@ -759,6 +770,24 @@ public:
         return parentObjectUnignored();
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     }
+
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+    // When ENABLE_ACCESSIBILITY_LOCAL_FRAME is enabled, these return a parent or child
+    // that crosses a local frame boundary. When the flag is off, all local frames are in the same AXObjectCache.
+    virtual AXCoreObject* crossFrameParentObject() const = 0;
+    virtual AXCoreObject* crossFrameChildObject() const = 0;
+#endif
+
+    // Helpers that run on any platform and return children and parents, calling the cross frame functions if needed
+    // to walk between LocalFrames.
+    AccessibilityChildrenVector crossFrameUnignoredChildren();
+    AXCoreObject* crossFrameParentObjectUnignored() const;
+    AccessibilityChildrenVector crossFrameChildrenIncludingIgnored(bool updateChildrenIfNeeded = true);
+    bool crossFrameIsAncestorOfObject(const AXCoreObject&) const;
+    bool crossFrameIsDescendantOfObject(const AXCoreObject&) const;
+    // TODO: this name is not consistent with the others
+    AXCoreObject* parentObjectIncludingCrossFrame() const;
+    AXCoreObject* parentObjectUnignoredIncludingCrossFrame() const;
 
     virtual AccessibilityChildrenVector findMatchingObjects(AccessibilitySearchCriteria&&) = 0;
     virtual bool isDescendantOfRole(AccessibilityRole) const = 0;
@@ -970,26 +999,50 @@ public:
     {
         return children(updateChildrenIfNeeded);
     };
+
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     bool onlyAddsUnignoredChildren() const { return isTableColumn() || role() == AccessibilityRole::TableHeaderContainer; }
     AccessibilityChildrenVector unignoredChildren(bool updateChildrenIfNeeded = true);
-    AXCoreObject* firstUnignoredChild();
+    bool hasUnignoredChild();
 #else
     const AccessibilityChildrenVector& unignoredChildren(bool updateChildrenIfNeeded = true) { return children(updateChildrenIfNeeded); }
-    AXCoreObject* firstUnignoredChild()
+    bool hasUnignoredChild()
     {
         const auto& children = this->children();
-        return children.size() ? children[0].ptr() : nullptr;
+        return !children.isEmpty();
     }
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+    AccessibilityChildrenVector stitchedUnignoredChildren();
+
+    virtual bool isBlockFlow() const { return false; }
+    bool hasStitchableRole() const
+    {
+        return role() == AccessibilityRole::StaticText || role() == AccessibilityRole::ListMarker;
+    }
+    AXCoreObject* blockFlowAncestor() const;
+    AXCoreObject* blockFlowAncestorForStitchable() const
+    {
+        return hasStitchableRole() ? blockFlowAncestor() : nullptr;
+    }
+
+    enum class IncludeGroupMembers : bool { No, Yes };
+    virtual std::optional<AXStitchGroup> stitchGroup(IncludeGroupMembers = IncludeGroupMembers::Yes) const { return { }; }
+    std::optional<AXID> stitchedIntoID() const
+    {
+        if (std::optional stitchGroup = this->stitchGroup(IncludeGroupMembers::No))
+            return stitchGroup->representativeID();
+        return std::nullopt;
+    }
 
     // When ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) is true, this returns IDs of ignored children.
     // When it is not, it returns IDs of unignored children. After ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     // is the default, we should rename this function to childrenIDsIncludingIgnored, as that is what all
     // callers will expect at the time this comment was written.
     Vector<AXID> childrenIDs(bool updateChildrenIfNeeded = true);
-    AXCoreObject* nextInPreOrder(bool updateChildrenIfNeeded = true, AXCoreObject* stayWithin = nullptr);
+    RefPtr<AXCoreObject> nextInPreOrder(bool updateChildrenIfNeeded = true, AXCoreObject* stayWithin = nullptr);
+    RefPtr<AXCoreObject> nextInPreOrder(bool updateChildrenIfNeeded, AXCoreObject* stayWithin, bool includeCrossFrame);
     AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded) const;
+    AXCoreObject* nextSiblingIncludingIgnored(bool updateChildrenIfNeeded, bool includeCrossFrame) const;
     AXCoreObject* nextUnignoredSibling(bool updateChildrenIfNeeded, AXCoreObject* unignoredParent = nullptr) const;
     AXCoreObject* nextSiblingIncludingIgnoredOrParent() const;
     std::optional<AXID> idOfNextSiblingIncludingIgnoredOrParent() const
@@ -998,7 +1051,7 @@ public:
         return object ? std::optional(object->objectID()) : std::nullopt;
     }
 
-    AXCoreObject* previousInPreOrder(bool updateChildrenIfNeeded = true, AXCoreObject* stayWithin = nullptr);
+    RefPtr<AXCoreObject> previousInPreOrder(bool updateChildrenIfNeeded = true, AXCoreObject* stayWithin = nullptr);
     AXCoreObject* previousSiblingIncludingIgnored(bool updateChildrenIfNeeded);
     AXCoreObject* deepestLastChildIncludingIgnored(bool updateChildrenIfNeeded);
 
@@ -1103,7 +1156,7 @@ public:
 #if PLATFORM(MAC)
     virtual AccessibilityChildrenVector allSortedLiveRegions() const = 0;
     virtual AccessibilityChildrenVector allSortedNonRootWebAreas() const = 0;
-    AccessibilityChildrenVector sortedDescendants(size_t limit, PreSortedObjectType) const;
+    AccessibilityChildrenVector crossFrameSortedDescendants(size_t limit, PreSortedObjectType) const;
 #endif // PLATFORM(MAC)
     virtual AXCoreObject* liveRegionAncestor(bool excludeIfOff = true) const = 0;
     virtual const String explicitLiveRegionStatus() const = 0;
@@ -1170,7 +1223,7 @@ public:
 
     AccessibilityObjectWrapper* wrapper() const { return m_wrapper.get(); }
 #if PLATFORM(COCOA)
-    RetainPtr<AccessibilityObjectWrapper> protectedWrapper() const;
+    WEBCORE_EXPORT RetainPtr<AccessibilityObjectWrapper> protectedWrapper() const;
 #endif
     void setWrapper(AccessibilityObjectWrapper* wrapper) { m_wrapper = wrapper; }
     void detachWrapper(AccessibilityDetachmentType);
@@ -1187,7 +1240,7 @@ public:
 #if PLATFORM(COCOA)
     virtual bool preventKeyboardDOMEventDispatch() const = 0;
     virtual void setPreventKeyboardDOMEventDispatch(bool) = 0;
-    virtual OptionSet<SpeakAs> speakAs() const = 0;
+    virtual Style::SpeakAs speakAs() const = 0;
     String speechHint() const;
     String descriptionAttributeValue() const;
     String helpTextAttributeValue() const;
@@ -1202,6 +1255,10 @@ public:
 
     virtual bool hasClickHandler() const = 0;
     virtual bool hasCursorPointer() const = 0;
+    virtual bool showsCursorOnHover() const = 0;
+    // Returns true if the node associated with this object has a computed
+    // style of pointer-events:none.
+    virtual bool hasPointerEventsNone() const = 0;
     AXCoreObject* clickableSelfOrNonInteractiveAncestor();
     virtual AXCoreObject* clickableSelfOrAncestor(ClickHandlerFilter = ClickHandlerFilter::ExcludeBody) const = 0;
     virtual AXCoreObject* focusableAncestor() = 0;
@@ -1223,8 +1280,8 @@ public:
     virtual String innerHTML() const = 0;
     virtual String outerHTML() const = 0;
 
-#if PLATFORM(COCOA) && ENABLE(MODEL_ELEMENT)
-    virtual Vector<RetainPtr<id>> modelElementChildren() = 0;
+#if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
+    virtual ModelPlayerAccessibilityChildren modelElementChildren() = 0;
 #endif
 
     String infoStringForTesting();
@@ -1245,6 +1302,8 @@ protected:
         , m_getsGeometryFromChildren(getsGeometryFromChildren)
         , m_id(axID)
     { }
+
+    std::optional<AXStitchGroup> stitchGroupFromGroups(const Vector<AXStitchGroup>*, IncludeGroupMembers) const;
 
 private:
     virtual String debugDescriptionInternal(bool, std::optional<OptionSet<AXDebugStringOption>> = std::nullopt) const = 0;
@@ -1288,7 +1347,7 @@ private:
     RetainPtr<WebAccessibilityObjectWrapper> m_wrapper;
 #elif PLATFORM(WIN)
     COMPtr<AccessibilityObjectWrapper> m_wrapper;
-#elif PLATFORM(PLAYSTATION)
+#elif PLATFORM(PLAYSTATION) || PLATFORM(HAIKU)
     RefPtr<AccessibilityObjectWrapper> m_wrapper;
 #elif USE(ATSPI)
     RefPtr<AccessibilityObjectAtspi> m_wrapper;
@@ -1399,6 +1458,25 @@ inline bool AXCoreObject::emitsNewline() const
 namespace Accessibility {
 
 template<typename T, typename MatchFunctionT, typename StopFunctionT>
+T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
+{
+    RefPtr<T> current;
+    if (includeSelf)
+        current = const_cast<T*>(&object);
+    else
+        current = object.parentObjectIncludingCrossFrame();
+
+    for (; current; current = current->parentObjectIncludingCrossFrame()) {
+        if (shouldStop(*current))
+            return nullptr;
+
+        if (matches(*current))
+            return current.unsafeGet();
+    }
+    return nullptr;
+}
+
+template<typename T, typename MatchFunctionT, typename StopFunctionT>
 T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
 {
     RefPtr<T> current;
@@ -1412,7 +1490,7 @@ T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches
             return nullptr;
 
         if (matches(*current))
-            return current.get();
+            return current.unsafeGet();
     }
     return nullptr;
 }
@@ -1421,6 +1499,14 @@ template<typename T, typename MatchFunctionT>
 T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
 {
     return findAncestor(object, includeSelf, matches, [] (const auto&) {
+        return false;
+    });
+}
+
+template<typename T, typename MatchFunctionT>
+T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
+{
+    return crossFrameFindAncestor(object, includeSelf, matches, [] (const auto&) {
         return false;
     });
 }
@@ -1458,7 +1544,7 @@ T* clickableSelfOrAncestor(const T& startObject, const F& shouldStop)
     // Presentational objects should not be allowed to be clicked.
     if (ancestor && ancestor->role() == AccessibilityRole::Presentational)
         return nullptr;
-    return ancestor.get();
+    return ancestor.unsafeGet();
 }
 
 template<typename T>
@@ -1485,7 +1571,7 @@ T* highestEditableAncestor(T& startObject)
         previousEditableAncestor = editableAncestor;
         editableAncestor = editableAncestor->editableAncestor();
     }
-    return previousEditableAncestor.get();
+    return previousEditableAncestor.unsafeGet();
 }
 
 template<typename T>
@@ -1497,7 +1583,7 @@ T* findRelatedObjectInAncestry(const T& object, AXRelation relation, const T& de
             return relatedObject.get() == &ancestor;
         });
         if (ancestor)
-            return ancestor.get();
+            return ancestor.unsafeGet();
     }
     return nullptr;
 }
@@ -1526,7 +1612,7 @@ AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, const F& matc
 
     for (Ref child : object.childrenIncludingIgnored()) {
         if (RefPtr descendant = findUnignoredDescendant(child.get(), /* includeSelf */ true, matches))
-            return descendant.get();
+            return descendant.unsafeGet();
     }
     return nullptr;
 }

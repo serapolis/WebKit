@@ -23,9 +23,9 @@
 #include "ElementInlines.h"
 #include "LegacyRenderSVGResourceContainer.h"
 #include "RenderElementInlines.h"
-#include "SVGRenderStyle.h"
 #include "SVGResources.h"
 #include "SVGResourcesCycleSolver.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -172,7 +172,7 @@ void SVGResourcesCache::clientStyleChanged(RenderElement& renderer, StyleDiffere
             return true;
 
         // RenderSVGResourceMarker only supports SVG <mask> references.
-        if (oldStyle->maskLayers().first().image() != newStyle.maskLayers().first().image())
+        if (oldStyle->maskLayers().usedFirst().image() != newStyle.maskLayers().usedFirst().image())
             return true;
 
         if (oldStyle->filter() != newStyle.filter())
@@ -182,13 +182,10 @@ void SVGResourcesCache::clientStyleChanged(RenderElement& renderer, StyleDiffere
         if (oldStyle->appleColorFilter() != newStyle.appleColorFilter())
             return true;
 
-        Ref oldSVGStyle = oldStyle->svgStyle();
-        Ref newSVGStyle = newStyle.svgStyle();
-
-        if (oldSVGStyle->fill().urlDisregardingType() != newSVGStyle->fill().urlDisregardingType())
+        if (oldStyle->fill().urlDisregardingType() != newStyle.fill().urlDisregardingType())
             return true;
 
-        if (oldSVGStyle->stroke().urlDisregardingType() != newSVGStyle->stroke().urlDisregardingType())
+        if (oldStyle->stroke().urlDisregardingType() != newStyle.stroke().urlDisregardingType())
             return true;
 
         return false;

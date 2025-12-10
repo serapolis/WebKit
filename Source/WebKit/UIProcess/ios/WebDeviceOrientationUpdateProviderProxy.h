@@ -29,6 +29,8 @@
 
 #include "MessageReceiver.h"
 #include <WebCore/MotionManagerClient.h>
+#include <WebCore/PageIdentifier.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -37,10 +39,12 @@ class SecurityOriginData;
 namespace WebKit {
 
 class WebPageProxy;
+class WebProcessProxy;
 struct SharedPreferencesForWebProcess;
 
-class WebDeviceOrientationUpdateProviderProxy : public WebCore::MotionManagerClient, private IPC::MessageReceiver, public RefCounted<WebDeviceOrientationUpdateProviderProxy> {
+class WebDeviceOrientationUpdateProviderProxy final : public WebCore::MotionManagerClient, private IPC::MessageReceiver, public RefCounted<WebDeviceOrientationUpdateProviderProxy>, public CanMakeCheckedPtr<WebDeviceOrientationUpdateProviderProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WebDeviceOrientationUpdateProviderProxy);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WebDeviceOrientationUpdateProviderProxy);
 public:
     static Ref<WebDeviceOrientationUpdateProviderProxy> create(WebPageProxy&);
     ~WebDeviceOrientationUpdateProviderProxy();
@@ -48,13 +52,23 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    void startUpdatingDeviceOrientation(const WebCore::SecurityOriginData&);
+    void startUpdatingDeviceOrientation();
     void stopUpdatingDeviceOrientation();
 
-    void startUpdatingDeviceMotion(const WebCore::SecurityOriginData&);
+    void startUpdatingDeviceMotion();
     void stopUpdatingDeviceMotion();
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(IPC::Connection&) const;
+
+    // WebCore::MotionManagerClient.
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
+
+    void addAsMessageReceiverForProcess(WebProcessProxy&, WebCore::PageIdentifier);
+    void removeAsMessageReceiverForProcess(WebProcessProxy&, WebCore::PageIdentifier);
 
 private:
     explicit WebDeviceOrientationUpdateProviderProxy(WebPageProxy&);

@@ -33,6 +33,7 @@
 #include "AXUtilities.h"
 #include "AccessibilityObject.h"
 #include "LayoutRect.h"
+#include "RenderStyleConstants.h"
 #include <wtf/Forward.h>
 
 namespace WebCore {
@@ -187,6 +188,11 @@ public:
     void alternativeText(Vector<AccessibilityText>&) const;
     void helpText(Vector<AccessibilityText>&) const;
     String stringValue() const override;
+
+    bool isBlockFlow() const final;
+    std::optional<AXStitchGroup> stitchGroup(IncludeGroupMembers = IncludeGroupMembers::Yes) const final;
+    Vector<AXStitchGroup> stitchGroups() const final;
+
     WallTime dateTimeValue() const final;
     SRGBA<uint8_t> colorValue() const final;
     String ariaLabeledByAttribute() const final;
@@ -196,8 +202,11 @@ public:
     bool hasCursorPointer() const final
     {
         CheckedPtr style = this->style();
-        return style && style->cursorType() == CursorType::Pointer;
+        return style && style->cursorType() == CursorType::Pointer && style->pointerEvents() != PointerEvents::None;
     }
+    bool showsCursorOnHover() const final;
+    bool hasPointerEventsNone() const final;
+
     void setIsExpanded(bool) final;
 
     Element* actionElement() const override;

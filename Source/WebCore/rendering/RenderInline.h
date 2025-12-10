@@ -82,11 +82,9 @@ public:
     
     LayoutSize offsetForInFlowPositionedInline(const RenderBox* child) const;
 
-    void addFocusRingRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer = 0) const final;
-    void paintOutline(PaintInfo&, const LayoutPoint&) const;
+    void collectLineBoxRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset) const;
 
     bool mayAffectLayout() const;
-
     bool requiresLayer() const override;
 
     LayoutPoint firstInlineBoxTopLeft() const;
@@ -143,8 +141,6 @@ private:
     void updateHitTestResult(HitTestResult&, const LayoutPoint&) const final;
 
     void imageChanged(WrappedImagePtr, const IntRect* = 0) final;
-
-    inline bool willChangeCreatesStackingContext() const;
 
     // All of the line boxes created for this svg inline.
     RenderLineBoxList m_legacyLineBoxes;

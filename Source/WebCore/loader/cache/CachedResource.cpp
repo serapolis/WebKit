@@ -34,8 +34,8 @@
 #include "DefaultResourceLoadPriority.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
-#include "Document.h"
 #include "DocumentLoader.h"
+#include "DocumentPage.h"
 #include "FrameInlines.h"
 #include "FrameLoader.h"
 #include "HTTPHeaderNames.h"
@@ -101,7 +101,7 @@ CachedResource::CachedResource(CachedResourceRequest&& request, Type type, PAL::
     setLoadPriority(request.priority(), request.fetchPriority());
 
     // FIXME: We should have a better way of checking for Navigation loads, maybe FetchMode::Options::Navigate.
-    ASSERT(m_origin || m_type == Type::MainResource);
+    ASSERT(m_origin || m_type == Type::MainResource || m_options.cachingPolicy == CachingPolicy::AllowCachingMainResourcePrefetch);
 
     if (isRequestCrossOrigin(m_origin.get(), m_resourceRequest.url(), m_options))
         setCrossOrigin();
@@ -316,7 +316,7 @@ void CachedResource::checkNotify(const NetworkLoadMetrics& metrics, LoadWillCont
         return;
 
     CachedResourceClientWalker<CachedResourceClient> walker(*this);
-    while (CachedResourceClient* client = walker.next())
+    while (RefPtr client = walker.next())
         client->notifyFinished(*this, metrics, loadWillContinueInAnotherProcess);
 }
 
@@ -457,7 +457,7 @@ void CachedResource::redirectReceived(ResourceRequest&& request, const ResourceR
 
     m_requestedFromNetworkingLayer = true;
     if (!response.isNull())
-        updateRedirectChainStatus(m_redirectChainCacheStatus, response);
+        updateRedirectChainStatus(m_redirectChainCacheStatus, response, m_options);
 
     completionHandler(WTFMove(request));
 }
@@ -538,7 +538,7 @@ bool CachedResource::addClientToSet(CachedResourceClient& client)
     if (allowsCaching() && !hasClients() && inCache())
         MemoryCache::singleton().addToLiveResourcesSize(*this);
 
-    if ((m_type == Type::RawResource || m_type == Type::MainResource) && !response().isNull() && !m_proxyResource) {
+    if ((m_type == Type::RawResource || m_type == Type::MainResource) && !response().isNull() && !m_proxyResource && m_options.cachingPolicy != CachingPolicy::AllowCachingMainResourcePrefetch) {
         // Certain resources (especially XHRs and main resources) do crazy things if an asynchronous load returns
         // synchronously (e.g., scripts may not have set all the state they need to handle the load).
         // Therefore, rather than immediately sending callbacks on a cache hit like other CachedResources,
@@ -782,10 +782,10 @@ void CachedResource::switchClientsToRevalidatedResource()
 
     Vector<SingleThreadWeakPtr<CachedResourceClient>> clientsToMove;
     for (auto entry : m_clients) {
-        auto& client = entry.key;
+        Ref client = entry.key;
         unsigned count = entry.value;
         while (count) {
-            clientsToMove.append(client);
+            clientsToMove.append(client.get());
             --count;
         }
     }
@@ -940,11 +940,7 @@ ResourceResponse& CachedResource::mutableResponse()
 const ResourceResponse& CachedResource::response() const
 {
     if (!m_response) {
-        static LazyNeverDestroyed<ResourceResponse> staticEmptyResponse;
-        static std::once_flag onceFlag;
-        std::call_once(onceFlag, [&] {
-            staticEmptyResponse.construct();
-        });
+        static NeverDestroyed<ResourceResponse> staticEmptyResponse;
         return staticEmptyResponse;
     }
     return m_response->m_response;
@@ -965,11 +961,7 @@ void CachedResource::restartDecodedDataDeletionTimer()
 const ResourceError& CachedResource::resourceError() const
 {
     if (!m_response) {
-        static LazyNeverDestroyed<ResourceError> emptyError;
-        static std::once_flag onceFlag;
-        std::call_once(onceFlag, [&] {
-            emptyError.construct();
-        });
+        static NeverDestroyed<ResourceError> emptyError;
         return emptyError;
     }
     return m_response->m_error;

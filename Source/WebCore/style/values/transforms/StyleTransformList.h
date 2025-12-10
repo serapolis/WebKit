@@ -31,7 +31,6 @@ namespace WebCore {
 
 class FloatSize;
 class LayoutSize;
-class TransformOperations;
 class TransformationMatrix;
 
 namespace Style {
@@ -57,20 +56,18 @@ struct TransformList {
     {
     }
 
-    const_iterator begin() const { return m_value.begin(); }
-    const_iterator end() const { return m_value.end(); }
-    const_reverse_iterator rbegin() const { return m_value.rbegin(); }
-    const_reverse_iterator rend() const { return m_value.rend(); }
+    const_iterator begin() const LIFETIME_BOUND { return m_value.begin(); }
+    const_iterator end() const LIFETIME_BOUND { return m_value.end(); }
+    const_reverse_iterator rbegin() const LIFETIME_BOUND { return m_value.rbegin(); }
+    const_reverse_iterator rend() const LIFETIME_BOUND { return m_value.rend(); }
 
     bool isEmpty() const { return m_value.isEmpty(); }
     size_t size() const { return m_value.size(); }
-    const TransformFunction& operator[](size_t i) const { return m_value[i]; }
+    const TransformFunction& operator[](size_t i) const LIFETIME_BOUND { return m_value[i]; }
 
     bool operator==(const TransformList&) const = default;
 
-    WebCore::TransformOperations resolvedCalculatedValues(const FloatSize&) const;
-
-    template<TransformOperation::Type>
+    template<TransformFunctionType>
     bool hasTransformOfType() const;
 
     void apply(TransformationMatrix&, const FloatSize&, unsigned start = 0) const;
@@ -82,6 +79,8 @@ struct TransformList {
     bool affectedByTransformOrigin() const;
     bool containsNonInvertibleMatrix(const LayoutSize&) const;
 
+    TransformFunctionSizeDependencies computeSizeDependencies() const;
+
 private:
     friend struct Blending<TransformList>;
     friend struct Transform;
@@ -91,7 +90,7 @@ private:
     Container m_value;
 };
 
-template<TransformOperation::Type operationType>
+template<TransformFunctionType operationType>
 bool TransformList::hasTransformOfType() const
 {
     return std::ranges::any_of(m_value, [](auto& op) { return op->type() == operationType; });

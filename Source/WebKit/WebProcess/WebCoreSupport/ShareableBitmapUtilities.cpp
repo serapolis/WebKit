@@ -30,12 +30,13 @@
 #include <WebCore/FrameSnapshotting.h>
 #include <WebCore/GeometryUtilities.h>
 #include <WebCore/GraphicsContext.h>
+#include <WebCore/HTMLVideoElement.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/IntSize.h>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/PlatformScreen.h>
-#include <WebCore/RenderElementInlines.h>
+#include <WebCore/RenderElementStyleInlines.h>
 #include <WebCore/RenderImage.h>
 #include <WebCore/RenderObjectInlines.h>
 #include <WebCore/RenderVideo.h>
@@ -47,7 +48,7 @@ using namespace WebCore;
 RefPtr<ShareableBitmap> createShareableBitmap(RenderImage& renderImage, CreateShareableBitmapFromImageOptions&& options)
 {
     Ref frame = renderImage.frame();
-    auto colorSpaceForBitmap = screenColorSpace(frame->protectedMainFrame()->virtualView());
+    auto colorSpaceForBitmap = screenColorSpace(frame->protectedMainFrame()->protectedVirtualView().get());
     if (!renderImage.isRenderMedia() && !renderImage.opacity() && options.useSnapshotForTransparentImages == UseSnapshotForTransparentImages::Yes) {
         auto snapshotRect = renderImage.absoluteBoundingBoxRect();
         if (snapshotRect.isEmpty())

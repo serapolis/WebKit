@@ -141,7 +141,7 @@ class TextBreakIteratorCache {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TextBreakIteratorCache);
 // Use CachedTextBreakIterator instead of dealing with the cache directly.
 private:
-    friend class LazyNeverDestroyed<TextBreakIteratorCache>;
+    friend class NeverDestroyed<TextBreakIteratorCache>;
     friend class CachedTextBreakIterator;
 
     WTF_EXPORT_PRIVATE static TextBreakIteratorCache& singleton();
@@ -271,7 +271,7 @@ public:
 
         void reset()
         {
-            std::fill(std::begin(m_priorContext), std::end(m_priorContext), 0);
+            std::ranges::fill(m_priorContext, 0);
         }
 
         unsigned length() const

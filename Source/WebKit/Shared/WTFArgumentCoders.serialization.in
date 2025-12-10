@@ -91,6 +91,7 @@ template: struct WebKit::ContentWorldIdentifierType
 template: enum class WebKit::ImageAnalysisRequestIdentifierType
 template: enum class WebKit::MediaDevicePermissionRequestIdentifierType
 template: enum class WebKit::RemoteAudioSessionIdentifierType
+template: struct WebKit::RemoteAudioVideoRendererIdentifierType
 template: struct WebKit::RemoteCDMIdentifierType
 template: struct WebKit::RemoteCDMInstanceIdentifierType
 template: struct WebKit::RemoteCDMInstanceSessionIdentifierType
@@ -118,6 +119,7 @@ template: struct WebCore::BackForwardFrameItemIdentifierType
 template: struct WebCore::BackForwardItemIdentifierType
 template: struct WebCore::DictationContextType
 template: struct WebCore::FrameIdentifierType
+template: struct WebCore::HTMLMediaElementType
 template: struct WebCore::MediaKeySystemRequestIdentifierType
 template: struct WebCore::MediaPlayerIdentifierType
 template: struct WebCore::MediaPlayerClientIdentifierType
@@ -132,15 +134,20 @@ template: struct WebCore::ProcessIdentifierType
 template: struct WebCore::ScrollingNodeIDType
 template: struct WebCore::SharedWorkerObjectIdentifierType
 template: struct WebCore::SleepDisablerIdentifierType
+#if ENABLE(THREADED_ANIMATIONS)
+template: struct WebCore::TimelineIdentifierType
+#endif
 template: struct WebCore::UserGestureTokenIdentifierType
 template: struct WebCore::UserMediaRequestIdentifierType
 template: struct WebCore::WebTransportStreamIdentifierType
+template: struct WebCore::WebTransportSendGroupIdentifierType
 template: struct WebKit::AuthenticationChallengeIdentifierType
 template: struct WebKit::DataTaskIdentifierType
 template: struct WebKit::DisplayLinkObserverIDType
 template: struct WebKit::DrawingAreaIdentifierType
 template: struct WebKit::DownloadIDType
 template: struct WebKit::GeolocationIdentifierType
+template: struct WebKit::ImageBufferSetIdentifierType
 template: struct WebKit::IPCConnectionTesterIdentifierType
 template: struct WebKit::IPCStreamTesterIdentifierType
 template: struct WebKit::JSObjectIDType
@@ -151,9 +158,9 @@ template: struct WebKit::PDFPluginIdentifierType
 template: struct WebKit::PageGroupIdentifierType
 template: struct WebKit::RemoteAudioDestinationIdentifierType
 template: struct WebKit::RemoteAudioHardwareListenerIdentifierType
-template: struct WebKit::RemoteImageBufferSetIdentifierType
 template: struct WebKit::RemoteMediaResourceIdentifierType
 template: struct WebKit::RemoteRemoteCommandListenerIdentifierType
+template: struct WebKit::RiceBackendIdentifierType
 template: struct WebKit::SampleBufferDisplayLayerIdentifierType
 template: struct WebKit::ScriptMessageHandlerIdentifierType
 template: struct WebKit::TapIdentifierType
@@ -189,9 +196,10 @@ template: enum class WebCore::MainThreadPermissionObserverIdentifierType
 template: enum class WebCore::OpaqueOriginIdentifierType
 template: enum class WebCore::PortIdentifierType
 template: enum class WebCore::RTCDataChannelLocalIdentifierType
-template: enum class WebCore::RTCRtpScriptTransformerIdentifierType
+template: enum class WebCore::RTCEncodedStreamProducerIdentifierType
 template: struct WebCore::RenderingResourceIdentifierType
 template: struct WebCore::ResourceLoaderIdentifierType
+template: struct WebCore::SamplesRendererTrackIdentifierType
 template: struct WebCore::ServiceWorkerIdentifierType
 template: struct WebCore::ServiceWorkerJobIdentifierType
 template: struct WebCore::ServiceWorkerRegistrationIdentifierType
@@ -209,6 +217,8 @@ template: struct WebKit::RemoteDisplayListRecorderIdentifierType
 template: struct WebKit::RemoteGraphicsContextGLIdentifierType
 template: struct WebKit::RemoteRenderingBackendIdentifierType
 template: struct WebKit::RemoteSerializedImageBufferIdentifierType
+template: struct WebKit::RemoteSnapshotIdentifierType
+template: struct WebKit::RemoteSnapshotRecorderIdentifierType
 template: struct WebKit::RemoteVideoFrameIdentifierType
 template: struct WebKit::VideoDecoderIdentifierType
 template: struct WebKit::VideoEncoderIdentifierType
@@ -217,6 +227,7 @@ template: struct IPC::AsyncReplyIDType
 template: struct WebCore::FileSystemHandleIdentifierType
 template: struct WebCore::FileSystemSyncAccessHandleIdentifierType
 template: struct WebCore::WebSocketIdentifierType
+template: struct WebKit::DDModelIdentifierType
 template: struct WebKit::QuotaIncreaseRequestIdentifierType
 template: struct WebKit::StorageAreaIdentifierType
 template: struct WebKit::WebGPUIdentifierType

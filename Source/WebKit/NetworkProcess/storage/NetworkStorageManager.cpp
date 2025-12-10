@@ -1326,10 +1326,17 @@ void NetworkStorageManager::suspend(CompletionHandler<void()>&& completionHandle
         for (auto& manager : m_originStorageManagers.values()) {
             if (auto localStorageManager = manager->existingLocalStorageManager())
                 localStorageManager->syncLocalStorage();
-            if (auto idbStorageManager = manager->existingIDBStorageManager())
+            if (CheckedPtr idbStorageManager = manager->existingIDBStorageManager())
                 idbStorageManager->stopDatabaseActivitiesForSuspend();
         }
     }, WTFMove(completionHandler));
+}
+
+bool NetworkStorageManager::isSuspended() const
+{
+    ASSERT(RunLoop::isMain());
+
+    return workQueue().isSuspended();
 }
 
 void NetworkStorageManager::resume()
@@ -1353,7 +1360,7 @@ void NetworkStorageManager::handleLowMemoryWarning()
         for (auto& manager : m_originStorageManagers.values()) {
             if (auto localStorageManager = manager->existingLocalStorageManager())
                 localStorageManager->handleLowMemoryWarning();
-            if (auto idbStorageManager = manager->existingIDBStorageManager())
+            if (CheckedPtr idbStorageManager = manager->existingIDBStorageManager())
                 idbStorageManager->handleLowMemoryWarning();
         }
     });
@@ -1721,19 +1728,21 @@ void NetworkStorageManager::clear(IPC::Connection& connection, StorageAreaIdenti
 
 void NetworkStorageManager::openDatabase(IPC::Connection& connection, const WebCore::IDBOpenRequestData& requestData)
 {
+    MESSAGE_CHECK(requestData.requestIdentifier().connectionIdentifier(), connection);
     Ref connectionToClient = m_idbStorageRegistry->ensureConnectionToClient(connection.uniqueID(), *requestData.requestIdentifier().connectionIdentifier());
-    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->idbStorageManager(*m_idbStorageRegistry).openDatabase(connectionToClient, requestData);
+    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->checkedIDBStorageManager(*m_idbStorageRegistry)->openDatabase(connectionToClient, requestData);
 }
 
 void NetworkStorageManager::openDBRequestCancelled(const WebCore::IDBOpenRequestData& requestData)
 {
-    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->idbStorageManager(*m_idbStorageRegistry).openDBRequestCancelled(requestData);
+    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->checkedIDBStorageManager(*m_idbStorageRegistry)->openDBRequestCancelled(requestData);
 }
 
 void NetworkStorageManager::deleteDatabase(IPC::Connection& connection, const WebCore::IDBOpenRequestData& requestData)
 {
+    MESSAGE_CHECK(requestData.requestIdentifier().connectionIdentifier(), connection);
     Ref connectionToClient = m_idbStorageRegistry->ensureConnectionToClient(connection.uniqueID(), *requestData.requestIdentifier().connectionIdentifier());
-    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->idbStorageManager(*m_idbStorageRegistry).deleteDatabase(connectionToClient, requestData);
+    checkedOriginStorageManager(requestData.databaseIdentifier().origin())->checkedIDBStorageManager(*m_idbStorageRegistry)->deleteDatabase(connectionToClient, requestData);
 }
 
 void NetworkStorageManager::establishTransaction(WebCore::IDBDatabaseConnectionIdentifier databaseConnectionIdentifier, const WebCore::IDBTransactionInfo& transactionInfo)
@@ -1750,8 +1759,18 @@ void NetworkStorageManager::databaseConnectionPendingClose(WebCore::IDBDatabaseC
 
 void NetworkStorageManager::databaseConnectionClosed(WebCore::IDBDatabaseConnectionIdentifier databaseConnectionIdentifier)
 {
-    if (RefPtr connection = m_idbStorageRegistry->connection(databaseConnectionIdentifier))
+    RefPtr connection = m_idbStorageRegistry->connection(databaseConnectionIdentifier);
+    if (!connection)
+        return;
+
+    WebCore::IDBDatabaseIdentifier databaseIdentifier;
+    if (CheckedPtr database = connection->database()) {
+        databaseIdentifier = database->identifier();
         connection->connectionClosedFromClient();
+    }
+
+    if (databaseIdentifier.isValid())
+        checkedOriginStorageManager(databaseIdentifier.origin())->checkedIDBStorageManager(*m_idbStorageRegistry)->tryCloseDatabase(databaseIdentifier);
 }
 
 void NetworkStorageManager::abortOpenAndUpgradeNeeded(WebCore::IDBDatabaseConnectionIdentifier databaseConnectionIdentifier, const std::optional<WebCore::IDBResourceIdentifier>& transactionIdentifier)
@@ -1797,7 +1816,7 @@ void NetworkStorageManager::didFinishHandlingVersionChangeTransaction(WebCore::I
         connection->didFinishHandlingVersionChange(transactionIdentifier);
 }
 
-WebCore::IDBServer::UniqueIDBDatabaseTransaction* NetworkStorageManager::idbTransaction(const WebCore::IDBRequestData& requestData)
+RefPtr<WebCore::IDBServer::UniqueIDBDatabaseTransaction> NetworkStorageManager::idbTransaction(const WebCore::IDBRequestData& requestData)
 {
     return m_idbStorageRegistry->transaction(requestData.transactionIdentifier());
 }
@@ -1944,7 +1963,7 @@ void NetworkStorageManager::getAllDatabaseNamesAndVersions(IPC::Connection& conn
 {
     MESSAGE_CHECK(requestIdentifier.connectionIdentifier(), connection);
     Ref connectionToClient = m_idbStorageRegistry->ensureConnectionToClient(connection.uniqueID(), *requestIdentifier.connectionIdentifier());
-    auto result = checkedOriginStorageManager(origin)->idbStorageManager(*m_idbStorageRegistry).getAllDatabaseNamesAndVersions();
+    auto result = checkedOriginStorageManager(origin)->checkedIDBStorageManager(*m_idbStorageRegistry)->getAllDatabaseNamesAndVersions();
     connectionToClient->didGetAllDatabaseNamesAndVersions(requestIdentifier, WTFMove(result));
 }
 

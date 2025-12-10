@@ -33,7 +33,7 @@ class Factory(factory.BuildFactory):
 
     def __init__(self, platform, configuration, architectures, buildOnly, additionalArguments, device_model, triggers=None):
         factory.BuildFactory.__init__(self)
-        self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architecture=" ".join(architectures), buildOnly=buildOnly, additionalArguments=additionalArguments, device_model=device_model, triggers=triggers))
+        self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architecture=' '.join(architectures), buildOnly=buildOnly, additionalArguments=additionalArguments, device_model=device_model, triggers=triggers))
         self.addStep(PrintConfiguration())
         self.addStep(CheckOutSource())
         self.addStep(CheckOutSpecificRevision())
@@ -109,7 +109,7 @@ class TestFactory(Factory):
             self.addStep(ExtractTestResults())
             self.addStep(SetPermissions())
 
-        if platform.startswith(('win', 'mac', 'ios-simulator')) and self.LayoutTestClass != RunWorldLeaksTests:
+        if platform.startswith(('win', 'mac', 'ios-simulator', 'gtk', 'wpe')) and self.LayoutTestClass != RunWorldLeaksTests:
             self.addStep(RunAPITests())
 
         if platform.startswith('mac'):
@@ -122,13 +122,6 @@ class TestFactory(Factory):
 
         if platform.startswith(('mac', 'ios-simulator', 'visionos-simulator')):
             self.addStep(TriggerCrashLogSubmission())
-
-        if platform.startswith("gtk"):
-            self.addStep(RunGtkAPITests())
-            if additionalArguments and "--display-server=wayland" in additionalArguments:
-                self.addStep(RunWebDriverTests())
-        if platform == "wpe":
-            self.addStep(RunWPEAPITests())
 
 
 class BuildAndTestFactory(TestFactory):
@@ -165,6 +158,14 @@ class BuildAndJSCTests32Factory(Factory):
     def __init__(self, platform, configuration, architectures, triggers=None, additionalArguments=None, device_model=None):
         Factory.__init__(self, platform, configuration, architectures, False, additionalArguments, device_model)
         self.addStep(CompileJSCOnly32(timeout=60 * 60))
+        self.addStep(RunJavaScriptCoreTests(timeout=60 * 60))
+
+
+class BuildO3AndJSCTestsFactory(Factory):
+    def __init__(self, platform, configuration, architectures, triggers=None, additionalArguments=None, device_model=None):
+        Factory.__init__(self, platform, configuration, architectures, False, additionalArguments, device_model)
+        self.addStep(SetO3OptimizationLevel())
+        self.addStep(CompileJSCOnly(timeout=60 * 60))
         self.addStep(RunJavaScriptCoreTests(timeout=60 * 60))
 
 
@@ -273,12 +274,7 @@ class TestLayoutAndAPIOnlyFactory(Factory):
         self.addStep(UploadTestResults())
         self.addStep(ExtractTestResults())
         self.addStep(SetPermissions())
-        if platform.startswith("gtk"):
-            self.addStep(RunGtkAPITests())
-        elif platform == "wpe":
-            self.addStep(RunWPEAPITests())
-        else:
-            self.addStep(RunAPITests())
+        self.addStep(RunAPITests())
 
 
 class TestWebKit1Factory(TestFactory):

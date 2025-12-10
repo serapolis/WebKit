@@ -42,6 +42,7 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/runtime"
     "${JAVASCRIPTCORE_DIR}/tools"
     "${JAVASCRIPTCORE_DIR}/wasm"
+    "${JAVASCRIPTCORE_DIR}/wasm/debugger"
     "${JAVASCRIPTCORE_DIR}/wasm/js"
     "${JAVASCRIPTCORE_DIR}/yarr"
     "${JavaScriptCore_DERIVED_SOURCES_DIR}"
@@ -124,8 +125,12 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
     runtime/TemporalPlainDatePrototype.cpp
     runtime/TemporalPlainDateTimeConstructor.cpp
     runtime/TemporalPlainDateTimePrototype.cpp
+    runtime/TemporalPlainMonthDayConstructor.cpp
+    runtime/TemporalPlainMonthDayPrototype.cpp
     runtime/TemporalPlainTimeConstructor.cpp
     runtime/TemporalPlainTimePrototype.cpp
+    runtime/TemporalPlainYearMonthConstructor.cpp
+    runtime/TemporalPlainYearMonthPrototype.cpp
     runtime/TemporalTimeZoneConstructor.cpp
     runtime/TemporalTimeZonePrototype.cpp
 
@@ -339,7 +344,6 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/builtins/ArrayIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/ArrayPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/AsyncDisposableStackPrototype.js
-    ${JAVASCRIPTCORE_DIR}/builtins/AsyncFunctionPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/AsyncGeneratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/AsyncIteratorPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/DisposableStackPrototype.js
@@ -724,6 +728,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     debugger/DebuggerCallFrame.h
     debugger/DebuggerParseData.h
     debugger/DebuggerPrimitives.h
+    debugger/ScriptProfilingScope.h
 
     dfg/DFGCPSRethreadingPhase.h
     dfg/DFGCodeOriginPool.h
@@ -899,11 +904,13 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     inspector/remote/RemoteInspector.h
 
     interpreter/CachedCall.h
+    interpreter/CachedCallInlines.h
     interpreter/CalleeBits.h
     interpreter/CallFrame.h
     interpreter/CallFrameInlines.h
     interpreter/CheckpointOSRExitSideState.h
     interpreter/CLoopStack.h
+    interpreter/CLoopStackInlines.h
     interpreter/EntryFrame.h
     interpreter/FrameTracers.h
     interpreter/Interpreter.h
@@ -1143,6 +1150,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSArrayIterator.h
     runtime/JSArrayBuffer.h
     runtime/JSBigInt.h
+    runtime/JSBigIntInlines.h
     runtime/JSBoundFunction.h
     runtime/JSCBytecodeCacheVersion.h
     runtime/JSCConfig.h
@@ -1154,6 +1162,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSCellInlines.h
     runtime/JSCInlines.h
     runtime/JSCJSValue.h
+    runtime/JSCJSValueCellInlines.h
     runtime/JSCJSValueInlines.h
     runtime/JSCPtrTag.h
     runtime/JSCustomGetterFunction.h
@@ -1163,6 +1172,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSDateMath.h
     runtime/JSDestructibleObject.h
     runtime/JSDestructibleObjectHeapCellType.h
+    runtime/JSHeapDouble.h
+    runtime/JSHeapInt32.h
     runtime/JSExportMacros.h
     runtime/JSFloat16Array.h
     runtime/JSFloat32Array.h
@@ -1334,6 +1345,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/StackFrame.h
     runtime/StackManager.h
     runtime/StackManagerInlines.h
+    runtime/StopTheWorldCallback.h
     runtime/StringIteratorPrototype.h
     runtime/StringObject.h
     runtime/StringPrototype.h
@@ -1383,6 +1395,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/VMEntryScopeInlines.h
     runtime/VMInlines.h
     runtime/VMManager.h
+    runtime/VMThreadContext.h
     runtime/VMTraps.h
     runtime/VMTrapsInlines.h
     runtime/WaiterListManager.h
@@ -1398,6 +1411,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/WriteBarrierInlines.h
 
     tools/Integrity.h
+    tools/IntegrityInlines.h
     tools/LLVMProfiling.h
     tools/SourceProfiler.h
 
@@ -1444,6 +1458,16 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/WasmTypeDefinition.h
     wasm/WasmTypeDefinitionInlines.h
     wasm/WasmValueLocation.h
+
+    wasm/debugger/WasmBreakpointManager.h
+    wasm/debugger/WasmDebugServer.h
+    wasm/debugger/WasmDebugServerUtilities.h
+    wasm/debugger/WasmExecutionHandler.h
+    wasm/debugger/WasmMemoryHandler.h
+    wasm/debugger/WasmModuleDebugInfo.h
+    wasm/debugger/WasmModuleManager.h
+    wasm/debugger/WasmQueryHandler.h
+    wasm/debugger/WasmVirtualAddress.h
 
     wasm/js/JSWebAssembly.h
     wasm/js/JSWebAssemblyGlobal.h

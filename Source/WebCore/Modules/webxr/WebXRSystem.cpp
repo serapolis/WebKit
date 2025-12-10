@@ -32,7 +32,8 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "ContextDestructionObserverInlines.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
+#include "DocumentSecurityOrigin.h"
 #include "IDLTypes.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSWebXRSession.h"
@@ -43,6 +44,7 @@
 #include "PermissionsPolicy.h"
 #include "RequestAnimationFrameCallback.h"
 #include "SecurityOrigin.h"
+#include "Settings.h"
 #include "UserGestureIndicator.h"
 #include "WebXRSession.h"
 #include "XRReferenceSpaceType.h"
@@ -272,6 +274,9 @@ bool WebXRSystem::isFeaturePermitted(PlatformXR::SessionFeature feature) const
     switch (feature) {
     case PlatformXR::SessionFeature::ReferenceSpaceTypeViewer:
         return true;
+#if ENABLE(WEBXR_LAYERS)
+    case PlatformXR::SessionFeature::Layers:
+#endif
     case PlatformXR::SessionFeature::WebGPU:
         return true;
     case PlatformXR::SessionFeature::ReferenceSpaceTypeLocal:
@@ -280,6 +285,9 @@ bool WebXRSystem::isFeaturePermitted(PlatformXR::SessionFeature feature) const
     case PlatformXR::SessionFeature::ReferenceSpaceTypeUnbounded:
 #if ENABLE(WEBXR_HANDS)
     case PlatformXR::SessionFeature::HandTracking:
+#endif
+#if ENABLE(WEBXR_HIT_TEST)
+    case PlatformXR::SessionFeature::HitTest:
 #endif
         RefPtr document = downcast<Document>(scriptExecutionContext());
         return document && PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::XRSpatialTracking, *document);
@@ -298,6 +306,18 @@ bool WebXRSystem::isFeatureSupported(PlatformXR::SessionFeature feature, XRSessi
     if (feature == PlatformXR::SessionFeature::HandTracking) {
         auto scriptExecutionContext = this->scriptExecutionContext();
         if (!scriptExecutionContext || !scriptExecutionContext->settingsValues().webXRHandInputModuleEnabled)
+            return false;
+    }
+#endif
+
+#if ENABLE(WEBXR_LAYERS)
+    if (feature == PlatformXR::SessionFeature::Layers) {
+        if (!isImmersive(mode))
+            return false;
+
+        auto scriptExecutionContext = this->scriptExecutionContext();
+        // FIXME: remove the testing check once the feature is stable.
+        if (!scriptExecutionContext || (!scriptExecutionContext->settingsValues().webXRLayersAPIEnabled && !m_testingDevices))
             return false;
     }
 #endif

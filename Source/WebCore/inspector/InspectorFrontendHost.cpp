@@ -41,17 +41,16 @@
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
 #include "DOMWrapperWorld.h"
-#include "Document.h"
+#include "DocumentPage.h"
+#include "DocumentView.h"
 #include "Editor.h"
 #include "Event.h"
 #include "File.h"
 #include "FloatRect.h"
 #include "FocusController.h"
-#include "FrameInlines.h"
 #include "FrameDestructionObserverInlines.h"
 #include "HTMLIFrameElement.h"
 #include "HitTestResult.h"
-#include "InspectorController.h"
 #include "InspectorDebuggableType.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMExceptionHandling.h"
@@ -62,10 +61,11 @@
 #include "LocalFrameInlines.h"
 #include "LocalFrameView.h"
 #include "MouseEvent.h"
-#include "Node.h"
+#include "NodeDocument.h"
 #include "NodeInlines.h"
 #include "OffscreenCanvasRenderingContext2D.h"
 #include "Page.h"
+#include "PageInspectorController.h"
 #include "PagePasteboardContext.h"
 #include "Pasteboard.h"
 #include "Path2D.h"
@@ -276,20 +276,13 @@ void InspectorFrontendHost::inspectedURLChanged(const String& newURL)
 
 void InspectorFrontendHost::setZoomFactor(float zoom)
 {
-    if (m_frontendPage) {
-        if (RefPtr localMainFrame = m_frontendPage->localMainFrame())
-            localMainFrame->setPageAndTextZoomFactors(zoom, 1);
-    }
+    if (m_client)
+        m_client->setPageAndTextZoomFactors(zoom, 1);
 }
 
 float InspectorFrontendHost::zoomFactor()
 {
-    if (m_frontendPage) {
-        if (RefPtr localMainFrame = m_frontendPage->localMainFrame())
-            return localMainFrame->pageZoomFactor();
-    }
-
-    return 1.0;
+    return m_client ? m_client->pageZoomFactor() : 1.0;
 }
 
 void InspectorFrontendHost::setForcedAppearance(String appearance)
@@ -382,6 +375,8 @@ static String debuggableTypeToString(DebuggableType debuggableType)
         return "service-worker"_s;
     case DebuggableType::WebPage:
         return "web-page"_s;
+    case DebuggableType::WasmDebugger:
+        return "wasm-debugger"_s;
     }
 
     ASSERT_NOT_REACHED();
@@ -658,7 +653,7 @@ bool InspectorFrontendHost::isBeingInspected()
     if (!m_frontendPage)
         return false;
 
-    InspectorController& inspectorController = m_frontendPage->inspectorController();
+    PageInspectorController& inspectorController = m_frontendPage->inspectorController();
     return inspectorController.hasLocalFrontend() || inspectorController.hasRemoteFrontend();
 }
 

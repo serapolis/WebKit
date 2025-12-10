@@ -36,6 +36,7 @@
 #include "ContentSecurityPolicy.h"
 #include "DOMFormData.h"
 #include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "ElementInlines.h"
 #include "Event.h"
 #include "FormData.h"

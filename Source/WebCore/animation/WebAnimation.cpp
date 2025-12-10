@@ -39,8 +39,7 @@
 #include "ChromeClient.h"
 #include "ContextDestructionObserverInlines.h"
 #include "DOMPromiseProxy.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentPage.h"
 #include "DocumentTimeline.h"
 #include "Element.h"
 #include "EventLoop.h"
@@ -69,9 +68,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(WebAnimation);
 
-HashSet<WebAnimation*>& WebAnimation::instances()
+HashSet<CheckedPtr<WebAnimation>>& WebAnimation::instances()
 {
-    static NeverDestroyed<HashSet<WebAnimation*>> instances;
+    static NeverDestroyed<HashSet<CheckedPtr<WebAnimation>>> instances;
     return instances;
 }
 
@@ -251,6 +250,11 @@ void WebAnimation::setEffectInternal(RefPtr<AnimationEffect>&& newEffect, bool d
     InspectorInstrumentation::didSetWebAnimationEffect(*this);
 }
 
+KeyframeEffect* WebAnimation::keyframeEffect() const
+{
+    return dynamicDowncast<KeyframeEffect>(m_effect.get());
+}
+
 void WebAnimation::setBindingsTimeline(RefPtr<AnimationTimeline>&& timeline)
 {
     setTimeline(WTFMove(timeline));
@@ -294,7 +298,7 @@ void WebAnimation::setTimeline(RefPtr<AnimationTimeline>&& timeline)
     auto toFiniteTimeline = timeline && !timeline->isMonotonic();
 
     // 8. Let the timeline of animation be new timeline.
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect)) {
+    if (RefPtr keyframeEffect = this->keyframeEffect()) {
         if (auto target = keyframeEffect->targetStyleable()) {
             // In the case of a dstyle-originated animation, we don't want to remove the animation from the relevant maps because
             // while the timeline was set via the API, the element still has a transition or animation set up and we must
@@ -377,7 +381,9 @@ void WebAnimation::setTimelineInternal(RefPtr<AnimationTimeline>&& timeline)
     m_timeline = WTFMove(timeline);
 
     if (m_effect)
-        m_effect->animationTimelineDidChange(m_timeline.get());
+        m_effect->animationTimelineDidChange();
+
+    m_pendingStartTime = std::nullopt;
 }
 
 void WebAnimation::effectTargetDidChange(const std::optional<const Styleable>& previousTarget, const std::optional<const Styleable>& newTarget)
@@ -874,7 +880,7 @@ void WebAnimation::cancel(Silently silently)
 
 void WebAnimation::willChangeRenderer()
 {
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect))
+    if (RefPtr keyframeEffect = this->keyframeEffect())
         keyframeEffect->willChangeRenderer();
 }
 
@@ -895,7 +901,7 @@ void WebAnimation::enqueueAnimationEvent(Ref<AnimationEventBase>&& event)
             if (RefPtr source = scrollTimeline->source())
                 return Ref { source->document() }->existingTimeline();
         }
-        if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect)) {
+        if (RefPtr keyframeEffect = this->keyframeEffect()) {
             if (RefPtr target = keyframeEffect->target())
                 return target->protectedDocument()->existingTimeline();
         }
@@ -1028,7 +1034,7 @@ void WebAnimation::invalidateEffect()
     if (isEffectInvalidationSuspended())
         return;
 
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect))
+    if (RefPtr keyframeEffect = this->keyframeEffect())
         keyframeEffect->invalidate();
 }
 
@@ -1148,7 +1154,7 @@ void WebAnimation::finishNotificationSteps()
     }();
     enqueueAnimationPlaybackEvent(eventNames().finishEvent, currentTime(), scheduledTime);
 
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect)) {
+    if (RefPtr keyframeEffect = this->keyframeEffect()) {
         if (RefPtr target = keyframeEffect->target()) {
             if (RefPtr page = target->document().page())
                 page->chrome().client().animationDidFinishForElement(*target);
@@ -1517,12 +1523,13 @@ void WebAnimation::autoAlignStartTime()
     auto endOffset = interval.second;
 
     // 7. Set start time to start offset if effective playback rate ≥ 0, and end offset otherwise.
-    m_startTime = effectivePlaybackRate() >= 0 ? startOffset : endOffset;
+    auto previousStartTime = std::exchange(m_startTime, effectivePlaybackRate() >= 0 ? startOffset : endOffset);
 
     // 8. Clear hold time.
     m_holdTime = std::nullopt;
 
-    progressBasedTimelineSourceDidChangeMetrics();
+    if (previousStartTime != m_startTime)
+        progressBasedTimelineSourceDidChangeMetrics();
 }
 
 bool WebAnimation::needsTick() const
@@ -1532,6 +1539,8 @@ bool WebAnimation::needsTick() const
 
 void WebAnimation::tick()
 {
+    auto wasPending = pending();
+
     // https://drafts.csswg.org/scroll-animations-1/#event-loop
     // When updating timeline current time, the start time of any attached animation is
     // conditionally updated. For each attached animation, run the procedure for calculating
@@ -1545,8 +1554,11 @@ void WebAnimation::tick()
     updateFinishedState(DidSeek::No, SynchronouslyNotify::Yes);
     m_shouldSkipUpdatingFinishedStateWhenResolving = true;
 
-    if (!isEffectInvalidationSuspended() && m_effect)
+    if (!isEffectInvalidationSuspended() && m_effect) {
         m_effect->animationDidTick();
+        if (wasPending && !pending())
+            m_effect->animationBecameReady();
+    }
 }
 
 void WebAnimation::maybeMarkAsReady()
@@ -1581,13 +1593,21 @@ void WebAnimation::maybeMarkAsReady()
     m_pendingStartTime = std::nullopt;
 }
 
+void WebAnimation::setPendingStartTime(WebAnimationTime pendingStartTime)
+{
+    m_pendingStartTime = pendingStartTime;
+
+    ASSERT(is<DocumentTimeline>(m_timeline));
+    Ref { downcast<DocumentTimeline>(*m_timeline) }->pendingStartTimeWasSetOnAnimation();
+}
+
 OptionSet<AnimationImpact> WebAnimation::resolve(RenderStyle& targetStyle, const Style::ResolutionContext& resolutionContext, EndpointInclusiveActiveInterval endpointInclusiveActiveInterval)
 {
     if (!m_shouldSkipUpdatingFinishedStateWhenResolving)
         updateFinishedState(DidSeek::No, SynchronouslyNotify::No);
     m_shouldSkipUpdatingFinishedStateWhenResolving = false;
 
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect))
+    if (RefPtr keyframeEffect = this->keyframeEffect())
         return keyframeEffect->apply(targetStyle, resolutionContext, endpointInclusiveActiveInterval);
     return { };
 }
@@ -1633,6 +1653,7 @@ void WebAnimation::stop()
 {
     ActiveDOMObject::stop();
     removeAllEventListeners();
+    setEffectInternal(nullptr);
 }
 
 bool WebAnimation::virtualHasPendingActivity() const
@@ -1645,7 +1666,7 @@ void WebAnimation::updateRelevance()
 {
     auto wasRelevant = std::exchange(m_isRelevant, computeRelevance());
     if (wasRelevant != m_isRelevant) {
-        if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect))
+        if (RefPtr keyframeEffect = this->keyframeEffect())
             keyframeEffect->animationRelevancyDidChange();
     }
 }
@@ -1728,7 +1749,7 @@ bool WebAnimation::isReplaceable() const
         return false;
 
     // The target effect has an associated target element.
-    RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect);
+    RefPtr keyframeEffect = this->keyframeEffect();
     if (!keyframeEffect || !keyframeEffect->target())
         return false;
 
@@ -1754,7 +1775,7 @@ ExceptionOr<void> WebAnimation::commitStyles()
     // https://drafts.csswg.org/web-animations-1/#commit-computed-styles
 
     // 1. Let targets be the set of all effect targets for animation effects associated with animation.
-    RefPtr effect = dynamicDowncast<KeyframeEffect>(m_effect);
+    RefPtr effect = keyframeEffect();
 
     // 2. For each target in targets:
     //
@@ -1823,7 +1844,7 @@ ExceptionOr<void> WebAnimation::commitStyles()
         // sorted animation list and stop when we've found this animation's effect or when we've found an effect associated with an animation with a higher composite order.
         auto animatedStyle = RenderStyle::clonePtr(unanimatedStyle);
         for (const auto& animation : sortedAnimations) {
-            RefPtr effectInStack = dynamicDowncast<KeyframeEffect>(animation->effect());
+            RefPtr effectInStack = animation->keyframeEffect();
             if (!effectInStack)
                 continue;
             if (effectInStack->animation() != this && !compareAnimationsByCompositeOrder(*effectInStack->animation(), *this))
@@ -1950,7 +1971,7 @@ std::optional<double> WebAnimation::overallProgress() const
 
 void WebAnimation::setBindingsRangeStart(TimelineRangeValue&& rangeStartValue)
 {
-    RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect);
+    RefPtr keyframeEffect = this->keyframeEffect();
     if (!keyframeEffect)
         return;
 
@@ -1965,7 +1986,7 @@ void WebAnimation::setBindingsRangeStart(TimelineRangeValue&& rangeStartValue)
 
 void WebAnimation::setBindingsRangeEnd(TimelineRangeValue&& rangeEndValue)
 {
-    RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect);
+    RefPtr keyframeEffect = this->keyframeEffect();
     if (!keyframeEffect)
         return;
 
@@ -2000,7 +2021,7 @@ void WebAnimation::setRangeEnd(Style::SingleAnimationRangeEnd&& rangeEnd)
 
 const Style::SingleAnimationRange& WebAnimation::range()
 {
-    if (RefPtr keyframeEffect = dynamicDowncast<KeyframeEffect>(m_effect)) {
+    if (RefPtr keyframeEffect = this->keyframeEffect()) {
         if (m_specifiedRangeStart)
             m_timelineRange.start = Style::deprecatedToStyleFromCSSValue<Style::SingleAnimationRangeStart>(keyframeEffect->target(), *m_specifiedRangeStart).value_or(Style::SingleAnimationRangeStart { CSS::Keyword::Normal { } });
         if (m_specifiedRangeEnd)

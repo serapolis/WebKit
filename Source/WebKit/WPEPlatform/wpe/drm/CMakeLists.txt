@@ -29,14 +29,13 @@ set(WPEPlatformDRM_PRIVATE_INCLUDE_DIRECTORIES
 )
 
 set(WPEPlatformDRM_SYSTEM_INCLUDE_DIRECTORIES
-    ${GIO_UNIX_INCLUDE_DIRS}
     ${WPEPlatform_SYSTEM_INCLUDE_DIRECTORIES}
 )
 
 set(WPEPlatformDRM_LIBRARIES
+    GLib::GioUnix
     LibInput::LibInput
     Udev::Udev
-    ${GIO_UNIX_LIBRARIES}
 )
 
 if (ENABLE_JOURNALD_LOG)
@@ -49,10 +48,11 @@ set(WPEPlatformDRM_SOURCES_FOR_INTROSPECTION
 )
 
 add_library(WPEPlatformDRM OBJECT ${WPEPlatformDRM_SOURCES})
-add_dependencies(WPEPlatformDRM WPEPlatformGeneratedEnumTypesHeader)
+target_compile_options(WPEPlatformDRM PRIVATE ${DEVELOPER_MODE_CXX_FLAGS})
 target_include_directories(WPEPlatformDRM PRIVATE ${WPEPlatformDRM_PRIVATE_INCLUDE_DIRECTORIES})
 target_include_directories(WPEPlatformDRM SYSTEM PRIVATE ${WPEPlatformDRM_SYSTEM_INCLUDE_DIRECTORIES})
 target_link_libraries(WPEPlatformDRM ${WPEPlatform_LIBRARIES} ${WPEPlatformDRM_LIBRARIES})
+add_dependencies(WPEPlatformDRM WPEPlatformGeneratedEnumTypesHeader)
 
 set_target_properties(WPEPlatformDRM PROPERTIES
     SOURCES_FOR_INTROSPECTION "${WPEPlatformDRM_SOURCES_FOR_INTROSPECTION}"

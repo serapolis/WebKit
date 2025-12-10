@@ -80,7 +80,7 @@ Ref<CSSValue> StyleFilterImage::computedStyleValue(const RenderStyle& style) con
 {
     RefPtr image = m_image;
     return CSSFilterImageValue::create(
-        image ? image->computedStyleValue(style) : static_reference_cast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone)),
+        image ? image->computedStyleValue(style) : upcast<CSSValue>(CSSPrimitiveValue::create(CSSValueNone)),
         Style::toCSS(m_filter, style)
     );
 }
@@ -117,7 +117,7 @@ void StyleFilterImage::load(CachedResourceLoader& cachedResourceLoader, const Re
     m_inputImageIsReady = true;
 }
 
-RefPtr<Image> StyleFilterImage::image(const RenderElement* renderer, const FloatSize& size, bool isForFirstLine) const
+RefPtr<Image> StyleFilterImage::image(const RenderElement* renderer, const FloatSize& size, const GraphicsContext& destinationContext, bool isForFirstLine) const
 {
     if (!renderer)
         return &Image::nullImage();
@@ -129,20 +129,24 @@ RefPtr<Image> StyleFilterImage::image(const RenderElement* renderer, const Float
     if (!styleImage)
         return &Image::nullImage();
 
-    auto image = styleImage->image(renderer, size, isForFirstLine);
+    auto image = styleImage->image(renderer, size, destinationContext, isForFirstLine);
     if (!image || image->isNull())
         return &Image::nullImage();
 
-    auto preferredFilterRenderingModes = renderer->protectedPage()->preferredFilterRenderingModes();
+    auto preferredFilterRenderingModes = renderer->protectedPage()->preferredFilterRenderingModes(destinationContext);
     auto sourceImageRect = FloatRect { { }, size };
 
-    auto cssFilter = CSSFilterRenderer::create(const_cast<RenderElement&>(*renderer), m_filter, preferredFilterRenderingModes, FloatSize { 1, 1 }, sourceImageRect, NullGraphicsContext());
+    auto cssFilter = CSSFilterRenderer::create(const_cast<RenderElement&>(*renderer), m_filter, {
+            .referenceBox = sourceImageRect,
+            .filterRegion = sourceImageRect,
+            .scale = { 1, 1 },
+        }, preferredFilterRenderingModes, NullGraphicsContext());
     if (!cssFilter)
         return &Image::nullImage();
 
     cssFilter->setFilterRegion(sourceImageRect);
 
-    auto sourceImage = ImageBuffer::create(size, cssFilter->renderingMode(), RenderingPurpose::DOM, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, renderer->hostWindow());
+    auto sourceImage = ImageBuffer::create(size, destinationContext.renderingMode(), RenderingPurpose::DOM, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, renderer->hostWindow());
     if (!sourceImage)
         return &Image::nullImage();
 

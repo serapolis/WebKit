@@ -28,6 +28,7 @@
 #include "BorderData.h"
 
 #include "RenderStyle.h"
+#include "StylePrimitiveKeyword+Logging.h"
 #include "StylePrimitiveNumericTypes+Logging.h"
 #include <wtf/PointerComparison.h>
 #include <wtf/text/TextStream.h>
@@ -68,24 +69,24 @@ void BorderData::dump(TextStream& ts, DumpStyleValues behavior) const
     if (behavior == DumpStyleValues::All || bottom() != BorderValue())
         ts.dumpProperty("bottom"_s, bottom());
 
-    if (behavior == DumpStyleValues::All || topLeftCornerShape() != Style::CornerShapeValue::round())
+    if (behavior == DumpStyleValues::All || topLeftCornerShape() != Style::CornerShapeValue(CSS::Keyword::Round { }))
         ts.dumpProperty("top-left corner shape"_s, topLeftCornerShape());
-    if (behavior == DumpStyleValues::All || topRightCornerShape() != Style::CornerShapeValue::round())
+    if (behavior == DumpStyleValues::All || topRightCornerShape() != Style::CornerShapeValue(CSS::Keyword::Round { }))
         ts.dumpProperty("top-right corner shape"_s, topRightCornerShape());
-    if (behavior == DumpStyleValues::All || bottomLeftCornerShape() != Style::CornerShapeValue::round())
+    if (behavior == DumpStyleValues::All || bottomLeftCornerShape() != Style::CornerShapeValue(CSS::Keyword::Round { }))
         ts.dumpProperty("bottom-left corner shape"_s, bottomLeftCornerShape());
-    if (behavior == DumpStyleValues::All || bottomRightCornerShape() != Style::CornerShapeValue::round())
+    if (behavior == DumpStyleValues::All || bottomRightCornerShape() != Style::CornerShapeValue(CSS::Keyword::Round { }))
         ts.dumpProperty("bottom-right corner shape"_s, bottomRightCornerShape());
 
     ts.dumpProperty("image"_s, image());
 
-    if (behavior == DumpStyleValues::All || !Style::isZero(topLeftRadius()))
+    if (behavior == DumpStyleValues::All || !Style::isKnownZero(topLeftRadius()))
         ts.dumpProperty("top-left"_s, topLeftRadius());
-    if (behavior == DumpStyleValues::All || !Style::isZero(topRightRadius()))
+    if (behavior == DumpStyleValues::All || !Style::isKnownZero(topRightRadius()))
         ts.dumpProperty("top-right"_s, topRightRadius());
-    if (behavior == DumpStyleValues::All || !Style::isZero(bottomLeftRadius()))
+    if (behavior == DumpStyleValues::All || !Style::isKnownZero(bottomLeftRadius()))
         ts.dumpProperty("bottom-left"_s, bottomLeftRadius());
-    if (behavior == DumpStyleValues::All || !Style::isZero(bottomRightRadius()))
+    if (behavior == DumpStyleValues::All || !Style::isKnownZero(bottomRightRadius()))
         ts.dumpProperty("bottom-right"_s, bottomRightRadius());
 }
 

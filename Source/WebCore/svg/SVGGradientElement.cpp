@@ -45,19 +45,20 @@ SVGGradientElement::SVGGradientElement(const QualifiedName& tagName, Document& d
     : SVGElement(tagName, document, WTFMove(propertyRegistry))
     , SVGURIReference(this)
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::spreadMethodAttr, SVGSpreadMethodType, &SVGGradientElement::m_spreadMethod>();
         PropertyRegistry::registerProperty<SVGNames::gradientUnitsAttr, SVGUnitTypes::SVGUnitType, &SVGGradientElement::m_gradientUnits>();
         PropertyRegistry::registerProperty<SVGNames::gradientTransformAttr, &SVGGradientElement::m_gradientTransform>();
-    });
+    }
 }
 
 void SVGGradientElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     switch (name.nodeName()) {
     case AttributeNames::gradientUnitsAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(newValue);
+        auto propertyValue = SVGPropertyTraits<SVGUnitTypes::SVGUnitType>::fromString(*this, newValue);
         if (propertyValue > 0)
             Ref { m_gradientUnits }->setBaseValInternal<SVGUnitTypes::SVGUnitType>(propertyValue);
         break;
@@ -66,7 +67,7 @@ void SVGGradientElement::attributeChanged(const QualifiedName& name, const AtomS
         Ref { m_gradientTransform }->baseVal()->parse(newValue);
         break;
     case AttributeNames::spreadMethodAttr: {
-        auto propertyValue = SVGPropertyTraits<SVGSpreadMethodType>::fromString(newValue);
+        auto propertyValue = SVGPropertyTraits<SVGSpreadMethodType>::fromString(*this, newValue);
         if (propertyValue > 0)
             Ref { m_spreadMethod }->setBaseValInternal<SVGSpreadMethodType>(propertyValue);
         break;

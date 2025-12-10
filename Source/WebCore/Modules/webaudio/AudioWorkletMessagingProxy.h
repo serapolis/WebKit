@@ -61,6 +61,7 @@ public:
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::checkedPtrCountWithoutThreadCheck(); }
     void incrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::incrementCheckedPtrCount(); }
     void decrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeThreadSafeCheckedPtr<AudioWorkletMessagingProxy>::setDidBeginCheckedPtrDeletion(); }
 
 private:
     explicit AudioWorkletMessagingProxy(AudioWorklet&);
@@ -73,7 +74,7 @@ private:
     bool isAudioWorkletMessagingProxy() const final { return true; }
 
     WeakPtr<AudioWorklet> m_worklet;
-    const Ref<Document> m_document;
+    const ScriptExecutionContextIdentifier m_documentIdentifier;
     const Ref<AudioWorkletThread> m_workletThread;
 };
 

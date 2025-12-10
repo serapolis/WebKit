@@ -115,7 +115,7 @@ void SharedWorkerContextManager::registerSharedWorkerThread(Ref<SharedWorkerThre
     proxy->thread().start([](const String& /*exceptionMessage*/) { });
 }
 
-void SharedWorkerContextManager::Connection::postConnectEvent(SharedWorkerIdentifier sharedWorkerIdentifier, TransferredMessagePort&& transferredPort, String&& sourceOrigin, CompletionHandler<void(bool)>&& completionHandler)
+void SharedWorkerContextManager::Connection::postConnectEvent(SharedWorkerIdentifier sharedWorkerIdentifier, TransferredMessagePort&& transferredPort, const SecurityOriginData& sourceOrigin, CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(isMainThread());
     RefPtr proxy = SharedWorkerContextManager::singleton().sharedWorker(sharedWorkerIdentifier);
@@ -123,9 +123,9 @@ void SharedWorkerContextManager::Connection::postConnectEvent(SharedWorkerIdenti
     if (!proxy)
         return completionHandler(false);
 
-    proxy->thread().runLoop().postTask([transferredPort = WTFMove(transferredPort), sourceOrigin = WTFMove(sourceOrigin).isolatedCopy()] (auto& scriptExecutionContext) mutable {
+    proxy->thread().runLoop().postTask([transferredPort = WTFMove(transferredPort), sourceOrigin = sourceOrigin.isolatedCopy()] (auto& scriptExecutionContext) mutable {
         ASSERT(!isMainThread());
-        downcast<SharedWorkerGlobalScope>(scriptExecutionContext).postConnectEvent(WTFMove(transferredPort), WTFMove(sourceOrigin));
+        downcast<SharedWorkerGlobalScope>(scriptExecutionContext).postConnectEvent(WTFMove(transferredPort), sourceOrigin);
     });
     completionHandler(true);
 }

@@ -85,7 +85,7 @@
 
 namespace JSC {
 
-JSObject* WebAssemblyBuiltin::jsWrapper(JSGlobalObject* globalObject) const
+JSFunction* WebAssemblyBuiltin::jsWrapper(JSGlobalObject* globalObject) const
 {
     return JSFunction::create(globalObject->vm(), globalObject, 0, m_name, m_jsHostFunction, ImplementationVisibility::Public, JSC::NoIntrinsic);
 }
@@ -120,7 +120,6 @@ void WebAssemblyBuiltinSet::finalizeCreation()
         String fullName = makeString(String(m_qualifiedName), "."_s, builtinName);
         auto span = fullName.span8();
         Wasm::Name name;
-        name.tryReserveCapacity(span.size());
         name.grow(span.size());
         memcpySpan(name.mutableSpan(), span);
         m_nameSection->functionNames[i] = WTFMove(name);
@@ -155,7 +154,7 @@ const WebAssemblyBuiltinSet* WebAssemblyBuiltinRegistry::findByQualifiedName(con
     return index != notFound ? &m_builtinSets[index] : nullptr;
 }
 
-bool WebAssemblyArrayMutI16TypeExpectation::check(const Wasm::Type& type) const
+bool WebAssemblyArrayMutI16TypeExpectation::isValid(const Wasm::Type& type) const
 {
     if (!type.isRefNull())
         return false;
@@ -168,18 +167,18 @@ bool WebAssemblyArrayMutI16TypeExpectation::check(const Wasm::Type& type) const
         && elementType.type.as<Wasm::PackedType>() == Wasm::PackedType::I16;
 }
 
-bool WebAssemblyBuiltinSignature::check(const Wasm::FunctionSignature& sig) const
+bool WebAssemblyBuiltinSignature::isValid(const Wasm::FunctionSignature& sig) const
 {
     if (sig.returnCount() != m_results.size() || sig.argumentCount() != m_params.size())
         return false;
     for (unsigned i = 0; i < sig.returnCount(); ++i) {
         auto type = sig.returnType(i);
-        if (!m_results[i]->check(type))
+        if (!m_results[i]->isValid(type))
             return false;
     }
     for (unsigned i = 0; i < sig.argumentCount(); ++i) {
         auto type = sig.argumentType(i);
-        if (!m_params[i]->check(type))
+        if (!m_params[i]->isValid(type))
             return false;
     }
     return true;
@@ -220,7 +219,7 @@ static bool isMutI16Array(const JSWebAssemblyArray* array)
     static ALWAYS_INLINE EncodedJSValue BUILTIN_IMPLEMENTATION_NAME(setName, builtinName)(__VA_ARGS__)
 
 #define DEFINE_BUILTIN_IMPLEMENTATION_I32(setName, builtinName, ...) \
-    static ALWAYS_INLINE int32_t BUILTIN_IMPLEMENTATION_NAME(setName, builtinName)(__VA_ARGS__)
+    static ALWAYS_INLINE UCPUStrictInt32 BUILTIN_IMPLEMENTATION_NAME(setName, builtinName)(__VA_ARGS__)
 
 // A trampoline is a builtin entry point stored in the builtin callee.
 // It properly sets up the call frame, then calls the host function, then checks for exceptions.
@@ -486,7 +485,7 @@ DECLARE_BUILTIN_TRAMPOLINE(jsstring, cast);
 DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, test, JSGlobalObject* globalObject, JSValue value)
 {
     UNUSED_PARAM(globalObject);
-    return value.isString() ? 1 : 0;
+    return toUCPUStrictInt32(value.isString() ? 1 : 0);
 }
 
 DEFINE_BUILTIN_ENTRY_I_R(jsstring, test)
@@ -520,7 +519,7 @@ DEFINE_BUILTIN_IMPLEMENTATION(jsstring, fromCharCodeArray, JSGlobalObject* globa
     if (start > end || end > array->size()) [[unlikely]]
         THROW_ILLEGAL_ARGUMENT_EXCEPTION;
 
-    auto chars = array->span<UChar>();
+    auto chars = array->span<char16_t>();
     auto slice = chars.subspan(start, end - start);
     JSString* result = jsString(vm, String(slice));
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
@@ -560,7 +559,7 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, intoCharCodeArray, JSGlobalObject* g
     if (start + stringLength > arrayLength) [[unlikely]]
         THROW_ILLEGAL_ARGUMENT_EXCEPTION;
 
-    auto data = array->span<UChar>();
+    auto data = array->span<char16_t>();
     auto dest = data.subspan(start, stringLength);
     auto stringValue = string->value(globalObject);
 
@@ -568,12 +567,11 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, intoCharCodeArray, JSGlobalObject* g
         for (size_t i = 0; i < stringLength; ++i)
             dest[i] = stringValue.data[i];
     } else {
-        auto source = stringValue.data.span<UChar>();
+        auto source = stringValue.data.span<char16_t>();
         memcpySpan(dest, source);
     }
 
-
-    return stringLength;
+    return toUCPUStrictInt32(stringLength);
 }
 
 DEFINE_BUILTIN_ENTRY_I_RAI(jsstring, intoCharCodeArray)
@@ -588,8 +586,7 @@ DECLARE_BUILTIN_TRAMPOLINE(jsstring, intoCharCodeArray);
 
 DEFINE_BUILTIN_IMPLEMENTATION(jsstring, fromCharCode, JSGlobalObject* globalObject, int32_t arg)
 {
-    UChar code = static_cast<UChar>(arg);
-    return JSValue::encode(jsSingleCharacterString(globalObject->vm(), code));
+    return JSValue::encode(jsSingleCharacterString(globalObject->vm(), static_cast<char16_t>(arg)));
 }
 
 DEFINE_BUILTIN_ENTRY_R_I(jsstring, fromCharCode)
@@ -605,17 +602,10 @@ DECLARE_BUILTIN_TRAMPOLINE(jsstring, fromCharCode);
 DEFINE_BUILTIN_IMPLEMENTATION(jsstring, fromCodePoint, JSGlobalObject* globalObject, int32_t arg)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    uint32_t codePoint = static_cast<uint32_t>(arg);
+    auto codePoint = static_cast<char32_t>(arg);
     if (codePoint > 0x10ffff) [[unlikely]]
         THROW_ILLEGAL_ARGUMENT_EXCEPTION;
-    StringBuilder builder;
-    if (U_IS_BMP(codePoint))
-        builder.append(static_cast<UChar>(codePoint));
-    else {
-        builder.append(U16_LEAD(codePoint));
-        builder.append(U16_TRAIL(codePoint));
-    }
-    JSValue result = JSValue(jsString(globalObject->vm(), builder.toString()));
+    JSValue result = JSValue(jsString(globalObject->vm(), makeString(codePoint)));
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
@@ -647,8 +637,8 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, charCodeAt, JSGlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, { });
     if (index < 0 || view->length() <= static_cast<unsigned>(index)) [[unlikely]]
         THROW_ILLEGAL_ARGUMENT_EXCEPTION;
-    UChar result = view[index];
-    RELEASE_AND_RETURN(scope, result);
+    char16_t result = view[index];
+    RELEASE_AND_RETURN(scope, toUCPUStrictInt32(result));
 }
 
 DEFINE_BUILTIN_ENTRY_I_RI(jsstring, charCodeAt)
@@ -683,7 +673,7 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, codePointAt, JSGlobalObject* globalO
         U16_NEXT(characters, i, length, character);
         result = static_cast<int32_t>(character);
     }
-    RELEASE_AND_RETURN(scope, result);
+    RELEASE_AND_RETURN(scope, toUCPUStrictInt32(result));
 }
 
 DEFINE_BUILTIN_ENTRY_I_RI(jsstring, codePointAt)
@@ -703,7 +693,7 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, length, JSGlobalObject* globalObject
         THROW_ILLEGAL_ARGUMENT_EXCEPTION;
     unsigned length = asString(arg)->length();
     ASSERT(length <= static_cast<unsigned>(std::numeric_limits<int32_t>::max())); // guaranteed by String::MaxLength
-    RELEASE_AND_RETURN(scope, length);
+    RELEASE_AND_RETURN(scope, toUCPUStrictInt32(length));
 }
 
 DEFINE_BUILTIN_ENTRY_I_R(jsstring, length)
@@ -786,7 +776,7 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, equals, JSGlobalObject* globalObject
         JSString* rightString = asString(right);
         result = leftString->equal(globalObject, rightString);
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSValue(result)));
+    RELEASE_AND_RETURN(scope, toUCPUStrictInt32(result));
 }
 
 DEFINE_BUILTIN_ENTRY_I_RR(jsstring, equals)
@@ -813,7 +803,7 @@ DEFINE_BUILTIN_IMPLEMENTATION_I32(jsstring, compare, JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, { });
     std::strong_ordering ordering = WTF::codePointCompare(StringView(leftView), StringView(rightView));
     int32_t result = ordering == std::strong_ordering::less ? -1 : ordering == std::strong_ordering::greater ? 1 : 0;
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSValue(result)));
+    RELEASE_AND_RETURN(scope, toUCPUStrictInt32(result));
 }
 
 DEFINE_BUILTIN_ENTRY_I_RR(jsstring, compare)

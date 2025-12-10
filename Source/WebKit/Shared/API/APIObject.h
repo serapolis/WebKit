@@ -30,6 +30,7 @@
 #include <wtf/Platform.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/RetainReleaseSwift.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 #if PLATFORM(COCOA)
@@ -142,6 +143,7 @@ public:
 #if ENABLE(INSPECTOR_EXTENSIONS)
         InspectorExtension,
 #endif
+        JSBuffer,
         KeyValueStorageManager,
         MediaCacheManager,
         MessageListener,
@@ -283,7 +285,7 @@ private:
 
     CFTypeRef m_wrapper;
 #endif // DELEGATE_REF_COUNTING_TO_COCOA
-};
+} SWIFT_SHARED_REFERENCE(refObject, derefObject);
 
 template <Object::Type ArgumentType>
 class ObjectImpl : public Object {
@@ -316,6 +318,24 @@ inline API::Object* Object::unwrap(void* object)
 #endif
 
 } // namespace API
+
+inline void refObject(API::Object* WTF_NONNULL obj)
+{
+#if DELEGATE_REF_COUNTING_TO_COCOA
+    obj->ref();
+#else
+    WTF::ref(obj);
+#endif
+}
+
+inline void derefObject(API::Object* WTF_NONNULL obj)
+{
+#if DELEGATE_REF_COUNTING_TO_COCOA
+    obj->deref();
+#else
+    WTF::deref(obj);
+#endif
+}
 
 #undef DELEGATE_REF_COUNTING_TO_COCOA
 

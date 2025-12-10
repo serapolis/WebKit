@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2005 Allan Sandfeld Jensen (kde@carewolf.com)
  *           (C) 2005, 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2025 Apple Inc. All rights reserved.
  * Copyright (C) 2010-2013 Google Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -38,14 +38,16 @@
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderElementInlines.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderObjectInlines.h"
 #include "RenderTableCell.h"
 #include "RenderView.h"
+#include "Settings.h"
 #include "StyleBoxShadow.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "TextBoxPainter.h"
 
 namespace WebCore {
@@ -135,9 +137,9 @@ template<typename Layers> void BackgroundPainter::paintFillLayersImpl(const Colo
 {
     bool shouldDrawBackgroundInSeparateBuffer = false;
 
-    fillLayers.computeClipMax();
+    Style::computeClipMax(fillLayers);
 
-    for (auto& layer : fillLayers) {
+    for (auto& layer : fillLayers.usedValues()) {
         if (layer.blendMode() != BlendMode::Normal)
             shouldDrawBackgroundInSeparateBuffer = true;
 
@@ -161,13 +163,13 @@ template<typename Layers> void BackgroundPainter::paintFillLayersImpl(const Colo
     auto baseBgColorUsage = BaseBackgroundColorUse;
 
     if (shouldDrawBackgroundInSeparateBuffer) {
-        paintFillLayerImpl(color, FillLayerToPaint<typename Layers::Layer> { .layer = fillLayers.last(), .isLast = true }, rect, bleedAvoidance, { }, { }, op, backgroundObject, BaseBackgroundColorOnly);
+        paintFillLayerImpl(color, FillLayerToPaint<typename Layers::value_type> { .layer = fillLayers.usedLast(), .isLast = true }, rect, bleedAvoidance, { }, { }, op, backgroundObject, BaseBackgroundColorOnly);
         baseBgColorUsage = BaseBackgroundColorSkip;
         context.beginTransparencyLayer(1);
     }
 
-    for (auto& layer : makeReversedRange(fillLayers))
-        paintFillLayerImpl(color, FillLayerToPaint<typename Layers::Layer> { .layer = layer, .isLast = &layer == &fillLayers.last() }, rect, bleedAvoidance, { }, { }, op, backgroundObject, baseBgColorUsage);
+    for (auto& layer : fillLayers.usedValues() | std::views::reverse)
+        paintFillLayerImpl(color, FillLayerToPaint<typename Layers::value_type> { .layer = layer, .isLast = &layer == &fillLayers.usedLast() }, rect, bleedAvoidance, { }, { }, op, backgroundObject, baseBgColorUsage);
 
     if (shouldDrawBackgroundInSeparateBuffer)
         context.endTransparencyLayer();
@@ -179,8 +181,9 @@ static void applyBoxShadowForBackground(GraphicsContext& context, const RenderSt
         if (shadow.inset)
             continue;
 
-        FloatSize shadowOffset(shadow.location.x().value, shadow.location.y().value);
-        context.setDropShadow({ shadowOffset, shadow.blur.value, style.colorWithColorFilter(shadow.color), shadow.isWebkitBoxShadow ? ShadowRadiusMode::Legacy : ShadowRadiusMode::Default });
+        const auto& zoomFactor = style.usedZoomForLength();
+        FloatSize shadowOffset(shadow.location.x().resolveZoom(zoomFactor), shadow.location.y().resolveZoom(zoomFactor));
+        context.setDropShadow({ shadowOffset, shadow.blur.resolveZoom(zoomFactor), style.colorWithColorFilter(shadow.color), shadow.isWebkitBoxShadow ? ShadowRadiusMode::Legacy : ShadowRadiusMode::Default });
         break;
     }
 }
@@ -221,14 +224,14 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
 
     if (context.detectingContentfulPaint()) {
         if (!context.contentfulPaintDetected() && shouldPaintBackgroundImage && bgImage->cachedImage()) {
-            if (style.backgroundLayers().first().isEmpty())
+            if (style.backgroundLayers().usedFirst().size().isEmpty())
                 context.setContentfulPaintDetected();
             return;
         }
     }
 
     if (context.invalidatingImagesWithAsyncDecodes()) {
-        if (shouldPaintBackgroundImage && bgImage->cachedImage()->isClientWaitingForAsyncDecoding(m_renderer))
+        if (shouldPaintBackgroundImage && bgImage->cachedImage()->isClientWaitingForAsyncDecoding(m_renderer.cachedImageClient()))
             bgImage->cachedImage()->removeAllClientsWaitingForAsyncDecoding();
         return;
     }
@@ -461,7 +464,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
     if (layer.isLast) {
         LayoutRect backgroundRect(scrolledPaintRect);
         bool applyBoxShadowToBackground = boxShadowShouldBeAppliedToBackground(m_renderer, rect.location(), bleedAvoidance, inlineBoxIterator);
-        if (applyBoxShadowToBackground || !shouldPaintBackgroundImage || !layer.layer.hasOpaqueImage(m_renderer) || !layer.layer.hasRepeatXY() || layer.layer.isEmpty()) {
+        if (applyBoxShadowToBackground || !shouldPaintBackgroundImage || !layer.layer.hasOpaqueImage(m_renderer) || !layer.layer.hasRepeatXY() || layer.layer.size().isEmpty()) {
             if (!applyBoxShadowToBackground)
                 backgroundRect.intersect(m_paintInfo.rect);
 
@@ -510,8 +513,8 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         geometry.clip(LayoutRect(pixelSnappedRect));
         RefPtr<Image> image;
         bool isFirstLine = inlineBoxIterator && inlineBoxIterator->lineBox()->isFirst();
-        if (!geometry.destinationRect.isEmpty() && (image = bgImage->image(backgroundObject ? backgroundObject : &m_renderer, geometry.tileSize, isFirstLine))) {
-            context.setDrawLuminanceMask(layer.layer.maskMode() == MaskMode::Luminance);
+        if (!geometry.destinationRect.isEmpty() && (image = bgImage->image(backgroundObject ? backgroundObject : &m_renderer, geometry.tileSize, context, isFirstLine))) {
+            context.setDrawLuminanceMask(layer.layer.maskMode() == Style::MaskMode::Luminance);
 
             ImagePaintingOptions options = {
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
@@ -528,11 +531,18 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
             auto drawResult = context.drawTiledImage(*image, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
-                bgImage->cachedImage()->addClientWaitingForAsyncDecoding(m_renderer);
+                bgImage->cachedImage()->addClientWaitingForAsyncDecoding(m_renderer.cachedImageClient());
             }
 
-            if (m_renderer.element() && !context.paintingDisabled())
-                m_renderer.element()->setHasEverPaintedImages(true);
+            if (!context.paintingDisabled()) {
+                if (m_renderer.element())
+                    m_renderer.element()->setHasEverPaintedImages(true);
+
+                if (auto* image = bgImage->cachedImage(); image && image->currentFrameIsComplete(&m_renderer)) {
+                    if (auto styleable = Styleable::fromRenderer(m_renderer))
+                        document().didPaintImage(styleable->element, image, geometry.destinationRect);
+                }
+            }
         }
     }
 }
@@ -679,7 +689,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
 
     LayoutSize spaceSize;
     LayoutSize phase;
-    auto computedXPosition = Style::evaluate(fillLayer.xPosition(), availableWidth, 1.0f /* FIXME FIND ZOOM */);
+    auto computedXPosition = Style::evaluate<LayoutUnit>(fillLayer.positionX(), availableWidth, Style::ZoomNeeded { });
     if (backgroundRepeatX == FillRepeat::Round && positioningAreaSize.width() > 0 && tileSize.width() > 0) {
         int numTiles = std::max(1, roundToInt(positioningAreaSize.width() / tileSize.width()));
         if (!fillLayer.size().specifiedHeight() && backgroundRepeatY != FillRepeat::Round)
@@ -689,7 +699,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
         phase.setWidth(tileSize.width() ? tileSize.width() - fmodf((computedXPosition + left), tileSize.width()) : 0);
     }
 
-    auto computedYPosition = Style::evaluate(fillLayer.yPosition(), availableHeight, 1.0f /* FIXME FIND ZOOM */);
+    auto computedYPosition = Style::evaluate<LayoutUnit>(fillLayer.positionY(), availableHeight, Style::ZoomNeeded { });
     if (backgroundRepeatY == FillRepeat::Round && positioningAreaSize.height() > 0 && tileSize.height() > 0) {
         int numTiles = std::max(1, roundToInt(positioningAreaSize.height() / tileSize.height()));
         if (!fillLayer.size().specifiedWidth() && backgroundRepeatX != FillRepeat::Round)
@@ -705,7 +715,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
     } else if (backgroundRepeatX == FillRepeat::Space && tileSize.width() > 0) {
         if (auto space = getSpace(positioningAreaSize.width(), tileSize.width())) {
             LayoutUnit actualWidth = tileSize.width() + *space;
-            computedXPosition = minimumValueForLength(Length(), availableWidth, 1.0f /* FIXME FIND ZOOM */);
+            computedXPosition = 0;
             spaceSize.setWidth(*space);
             spaceSize.setHeight(0);
             phase.setWidth(actualWidth ? actualWidth - fmodf((computedXPosition + left), actualWidth) : 0);
@@ -729,7 +739,7 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
     } else if (backgroundRepeatY == FillRepeat::Space && tileSize.height() > 0) {
         if (auto space = getSpace(positioningAreaSize.height(), tileSize.height())) {
             LayoutUnit actualHeight = tileSize.height() + *space;
-            computedYPosition = minimumValueForLength(Length(), availableHeight, 1.0f /* FIXME FIND ZOOM */);
+            computedYPosition = 0;
             spaceSize.setHeight(*space);
             phase.setHeight(actualHeight ? actualHeight - fmodf((computedYPosition + top), actualHeight) : 0);
         } else
@@ -795,21 +805,21 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
         [&](const Style::BackgroundSize::LengthSize& size) {
             auto tileSize = positioningAreaSize;
 
-            auto layerWidth = size.width();
-            auto layerHeight = size.height();
+            auto& layerWidth = size.width();
+            auto& layerHeight = size.height();
 
             if (auto fixed = layerWidth.tryFixed())
-                tileSize.setWidth(fixed->value);
+                tileSize.setWidth(Style::evaluate<LayoutUnit>(*fixed, Style::ZoomNeeded { }));
             else if (layerWidth.isPercentOrCalculated()) {
-                auto resolvedWidth = Style::evaluate(layerWidth, positioningAreaSize.width(), 1.0f /* FIXME FIND ZOOM */);
+                auto resolvedWidth = Style::evaluate<LayoutUnit>(layerWidth, positioningAreaSize.width(), Style::ZoomNeeded { });
                 // Non-zero resolved value should always produce some content.
                 tileSize.setWidth(!resolvedWidth ? resolvedWidth : std::max(devicePixelSize, resolvedWidth));
             }
 
             if (auto fixed = layerHeight.tryFixed())
-                tileSize.setHeight(fixed->value);
+                tileSize.setHeight(Style::evaluate<LayoutUnit>(*fixed, Style::ZoomNeeded { }));
             else if (layerHeight.isPercentOrCalculated()) {
-                auto resolvedHeight = Style::evaluate(layerHeight, positioningAreaSize.height(), 1.0f /* FIXME FIND ZOOM */);
+                auto resolvedHeight = Style::evaluate<LayoutUnit>(layerHeight, positioningAreaSize.height(), Style::ZoomNeeded { });
                 // Non-zero resolved value should always produce some content.
                 tileSize.setHeight(!resolvedHeight ? resolvedHeight : std::max(devicePixelSize, resolvedHeight));
             }
@@ -847,14 +857,15 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Render
     float deviceScaleFactor = document().deviceScaleFactor();
 
     bool hasOpaqueBackground = style.visitedDependentColorWithColorFilter(CSSPropertyBackgroundColor).isOpaque();
+    const auto& zoomFactor = style.usedZoomForLength();
     for (const auto& shadow : style.boxShadow()) {
         if (Style::shadowStyle(shadow) != shadowStyle)
             continue;
 
-        LayoutSize shadowOffset(shadow.location.x().value, shadow.location.y().value);
-        LayoutUnit shadowPaintingExtent = Style::paintingExtent(shadow);
-        LayoutUnit shadowSpread = LayoutUnit(shadow.spread.value);
-        auto shadowRadius = shadow.blur.value;
+        LayoutSize shadowOffset(shadow.location.x().resolveZoom(zoomFactor), shadow.location.y().resolveZoom(zoomFactor));
+        LayoutUnit shadowPaintingExtent = Style::paintingExtent(shadow, zoomFactor);
+        LayoutUnit shadowSpread = LayoutUnit(shadow.spread.resolveZoom(zoomFactor));
+        auto shadowRadius = shadow.blur.resolveZoom(zoomFactor);
 
         if (shadowOffset.isZero() && !shadowRadius && !shadowSpread)
             continue;
@@ -970,7 +981,7 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Render
 
             auto shapeForInnerHole = BorderShape(outerRectExpandedToObscureOpenEdges, borderWidthsWithSpread, borderShape.radii());
             if (shapeForInnerHole.snappedInnerRect(deviceScaleFactor).isEmpty()) {
-                shapeForInnerHole.fillInnerShape(context, shadowColor, deviceScaleFactor);
+                shapeForInnerHole.fillOuterShape(context, shadowColor, deviceScaleFactor);
                 continue;
             }
 
@@ -1037,7 +1048,7 @@ bool BackgroundPainter::boxShadowShouldBeAppliedToBackground(const RenderBoxMode
     if (!backgroundColor.isOpaque())
         return false;
 
-    auto& lastBackgroundLayer = style.backgroundLayers().last();
+    auto& lastBackgroundLayer = style.backgroundLayers().usedLast();
 
     if (lastBackgroundLayer.clip() != FillBox::BorderBox)
         return false;

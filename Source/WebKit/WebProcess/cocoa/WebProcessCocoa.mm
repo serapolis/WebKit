@@ -46,7 +46,7 @@
 #import "WKFullKeyboardAccessWatcher.h"
 #import "WKWebProcessPlugInBrowserContextControllerInternal.h"
 #import "WebFrame.h"
-#import "WebInspectorInternal.h"
+#import "WebInspectorBackend.h"
 #import "WebPage.h"
 #import "WebPageGroupProxy.h"
 #import "WebPreferencesDefaultValues.h"
@@ -125,6 +125,7 @@
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/SoftLinking.h>
+#import <wtf/SystemFree.h>
 #import <wtf/cf/NotificationCenterCF.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -183,6 +184,7 @@
 #endif
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
+#import "LaunchLogHook.h"
 #import "LogStream.h"
 #import "LogStreamMessages.h"
 #endif
@@ -236,7 +238,7 @@ id WebProcess::accessibilityFocusedUIElement()
             RefPtr page = WebProcess::singleton().focusedWebPage();
             if (!page || !page->accessibilityRemoteObject())
                 return nil;
-            return [page->accessibilityRemoteObject() accessibilityFocusedUIElement];
+            return [page->protectedAccessibilityRemoteObject() accessibilityFocusedUIElement];
         });
     };
 
@@ -248,7 +250,11 @@ id WebProcess::accessibilityFocusedUIElement()
             bool foundValidTree = false;
             switchOn(tree,
                 [&] (RefPtr<AXIsolatedTree>& typedTree) {
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+                    if (typedTree && typedTree->focusedNode()) {
+#else
                     if (typedTree) {
+#endif
                         OptionSet<ActivityState> state = typedTree->lockedPageActivityState();
                         if (state.containsAll({ ActivityState::IsVisible, ActivityState::IsFocused, ActivityState::WindowIsActive }))
                             foundValidTree = true;
@@ -280,10 +286,9 @@ id WebProcess::accessibilityFocusedUIElement()
         RetainPtr objectWrapper = object ? object->wrapper() : nil;
         if (objectWrapper) {
             ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-            id associatedParent = [objectWrapper accessibilityAttributeValue:@"_AXAssociatedPluginParent"];
+            if (RetainPtr associatedParent = [objectWrapper accessibilityAttributeValue:@"_AXAssociatedPluginParent"])
+                objectWrapper = WTFMove(associatedParent);
             ALLOW_DEPRECATED_DECLARATIONS_END
-            if (associatedParent)
-                objectWrapper = associatedParent;
         }
         return objectWrapper.autorelease();
     }
@@ -414,7 +419,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
         // Dispatch this work on a thread to avoid blocking the main thread. We will wait for this to complete at the end of this method.
         codeCheckSemaphore = adoptOSObject(dispatch_semaphore_create(0));
         dispatch_async(globalDispatchQueueSingleton(QOS_CLASS_USER_INTERACTIVE, 0), [codeCheckSemaphore = codeCheckSemaphore] {
-            auto bundleURL = adoptCF(CFBundleCopyBundleURL(CFBundleGetMainBundle()));
+            auto bundleURL = adoptCF(CFBundleCopyBundleURL(RetainPtr { CFBundleGetMainBundle() }.get()));
             SecStaticCodeRef code = nullptr;
             if (bundleURL)
                 SecStaticCodeCreateWithPath(bundleURL.get(), kSecCSDefaultFlags, &code);
@@ -496,8 +501,10 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 
 #if (PLATFORM(MAC) || PLATFORM(MACCATALYST)) && !ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
     if (parameters.launchServicesExtensionHandle) {
-        if ((m_launchServicesExtension = SandboxExtension::create(WTFMove(*parameters.launchServicesExtensionHandle)))) {
-            bool ok = m_launchServicesExtension->consume();
+        RefPtr sandboxExtension = SandboxExtension::create(WTFMove(*parameters.launchServicesExtensionHandle));
+        m_launchServicesExtension = sandboxExtension;
+        if (sandboxExtension) {
+            bool ok = sandboxExtension->consume();
             ASSERT_UNUSED(ok, ok);
         }
     }
@@ -517,7 +524,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     // Disable relaunch on login. This is also done from -[NSApplication init] by dispatching -[NSApplication disableRelaunchOnLogin] on a non-main thread.
     // This will be in a race with the closing of the Launch Services connection, so call it synchronously here.
     // The cost of calling this should be small, and it is not expected to have any impact on performance.
-    _LSSetApplicationInformationItem(kLSDefaultSessionID, _LSGetCurrentApplicationASN(), _kLSPersistenceSuppressRelaunchAtLoginKey, kCFBooleanTrue, nullptr);
+    _LSSetApplicationInformationItem(kLSDefaultSessionID, RetainPtr { _LSGetCurrentApplicationASN() }.get(), _kLSPersistenceSuppressRelaunchAtLoginKey, kCFBooleanTrue, nullptr);
 #endif
 
     // App nap must be manually enabled when not running the NSApplication run loop.
@@ -670,19 +677,19 @@ void WebProcess::updateProcessName(IsInProcessInitialization isInProcessInitiali
     RetainPtr<NSString> applicationName;
     switch (m_processType) {
     case ProcessType::Inspector:
-        applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Inspector", "Visible name of Web Inspector's web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
+        SUPPRESS_UNRETAINED_ARG applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Inspector", "Visible name of Web Inspector's web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
         break;
     case ProcessType::ServiceWorker:
-        applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Service Worker (%@)", "Visible name of Service Worker process. The argument is the application name."), m_uiProcessName.createNSString().get(), m_registrableDomain.string().createNSString().get()]).get();
+        SUPPRESS_UNRETAINED_ARG applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Service Worker (%@)", "Visible name of Service Worker process. The argument is the application name."), m_uiProcessName.createNSString().get(), m_registrableDomain.string().createNSString().get()]).get();
         break;
     case ProcessType::PrewarmedWebContent:
-        applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content (Prewarmed)", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
+        SUPPRESS_UNRETAINED_ARG applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content (Prewarmed)", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
         break;
     case ProcessType::CachedWebContent:
-        applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content (Cached)", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
+        SUPPRESS_UNRETAINED_ARG applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content (Cached)", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
         break;
     case ProcessType::WebContent:
-        applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
+        SUPPRESS_UNRETAINED_ARG applicationName = adoptNS([[NSString alloc] initWithFormat:WEB_UI_NSSTRING(@"%@ Web Content", "Visible name of the web process. The argument is the application name."), m_uiProcessName.createNSString().get()]).get();
         break;
     }
 
@@ -707,7 +714,7 @@ void WebProcess::updateProcessName(IsInProcessInitialization isInProcessInitiali
 
 #if !ENABLE(LAUNCHSERVICES_SANDBOX_EXTENSION_BLOCKING)
     // Note that it is important for _RegisterApplication() to have been called before setting the display name.
-    auto error = _LSSetApplicationInformationItem(kLSDefaultSessionID, _LSGetCurrentApplicationASN(), _kLSDisplayNameKey, (CFStringRef)applicationName.get(), nullptr);
+    auto error = _LSSetApplicationInformationItem(kLSDefaultSessionID, RetainPtr { _LSGetCurrentApplicationASN() }.get(), _kLSDisplayNameKey, (CFStringRef)applicationName.get(), nullptr);
     ASSERT(!error);
     if (error) {
         WEBPROCESS_RELEASE_LOG_ERROR(Process, "updateProcessName: Failed to set the display name of the WebContent process, error code=%ld", static_cast<long>(error));
@@ -715,7 +722,7 @@ void WebProcess::updateProcessName(IsInProcessInitialization isInProcessInitiali
     }
 #if ASSERT_ENABLED
     // It is possible for _LSSetApplicationInformationItem() to return 0 and yet fail to set the display name so we make sure the display name has actually been set.
-    String actualApplicationName = adoptCF((CFStringRef)_LSCopyApplicationInformationItem(kLSDefaultSessionID, _LSGetCurrentApplicationASN(), _kLSDisplayNameKey)).get();
+    String actualApplicationName = adoptCF((CFStringRef)_LSCopyApplicationInformationItem(kLSDefaultSessionID, RetainPtr { _LSGetCurrentApplicationASN() }.get(), _kLSDisplayNameKey)).get();
     ASSERT(!actualApplicationName.isEmpty());
 #endif
 #endif
@@ -835,9 +842,9 @@ static void prewarmLogs()
 }
 #endif // PLATFORM(IOS_FAMILY)
 
-static bool shouldIgnoreLogMessage(std::span<const Latin1Character> logChannel)
+static bool shouldIgnoreLogMessage(std::span<const char> logChannel)
 {
-    return equalSpans(logChannel, "com.apple.xpc\0"_span8) || equalSpans(logChannel, "com.apple.CoreAnalytics\0"_span8);
+    return equalSpans(logChannel, "com.apple.xpc\0"_span) || equalSpans(logChannel, "com.apple.CoreAnalytics\0"_span);
 }
 
 static void registerLogClient(bool isDebugLoggingEnabled, std::unique_ptr<LogClient>&& newLogClient)
@@ -849,11 +856,13 @@ static void registerLogClient(bool isDebugLoggingEnabled, std::unique_ptr<LogCli
     RELEASE_ASSERT(!logClient());
     logClient() = WTFMove(newLogClient);
 
-    static os_log_hook_t prevHook = nullptr;
-
     // OS_LOG_TYPE_DEFAULT implies default, fault, and error.
     // OS_LOG_TYPE_DEBUG implies debug, info, default, fault, and error.
     const auto minimumType = isDebugLoggingEnabled ? OS_LOG_TYPE_DEBUG : OS_LOG_TYPE_DEFAULT;
+
+    LaunchLogHook::singleton().disable();
+
+    static os_log_hook_t prevHook = nullptr;
 
     prevHook = os_log_set_hook(minimumType, makeBlockPtr([isDebugLoggingEnabled](os_log_type_t type, os_log_message_t msg) {
         if (prevHook)
@@ -870,26 +879,25 @@ static void registerLogClient(bool isDebugLoggingEnabled, std::unique_ptr<LogCli
         if (Thread::currentThreadIsRealtime())
             return;
 
-        auto logChannel = unsafeSpan8IncludingNullTerminator(msg->subsystem);
+        auto logChannel = unsafeSpanIncludingNullTerminator(msg->subsystem);
         if (logChannel.size() > logSubsystemMaxSize)
             return;
         if (shouldIgnoreLogMessage(logChannel))
             return;
-        auto logCategory = unsafeSpan8IncludingNullTerminator(msg->category);
+        auto logCategory = unsafeSpanIncludingNullTerminator(msg->category);
         if (logCategory.size() > logCategoryMaxSize)
             return;
 
         if (type == OS_LOG_TYPE_FAULT)
             type = OS_LOG_TYPE_ERROR;
 
-        if (char* messageString = os_log_copy_message_string(msg)) {
-            auto logString = spanConstCast<Latin1Character>(unsafeSpan8IncludingNullTerminator(messageString));
+        if (auto messageString = adoptSystemMalloc(os_log_copy_message_string(msg))) {
+            auto logString = spanConstCast<char>(unsafeSpanIncludingNullTerminator(messageString.get()));
             if (logString.size() > logStringMaxSize) {
                 logString = logString.first(logStringMaxSize);
                 logString.back() = 0;
             }
             logClient()->log(byteCast<uint8_t>(logChannel), byteCast<uint8_t>(logCategory), byteCast<uint8_t>(logString), type);
-            free(messageString);
         }
     }).get());
 
@@ -1007,6 +1015,12 @@ RetainPtr<CFDataRef> WebProcess::sourceApplicationAuditData() const
 void WebProcess::initializeSandbox(const AuxiliaryProcessInitializationParameters& parameters, SandboxInitializationParameters& sandboxParameters)
 {
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+
+#if ENABLE(AUDIO_DECODER_REGISTRATION)
+    registerOpusDecoderIfNeeded();
+    registerVorbisDecoderIfNeeded();
+#endif
+
     auto webKitBundle = [NSBundle bundleForClass:NSClassFromString(@"WKWebView")];
 
     sandboxParameters.setOverrideSandboxProfilePath(makeString(String([webKitBundle resourcePath]), "/com.apple.WebProcess.sb"_s));
@@ -1026,14 +1040,14 @@ static NSURL *origin(WebPage& page)
     return [NSURL URLWithString:rootFrameOriginString.createNSString().get()];
 }
 
-static Vector<String> activePagesOrigins(const HashMap<PageIdentifier, RefPtr<WebPage>>& pageMap)
+static Vector<String> activePagesOrigins(const HashMap<PageIdentifier, Ref<WebPage>>& pageMap)
 {
     Vector<String> origins;
     for (auto& page : pageMap.values()) {
         if (page->usesEphemeralSession())
             continue;
 
-        RetainPtr originAsURL = origin(*page);
+        RetainPtr originAsURL = origin(page);
         if (!originAsURL)
             continue;
 
@@ -1066,11 +1080,11 @@ void WebProcess::updateActivePages(const String& overrideDisplayName)
 #else
     if (!overrideDisplayName) {
         RunLoop::mainSingleton().dispatch([activeOrigins = activePagesOrigins(m_pageMap)] {
-            _LSSetApplicationInformationItem(kLSDefaultSessionID, _LSGetCurrentApplicationASN(), CFSTR("LSActivePageUserVisibleOriginsKey"), (__bridge CFArrayRef)createNSArray(activeOrigins).get(), nullptr);
+            _LSSetApplicationInformationItem(kLSDefaultSessionID, RetainPtr { _LSGetCurrentApplicationASN() }.get(), CFSTR("LSActivePageUserVisibleOriginsKey"), (__bridge CFArrayRef)createNSArray(activeOrigins).get(), nullptr);
         });
     } else {
         RunLoop::mainSingleton().dispatch([name = overrideDisplayName.createCFString()] {
-            _LSSetApplicationInformationItem(kLSDefaultSessionID, _LSGetCurrentApplicationASN(), _kLSDisplayNameKey, name.get(), nullptr);
+            _LSSetApplicationInformationItem(kLSDefaultSessionID, RetainPtr { _LSGetCurrentApplicationASN() }.get(), _kLSDisplayNameKey, name.get(), nullptr);
         });
     }
 #endif
@@ -1117,8 +1131,8 @@ void WebProcess::updateCPUMonitorState(CPUMonitorUpdateReason reason)
 {
 #if PLATFORM(MAC)
     if (!m_cpuLimit) {
-        if (m_cpuMonitor)
-            m_cpuMonitor->setCPULimit(std::nullopt);
+        if (CheckedPtr cpuMonitor = m_cpuMonitor.get())
+            cpuMonitor->setCPULimit(std::nullopt);
         return;
     }
 
@@ -1137,9 +1151,9 @@ void WebProcess::updateCPUMonitorState(CPUMonitorUpdateReason reason)
     } else if (reason == CPUMonitorUpdateReason::VisibilityHasChanged) {
         // If the visibility has changed, stop the CPU monitor before setting its limit. This is needed because the CPU usage can vary wildly based on visibility and we would
         // not want to report that a process has exceeded its background CPU limit even though most of the CPU time was used while the process was visible.
-        m_cpuMonitor->setCPULimit(std::nullopt);
+        CheckedRef { *m_cpuMonitor }->setCPULimit(std::nullopt);
     }
-    m_cpuMonitor->setCPULimit(m_cpuLimit);
+    CheckedRef { *m_cpuMonitor }->setCPULimit(m_cpuLimit);
 #else
     UNUSED_PARAM(reason);
 #endif
@@ -1390,7 +1404,7 @@ void WebProcess::handlePreferenceChange(const String& domain, const String& key,
 {
     if (key == "AppleLanguages"_s) {
         // We need to set AppleLanguages for the volatile domain, similarly to what we do in XPCServiceMain.mm.
-        NSDictionary *existingArguments = [[NSUserDefaults standardUserDefaults] volatileDomainForName:NSArgumentDomain];
+        RetainPtr<NSDictionary> existingArguments = [[NSUserDefaults standardUserDefaults] volatileDomainForName:NSArgumentDomain];
         RetainPtr<NSMutableDictionary> newArguments = adoptNS([existingArguments mutableCopy]);
         [newArguments setValue:value forKey:@"AppleLanguages"];
         [[NSUserDefaults standardUserDefaults] setVolatileDomain:newArguments.get() forName:NSArgumentDomain];

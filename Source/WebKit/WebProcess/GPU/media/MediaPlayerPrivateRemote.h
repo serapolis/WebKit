@@ -98,12 +98,12 @@ class MediaPlayerPrivateRemote final
 public:
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
-    static Ref<MediaPlayerPrivateRemote> create(WebCore::MediaPlayer* player, WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, WebCore::MediaPlayerIdentifier identifier, RemoteMediaPlayerManager& manager)
+    static Ref<MediaPlayerPrivateRemote> create(WebCore::MediaPlayer& player, WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier, WebCore::MediaPlayerIdentifier identifier, RemoteMediaPlayerManager& manager)
     {
         return adoptRef(*new MediaPlayerPrivateRemote(player, remoteEngineIdentifier, identifier, manager));
     }
 
-    MediaPlayerPrivateRemote(WebCore::MediaPlayer*, WebCore::MediaPlayerEnums::MediaEngineIdentifier, WebCore::MediaPlayerIdentifier, RemoteMediaPlayerManager&);
+    MediaPlayerPrivateRemote(WebCore::MediaPlayer&, WebCore::MediaPlayerEnums::MediaEngineIdentifier, WebCore::MediaPlayerIdentifier, RemoteMediaPlayerManager&);
     ~MediaPlayerPrivateRemote();
 
     constexpr WebCore::MediaPlayerType mediaPlayerType() const final { return WebCore::MediaPlayerType::Remote; }
@@ -113,7 +113,6 @@ public:
     WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier() const { return m_remoteEngineIdentifier; }
     std::optional<WebCore::MediaPlayerIdentifier> identifier() const final { return m_id; }
     IPC::Connection& connection() const { return protectedManager()->gpuProcessConnection().connection(); }
-    // FIXME: <rdar://152831358> We only need protectedConnection() for MediaPlayerPrivateRemoteCocoa.mm which is suspect.
     Ref<IPC::Connection> protectedConnection() const { return protectedManager()->gpuProcessConnection().connection(); }
     RefPtr<WebCore::MediaPlayer> player() const { return m_player.get(); }
 
@@ -219,6 +218,8 @@ public:
     MediaTime duration() const final;
     MediaTime currentTime() const final;
     MediaTime currentOrPendingSeekTime() const final;
+
+    void gpuProcessConnectionDidClose();
 
 private:
     class TimeProgressEstimator final {
@@ -376,7 +377,7 @@ private:
     bool wirelessVideoPlaybackDisabled() const final;
     void setWirelessVideoPlaybackDisabled(bool) final;
 
-    bool canPlayToWirelessPlaybackTarget() const final;
+    OptionSet<WebCore::MediaPlaybackTargetType> supportedPlaybackTargetTypes() const final;
     bool isCurrentPlaybackTargetWireless() const final;
     void setWirelessPlaybackTarget(Ref<WebCore::MediaPlaybackTarget>&&) final;
 
@@ -432,9 +433,6 @@ private:
 
     void tracksChanged() final;
 
-    void beginSimulatedHDCPError() final;
-    void endSimulatedHDCPError() final;
-
     String languageOfPrimaryAudioTrack() const final;
 
     size_t extraMemoryCost() const final;
@@ -476,9 +474,9 @@ private:
     void setShouldCheckHardwareSupport(bool) final;
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-    const String& defaultSpatialTrackingLabel() const final;
+    String defaultSpatialTrackingLabel() const final;
     void setDefaultSpatialTrackingLabel(const String&) final;
-    const String& spatialTrackingLabel() const final;
+    String spatialTrackingLabel() const final;
     void setSpatialTrackingLabel(const String&) final;
 #endif
 

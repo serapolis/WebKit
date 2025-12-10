@@ -113,7 +113,7 @@ class SetBuildSummary(buildstep.BuildStep, AddToLogMixin):
         return defer.returnValue(SUCCESS)
 
 
-class InstallCMake(shell.ShellCommandNewStyle):
+class InstallCMake(shell.ShellCommand):
     name = 'install-cmake'
     haltOnFailure = True
     summary = 'Successfully installed CMake'
@@ -151,7 +151,7 @@ class InstallCMake(shell.ShellCommandNewStyle):
         return {u'step': self.summary}
 
 
-class InstallNinja(shell.ShellCommandNewStyle, ShellMixin):
+class InstallNinja(shell.ShellCommand, ShellMixin):
     name = 'install-ninja'
     haltOnFailure = True
     summary = 'Successfully installed Ninja'
@@ -189,7 +189,7 @@ class InstallNinja(shell.ShellCommandNewStyle, ShellMixin):
         return {u'step': self.summary}
 
 
-class GetLLVMVersion(shell.ShellCommandNewStyle, ShellMixin):
+class GetLLVMVersion(shell.ShellCommand, ShellMixin):
     name = 'get-llvm-version'
     summary = 'Found LLVM version'
 
@@ -316,7 +316,7 @@ class UpdateClang(steps.ShellSequence, ShellMixin):
         return {'step': self.summary}
 
 
-class PrintClangVersion(shell.ShellCommandNewStyle):
+class PrintClangVersion(shell.ShellCommand):
     name = 'print-clang-version'
     haltOnFailure = False
     flunkOnFailure = False
@@ -339,7 +339,7 @@ class PrintClangVersion(shell.ShellCommandNewStyle):
             return {'step': match.group(0)}
 
 
-class PrintClangVersion(shell.ShellCommandNewStyle):
+class PrintClangVersion(shell.ShellCommand):
     name = 'print-clang-version'
     haltOnFailure = False
     flunkOnFailure = False
@@ -389,7 +389,7 @@ class PrintClangVersionAfterUpdate(PrintClangVersion, ShellMixin):
         return super().getResultSummary()
 
 
-class PruneCoreSymbolicationdCacheIfTooLarge(shell.ShellCommandNewStyle):
+class PruneCoreSymbolicationdCacheIfTooLarge(shell.ShellCommand):
     name = "prune-coresymbolicationd-cache-if-too-large"
     description = ["pruning coresymbolicationd cache to < 10GB"]
     descriptionDone = ["pruned coresymbolicationd cache"]

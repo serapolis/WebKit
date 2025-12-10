@@ -27,7 +27,7 @@
 #include "EventDispatcher.h"
 
 #include "CompositionEvent.h"
-#include "DocumentInlines.h"
+#include "DocumentView.h"
 #include "EventContext.h"
 #include "EventNames.h"
 #include "EventPath.h"
@@ -40,6 +40,7 @@
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "MouseEvent.h"
+#include "NodeDocument.h"
 #include "ScopedEventQueue.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"

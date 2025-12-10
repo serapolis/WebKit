@@ -29,7 +29,6 @@
 #include "DrawingAreaCoordinatedGraphics.h"
 
 #include "DrawingAreaProxyMessages.h"
-#include "LayerTreeHost.h"
 #include "MessageSenderInlines.h"
 #include "UpdateInfo.h"
 #include "WebDisplayRefreshMonitor.h"
@@ -47,6 +46,12 @@
 #include <WebCore/Settings.h>
 #include <WebCore/ShareableBitmap.h>
 #include <wtf/SetForScope.h>
+
+#if PLATFORM(PLAYSTATION)
+#include "LayerTreeHostPlayStation.h"
+#else
+#include "LayerTreeHost.h"
+#endif
 
 #if USE(GLIB_EVENT_LOOP)
 #include <wtf/glib/RunLoopSourcePriority.h>
@@ -164,7 +169,7 @@ void DrawingAreaCoordinatedGraphics::updateRenderingWithForcedRepaint()
     }
 
     if (!m_layerTreeStateIsFrozen)
-        m_layerTreeHost->forceRepaint();
+        m_layerTreeHost->updateRenderingWithForcedRepaint();
 }
 
 void DrawingAreaCoordinatedGraphics::updateRenderingWithForcedRepaintAsync(WebPage& page, CompletionHandler<void()>&& completionHandler)
@@ -177,7 +182,7 @@ void DrawingAreaCoordinatedGraphics::updateRenderingWithForcedRepaintAsync(WebPa
     if (m_layerTreeStateIsFrozen)
         return completionHandler();
 
-    m_layerTreeHost->forceRepaintAsync(WTFMove(completionHandler));
+    m_layerTreeHost->updateRenderingWithForcedRepaintAsync(WTFMove(completionHandler));
 }
 
 void DrawingAreaCoordinatedGraphics::setLayerTreeStateIsFrozen(bool isFrozen)
@@ -216,8 +221,10 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
 #if ENABLE(DEVELOPER_MODE)
     if (m_supportsAsyncScrolling) {
         auto* disableAsyncScrolling = getenv("WEBKIT_DISABLE_ASYNC_SCROLLING");
+        IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
         if (disableAsyncScrolling && strcmp(disableAsyncScrolling, "0"))
             m_supportsAsyncScrolling = false;
+        IGNORE_CLANG_WARNINGS_END
     }
 #endif
 
@@ -320,7 +327,7 @@ void DrawingAreaCoordinatedGraphics::triggerRenderingUpdate()
         return;
 
     if (m_layerTreeHost)
-        m_layerTreeHost->scheduleLayerFlush();
+        m_layerTreeHost->scheduleRenderingUpdate();
     else
         scheduleDisplay();
 }
@@ -377,7 +384,7 @@ void DrawingAreaCoordinatedGraphics::updateGeometry(const IntSize& size, Complet
     completionHandler();
 }
 
-void DrawingAreaCoordinatedGraphics::displayDidRefresh()
+void DrawingAreaCoordinatedGraphics::displayDidRefresh(MonotonicTime)
 {
     // We might get didUpdate messages from the UI process even after we've
     // entered accelerated compositing mode. Ignore them.
@@ -526,14 +533,6 @@ void DrawingAreaCoordinatedGraphics::enterAcceleratedCompositingMode(GraphicsLay
     m_exitCompositingTimer.stop();
     m_wantsToExitAcceleratedCompositingMode = false;
 
-#if !HAVE(DISPLAY_LINK)
-    auto changeWindowScreen = [&] {
-        // In order to ensure that we get a unique DisplayRefreshMonitor per-DrawingArea (necessary because ThreadedDisplayRefreshMonitor
-        // is driven by the ThreadedCompositor of the drawing area), give each page a unique DisplayID derived from DrawingArea's unique ID.
-        Ref { m_webPage.get() }->windowScreenDidChange(m_layerTreeHost->displayID(), std::nullopt);
-    };
-#endif
-
     ASSERT(!m_layerTreeHost);
 #if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || HAVE(DISPLAY_LINK)
     m_layerTreeHost = makeUnique<LayerTreeHost>(m_webPage);
@@ -545,7 +544,9 @@ void DrawingAreaCoordinatedGraphics::enterAcceleratedCompositingMode(GraphicsLay
 #endif
 
 #if !HAVE(DISPLAY_LINK)
-    changeWindowScreen();
+    // In order to ensure that we get a unique DisplayRefreshMonitor per-DrawingArea (necessary because ThreadedDisplayRefreshMonitor
+    // is driven by the ThreadedCompositor of the drawing area), give each page a unique DisplayID derived from DrawingArea's unique ID.
+    Ref { m_webPage.get() }->windowScreenDidChange(m_layerTreeHost->displayID(), std::nullopt);
 #endif
     if (m_layerTreeStateIsFrozen)
         m_layerTreeHost->setLayerTreeStateIsFrozen(true);
@@ -807,6 +808,16 @@ void DrawingAreaCoordinatedGraphics::foreachRegionInDamageHistoryForTesting(Func
 {
     if (m_layerTreeHost)
         m_layerTreeHost->foreachRegionInDamageHistoryForTesting(WTFMove(callback));
+}
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+void DrawingAreaCoordinatedGraphics::fillGLInformation(RenderProcessInfo&& info, CompletionHandler<void(RenderProcessInfo&&)>&& completionHandler)
+{
+    if (m_layerTreeHost)
+        m_layerTreeHost->fillGLInformation(WTFMove(info), WTFMove(completionHandler));
+    else
+        completionHandler(WTFMove(info));
 }
 #endif
 

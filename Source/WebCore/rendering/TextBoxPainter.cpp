@@ -27,7 +27,6 @@
 
 #include "CaretRectComputation.h"
 #include "CompositionHighlight.h"
-#include "DocumentInlines.h"
 #include "DocumentMarkerController.h"
 #include "Editor.h"
 #include "EventRegion.h"
@@ -42,17 +41,20 @@
 #include "RenderBlock.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderCombineText.h"
+#include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "RenderedDocumentMarker.h"
+#include "Settings.h"
 #include "StyleTextDecorationLine.h"
 #include "StyleTextDecorationThickness.h"
 #include "StyledMarkedText.h"
 #include "TextPaintStyle.h"
 #include "TextPainter.h"
+#include <ranges>
 
 #if ENABLE(WRITING_TOOLS)
 #include "GraphicsContextCG.h"
@@ -69,9 +71,9 @@ static std::optional<bool> emphasisMarkExistsAndIsAbove(const RenderText& render
         return { };
 
     auto emphasisPosition = style.textEmphasisPosition();
-    bool isAbove = !emphasisPosition.contains(TextEmphasisPosition::Under);
+    bool isAbove = !emphasisPosition.contains(Style::TextEmphasisPositionValue::Under);
     if (style.writingMode().isVerticalTypographic())
-        isAbove = !emphasisPosition.contains(TextEmphasisPosition::Left);
+        isAbove = !emphasisPosition.contains(Style::TextEmphasisPositionValue::Left);
 
     auto findRubyAnnotation = [&]() -> RenderBlockFlow* {
         for (auto* baseCandidate = renderer.parent(); baseCandidate; baseCandidate = baseCandidate->parent()) {
@@ -88,7 +90,7 @@ static std::optional<bool> emphasisMarkExistsAndIsAbove(const RenderText& render
 
     if (auto* annotation = findRubyAnnotation()) {
         // The emphasis marks are suppressed only if there is a ruby annotation box on the same side and it is not empty.
-        if (annotation->hasLines() && isAbove == (annotation->style().rubyPosition() == RubyPosition::Over))
+        if (annotation->hasContentfulInlineLine() && isAbove == (annotation->style().rubyPosition() == RubyPosition::Over))
             return { };
     }
 
@@ -177,7 +179,7 @@ static void buildTextForShaping(ShapedContent& shapedContent, InlineIterator::Bo
 TextBoxPainter::TextBoxPainter(const LayoutIntegration::InlineContent& inlineContent, const InlineDisplay::Box& box, const RenderStyle& style, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     : m_textBox(InlineIterator::BoxModernPath { inlineContent, inlineContent.indexForBox(box) })
     , m_renderer(downcast<RenderText>(m_textBox.renderer()))
-    , m_document(m_renderer.document())
+    , m_document(m_renderer->document())
     , m_style(style)
     , m_logicalRect(m_textBox.isHorizontal() ? m_textBox.visualRectIgnoringBlockDirection() : m_textBox.visualRectIgnoringBlockDirection().transposedRect())
     , m_paintTextRun(m_textBox.textRun())
@@ -187,17 +189,17 @@ TextBoxPainter::TextBoxPainter(const LayoutIntegration::InlineContent& inlineCon
     , m_paintRect(computePaintRect(paintOffset))
     , m_isFirstLine(m_textBox.isFirstFormattedLine())
     , m_isCombinedText([&] {
-        auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(m_renderer);
+        auto* combineTextRenderer = dynamicDowncast<RenderCombineText>(m_renderer.get());
         return combineTextRenderer && combineTextRenderer->isCombined();
     }())
-    , m_isPrinting(m_document.printing())
-    , m_haveSelection(computeHaveSelection())
+, m_isPrinting(m_document->printing())
+, m_haveSelection(computeHaveSelection())
 {
     ASSERT(paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::Selection || paintInfo.phase == PaintPhase::TextClip || paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::Accessibility);
 
-    auto& editor = m_renderer.frame().editor();
-    m_containsComposition = m_renderer.textNode() && editor.compositionNode() == m_renderer.textNode();
-    m_compositionWithCustomUnderlines = m_containsComposition && editor.compositionUsesCustomUnderlines();
+    Ref editor = m_renderer->frame().editor();
+    m_containsComposition = m_renderer->textNode() && editor->compositionNode() == m_renderer->textNode();
+    m_compositionWithCustomUnderlines = m_containsComposition && editor->compositionUsesCustomUnderlines();
 }
 
 TextBoxPainter::~TextBoxPainter() = default;
@@ -218,7 +220,7 @@ void TextBoxPainter::paint()
 
     if (m_paintInfo.phase == PaintPhase::EventRegion) {
         constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::IgnoreCSSPointerEventsProperty };
-        if (m_renderer.parent()->visibleToHitTesting(hitType))
+        if (m_renderer->parent()->visibleToHitTesting(hitType))
             m_paintInfo.eventRegionContext()->unite(FloatRoundedRect(m_paintRect), m_renderer, m_style);
         return;
     }
@@ -251,9 +253,9 @@ void TextBoxPainter::paint()
 #endif
             if (m_containsComposition && !m_compositionWithCustomUnderlines)
                 return true;
-            if (CheckedPtr markers = m_document.markersIfExists(); markers && markers->hasMarkers())
+            if (CheckedPtr markers = m_document->markersIfExists(); markers && markers->hasMarkers())
                 return true;
-            if (m_document.hasHighlight())
+            if (m_document->hasHighlight())
                 return true;
             return false;
         };
@@ -269,7 +271,16 @@ void TextBoxPainter::paint()
         if (m_compositionWithCustomUnderlines)
             paintCompositionUnderlines();
 
-        m_renderer.page().addRelevantRepaintedObject(m_renderer, enclosingLayoutRect(m_paintRect));
+        m_renderer->page().addRelevantRepaintedObject(m_renderer, enclosingLayoutRect(m_paintRect));
+
+        bool isOnlyTextBoxForElement = [&]() {
+            if (m_textBox.boxIndex() != 1)
+                return false;
+            auto& content = m_textBox.inlineContent().displayContent();
+            return content.lines.size() == 1 && content.boxes.size() == 2;
+        }();
+
+        m_document->didPaintText(textBox().formattingContextRoot(), textBox().visualRectIgnoringBlockDirection(), isOnlyTextBoxForElement);
     }
 
     if (glyphRotation) {
@@ -282,7 +293,7 @@ void TextBoxPainter::paint()
 
 std::pair<unsigned, unsigned> TextBoxPainter::selectionStartEnd() const
 {
-    return m_renderer.view().selection().rangeForTextBox(m_renderer, m_selectableRange);
+    return m_renderer->view().selection().rangeForTextBox(m_renderer, m_selectableRange);
 }
 
 MarkedText TextBoxPainter::createMarkedTextFromSelectionInBox()
@@ -299,8 +310,8 @@ void TextBoxPainter::paintCompositionForeground(const StyledMarkedText& markedTe
         if (!m_containsComposition)
             return false;
 
-        auto& editor = m_renderer.frame().editor();
-        return editor.compositionUsesCustomHighlights();
+        Ref editor = m_renderer->frame().editor();
+        return editor->compositionUsesCustomHighlights();
     };
 
     if (!hasCompositionCustomHighlights()) {
@@ -311,8 +322,8 @@ void TextBoxPainter::paintCompositionForeground(const StyledMarkedText& markedTe
     // The highlight ranges must be "packed" so that there is no non-empty interval between
     // any two adjacent highlight ranges. This is needed since otherwise, `paintForeground`
     // will not be called in those would-be non-empty intervals.
-    auto& editor = m_renderer.frame().editor();
-    auto highlights = editor.customCompositionHighlights();
+    Ref editor = m_renderer->frame().editor();
+    auto highlights = editor->customCompositionHighlights();
 
     Vector<CompositionHighlight> highlightsWithForeground;
     highlightsWithForeground.append({ textBox().start(), highlights[0].startOffset, { }, { } });
@@ -349,9 +360,9 @@ void TextBoxPainter::paintCompositionForeground(const StyledMarkedText& markedTe
 void TextBoxPainter::paintForegroundAndDecorations()
 {
     auto shouldPaintSelectionForeground = m_haveSelection && !m_compositionWithCustomUnderlines;
-    auto hasTextDecoration = !m_style.textDecorationLineInEffect().isNone();
-    auto hasHighlightDecoration = m_document.hasHighlight() && !MarkedText::collectForHighlights(m_renderer, m_selectableRange, MarkedText::PaintPhase::Decoration).isEmpty();
-    auto hasMismatchingContentDirection = m_renderer.containingBlock()->writingMode().bidiDirection() != textBox().direction();
+    auto hasTextDecoration = !m_style->textDecorationLineInEffect().isNone();
+    auto hasHighlightDecoration = m_document->hasHighlight() && !MarkedText::collectForHighlights(m_renderer, m_selectableRange, MarkedText::PaintPhase::Decoration).isEmpty();
+    auto hasMismatchingContentDirection = m_renderer->containingBlock()->writingMode().bidiDirection() != textBox().direction();
     auto hasBackwardTrunctation = m_selectableRange.truncation && hasMismatchingContentDirection;
 
     auto hasSpellingOrGrammarDecoration = [&] {
@@ -362,7 +373,7 @@ void TextBoxPainter::paintForegroundAndDecorations()
         });
 
         if (hasSpellingError) {
-            auto spellingErrorStyle = m_renderer.spellingErrorPseudoStyle();
+            auto spellingErrorStyle = m_renderer->spellingErrorPseudoStyle();
             if (spellingErrorStyle)
                 return !spellingErrorStyle->textDecorationLineInEffect().isNone();
         }
@@ -372,7 +383,7 @@ void TextBoxPainter::paintForegroundAndDecorations()
         });
 
         if (hasGrammarError) {
-            auto grammarErrorStyle = m_renderer.grammarErrorPseudoStyle();
+            auto grammarErrorStyle = m_renderer->grammarErrorPseudoStyle();
             if (grammarErrorStyle)
                 return !grammarErrorStyle->textDecorationLineInEffect().isNone();
         }
@@ -387,9 +398,9 @@ void TextBoxPainter::paintForegroundAndDecorations()
             return true;
         if (shouldPaintSelectionForeground)
             return true;
-        if (CheckedPtr markers = m_document.markersIfExists(); markers && markers->hasMarkers())
+        if (CheckedPtr markers = m_document->markersIfExists(); markers && markers->hasMarkers())
             return true;
-        if (m_document.hasHighlight())
+        if (m_document->hasHighlight())
             return true;
         return false;
     };
@@ -457,7 +468,7 @@ void TextBoxPainter::paintForegroundAndDecorations()
             textDecorationSelectionClipOutRect = m_paintRect;
             float logicalWidthBeforeRange;
             float logicalWidthAfterRange;
-            float logicalSelectionWidth = fontCascade().widthOfTextRange(m_paintTextRun, selectionStart, selectionEnd, nullptr, &logicalWidthBeforeRange, &logicalWidthAfterRange);
+            float logicalSelectionWidth = fontCascade().widthOfTextRange(m_paintTextRun, selectionStart, selectionEnd, logicalWidthBeforeRange, logicalWidthAfterRange);
             // FIXME: Do we need to handle vertical bottom to top text?
             if (!textBox().isHorizontal()) {
                 textDecorationSelectionClipOutRect.move(0, logicalWidthBeforeRange);
@@ -479,11 +490,11 @@ void TextBoxPainter::paintForegroundAndDecorations()
             unsigned endOffset = markedText.endOffset;
             if (startOffset < endOffset) {
                 // Avoid measuring the text when the entire line box is selected as an optimization.
-                auto snappedPaintRect = snapRectToDevicePixelsWithWritingDirection(LayoutRect { m_paintRect }, m_document.deviceScaleFactor(), m_paintTextRun.ltr());
+                auto snappedPaintRect = snapRectToDevicePixelsWithWritingDirection(LayoutRect { m_paintRect }, m_document->deviceScaleFactor(), m_paintTextRun.ltr());
                 if (startOffset || endOffset != m_paintTextRun.length()) {
                     LayoutRect selectionRect = { m_paintRect.x(), m_paintRect.y(), m_paintRect.width(), m_paintRect.height() };
-                    fontCascade().adjustSelectionRectForText(m_renderer.canUseSimplifiedTextMeasuring().value_or(false), m_paintTextRun, selectionRect, startOffset, endOffset);
-                    snappedPaintRect = snapRectToDevicePixelsWithWritingDirection(selectionRect, m_document.deviceScaleFactor(), m_paintTextRun.ltr());
+                    fontCascade().adjustSelectionRectForText(m_renderer->canUseSimplifiedTextMeasuring().value_or(false), m_paintTextRun, selectionRect, startOffset, endOffset);
+                    snappedPaintRect = snapRectToDevicePixelsWithWritingDirection(selectionRect, m_document->deviceScaleFactor(), m_paintTextRun.ltr());
                 }
                 auto decorationPainter = createDecorationPainter(markedText, textDecorationSelectionClipOutRect);
                 paintBackgroundDecorations(decorationPainter, markedText, snappedPaintRect);
@@ -506,10 +517,10 @@ void TextBoxPainter::paintForegroundAndDecorations()
 void TextBoxPainter::paintBackgroundFill()
 {
     if (m_containsComposition && !m_compositionWithCustomUnderlines) {
-        auto& editor = m_renderer.frame().editor();
+        Ref editor = m_renderer->frame().editor();
 
-        if (editor.compositionUsesCustomHighlights()) {
-            for (auto& highlight : editor.customCompositionHighlights()) {
+        if (editor->compositionUsesCustomHighlights()) {
+            for (auto& highlight : editor->customCompositionHighlights()) {
                 if (!highlight.backgroundColor)
                     continue;
 
@@ -526,7 +537,7 @@ void TextBoxPainter::paintBackgroundFill()
                     break;
             }
         } else {
-            auto [clampedStart, clampedEnd] = m_selectableRange.clamp(editor.compositionStart(), editor.compositionEnd());
+            auto [clampedStart, clampedEnd] = m_selectableRange.clamp(editor->compositionStart(), editor->compositionEnd());
             paintBackgroundFillForRange(clampedStart, clampedEnd, CompositionHighlight::defaultCompositionFillColor, BackgroundStyle::Normal);
         }
     }
@@ -576,13 +587,13 @@ LayoutRect TextBoxPainter::selectionRectForRange(unsigned startOffset, unsigned 
         auto expansion = m_textBox.box().expansion();
         auto paintRect = m_paintRect;
         paintRect.shiftXEdgeTo(shapedContent.visualLeft);
-        auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style.rtlOrdering() == Order::Visual, characterScanForCodePath };
+        auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style->rtlOrdering() == Order::Visual, characterScanForCodePath };
 
         fontCascade().adjustSelectionRectForText(false, run, selectionRect, adjustedStartOffset, adjustedStartOffset + selectionLength);
         return selectionRect;
     }
 
-    fontCascade().adjustSelectionRectForText(m_renderer.canUseSimplifiedTextMeasuring().value_or(false), m_paintTextRun, selectionRect, startOffset, endOffset);
+    fontCascade().adjustSelectionRectForText(m_renderer->canUseSimplifiedTextMeasuring().value_or(false), m_paintTextRun, selectionRect, startOffset, endOffset);
     return selectionRect;
 }
 
@@ -605,7 +616,7 @@ void TextBoxPainter::paintBackgroundFillForRange(unsigned startOffset, unsigned 
     }
 
     // FIXME: Support painting combined text. See <https://bugs.webkit.org/show_bug.cgi?id=180993>.
-    auto backgroundRect = snapRectToDevicePixels(selectionRect, m_document.deviceScaleFactor());
+    auto backgroundRect = snapRectToDevicePixels(selectionRect, m_document->deviceScaleFactor());
     if (backgroundStyle == BackgroundStyle::Rounded) {
         backgroundRect.expand(-1, -1);
         backgroundRect.move(0.5, 0.5);
@@ -626,7 +637,7 @@ void TextBoxPainter::paintForeground(const StyledMarkedText& markedText)
 
     float emphasisMarkOffset = 0;
     auto emphasisExistsAndIsAbove = emphasisMarkExistsAndIsAbove(m_renderer, m_style);
-    auto& emphasisMark = emphasisExistsAndIsAbove ? m_style.textEmphasisStyle().markString() : nullAtom();
+    auto& emphasisMark = emphasisExistsAndIsAbove ? m_style->textEmphasisStyle().markString() : nullAtom();
     if (!emphasisMark.isEmpty())
         emphasisMarkOffset = *emphasisExistsAndIsAbove ? -font.metricsOfPrimaryFont().intAscent() - font.emphasisMarkDescent(emphasisMark) : font.metricsOfPrimaryFont().intDescent() + font.emphasisMarkAscent(emphasisMark);
 
@@ -636,10 +647,10 @@ void TextBoxPainter::paintForeground(const StyledMarkedText& markedText)
         m_style,
         markedText.style.textStyles,
         markedText.style.textShadow,
-        (!markedText.style.textShadow.isNone() && m_style.hasAppleColorFilter()) ? m_style.appleColorFilter() : Style::AppleColorFilter::none(),
+        (!markedText.style.textShadow.isNone() && m_style->hasAppleColorFilter()) ? m_style->appleColorFilter() : Style::AppleColorFilter::none(),
         emphasisMark,
         emphasisMarkOffset,
-        m_isCombinedText ? &downcast<RenderCombineText>(m_renderer) : nullptr
+        m_isCombinedText ? &downcast<RenderCombineText>(m_renderer.get()) : nullptr
     };
 
     bool isTransparentMarkedText = markedText.type == MarkedText::Type::DraggedContent || markedText.type == MarkedText::Type::TransparentContent;
@@ -657,14 +668,25 @@ void TextBoxPainter::paintForeground(const StyledMarkedText& markedText)
 
 bool TextBoxPainter::paintForegroundForShapeRange(TextPainter& textPainter)
 {
-    ASSERT(m_document.settings().textShapingAcrossInlineBoxes());
+    ASSERT(m_document->settings().textShapingAcrossInlineBoxes());
     ASSERT(m_textBox.direction() == TextDirection::RTL);
 
     auto& context = m_paintInfo.context();
 
+    auto clipRect = [&] {
+        // We could also just use ink overflow here but since non-range painting
+        // sets up no clipping, we should not do that either here.
+        auto rect = FloatRect::infiniteRect();
+        rect.setX(m_paintRect.x());
+        // Note that this is RTL direction.
+        auto& textContent = m_textBox.box().text();
+        if (!textContent.isAtShapingBoundaryStart())
+            rect.setWidth(m_paintRect.width());
+        // FIXME: Setup a semi-inifite rect for the (visually) first box where x is -inifite with fixed maxX.
+        return rect;
+    };
     context.save();
-    context.clip(m_paintRect);
-
+    context.clip(clipRect());
     auto shapedContent = ShapedContent { };
     buildTextForShaping(shapedContent, m_textBox);
 
@@ -676,7 +698,8 @@ bool TextBoxPainter::paintForegroundForShapeRange(TextPainter& textPainter)
 
     auto characterScanForCodePath = true;
     auto expansion = m_textBox.box().expansion();
-    auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style.rtlOrdering() == Order::Visual, characterScanForCodePath };
+    auto run = TextRun { shapedContent.text, paintRect.x(), expansion.horizontalExpansion, expansion.behavior, m_textBox.direction(), m_style->rtlOrdering() == Order::Visual, characterScanForCodePath };
+    run.disableSpacing();
 
     textPainter.paintRange(run, paintRect, textOriginFromPaintRect(paintRect), 0, shapedContent.text.length());
     context.restore();
@@ -706,20 +729,20 @@ TextDecorationPainter TextBoxPainter::createDecorationPainter(const StyledMarked
         context,
         fontCascade(),
         markedText.style.textShadow,
-        (!markedText.style.textShadow.isNone() && m_style.hasAppleColorFilter()) ? m_style.appleColorFilter() : Style::AppleColorFilter::none(),
-        m_document.printing(),
+        (!markedText.style.textShadow.isNone() && m_style->hasAppleColorFilter()) ? m_style->appleColorFilter() : Style::AppleColorFilter::none(),
+        m_document->printing(),
         writingMode()
     };
 }
 
 static inline float computedTextDecorationThickness(const RenderStyle& styleToUse, float deviceScaleFactor)
 {
-    return ceilToDevicePixel(styleToUse.textDecorationThickness().resolve(styleToUse.computedFontSize(), styleToUse.metricsOfPrimaryFont()), deviceScaleFactor);
+    return ceilToDevicePixel(styleToUse.textDecorationThickness().resolve(styleToUse), deviceScaleFactor);
 }
 
 static inline float computedAutoTextDecorationThickness(const RenderStyle& styleToUse, float deviceScaleFactor)
 {
-    return ceilToDevicePixel(Style::TextDecorationThickness { CSS::Keyword::Auto { } }.resolve(styleToUse.computedFontSize(), styleToUse.metricsOfPrimaryFont()), deviceScaleFactor);
+    return ceilToDevicePixel(Style::TextDecorationThickness { CSS::Keyword::Auto { } }.resolve(styleToUse), deviceScaleFactor);
 }
 
 static inline float computedLinethroughCenter(const RenderStyle& styleToUse, float textDecorationThickness, float autoTextDecorationThickness)
@@ -753,7 +776,8 @@ static inline const RenderStyle& decoratingBoxStyleForInlineBox(const InlineIter
 
 static inline bool isDecoratingBoxForBackground(const InlineIterator::InlineBox& inlineBox, const RenderStyle& styleToUse)
 {
-    if (auto* element = inlineBox.renderer().element(); element && (is<HTMLAnchorElement>(*element) || element->hasTagName(HTMLNames::fontTag))) {
+    RefPtr element = inlineBox.renderer().element();
+    if (element && (is<HTMLAnchorElement>(*element) || element->hasTagName(HTMLNames::fontTag))) {
         // <font> and <a> are always considered decorating boxes.
         return true;
     }
@@ -774,9 +798,9 @@ void TextBoxPainter::collectDecoratingBoxesForBackgroundPainting(DecoratingBoxLi
         return;
     }
 
-    if (!textBox->isHorizontal()) {
-        // FIXME: Vertical writing mode needs some coordinate space transformation for parent inline boxes as we rotate the content with m_paintRect (see ::paint)
-        decoratingBoxList.append({ ancestorInlineBox, m_style, overrideDecorationStyle, textBoxLocation });
+    if (writingMode().isLineInverted()) {
+        // FIXME: underlineOffsetForTextBoxPainting returns incorrect value for vertical-lr.
+        decoratingBoxList.append({ ancestorInlineBox, m_style.get(), overrideDecorationStyle, textBoxLocation });
         return;
     }
 
@@ -793,13 +817,18 @@ void TextBoxPainter::collectDecoratingBoxesForBackgroundPainting(DecoratingBoxLi
                 return;
         }
 
-        auto borderAndPaddingBefore = !inlineBox->isRootInlineBox() ? inlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu);
-        decoratingBoxList.append({
-            inlineBox,
-            style,
-            useOverriderDecorationStyle == UseOverriderDecorationStyle::Yes ? overrideDecorationStyle : computedDecorationStyle(),
-            { textBoxLocation.x(), m_paintOffset.y() + inlineBox->logicalTop() + borderAndPaddingBefore }
-        });
+        auto decoratingBoxLocation = textBoxLocation;
+        auto parentInlineBox = textBox->parentInlineBox();
+        // Normally text box top is aligned with the parent inline box top (i.e. textBox->logicalTop() == parentInlineBox->logicalTop()) but when inline box sides are trimmed (see: text-box property)
+        // inline box gets an offset while text box does not.
+        if (&inlineBox->renderer() != &parentInlineBox->renderer()) {
+            auto decoratingBoxContentBoxTop = inlineBox->logicalTop() + (!inlineBox->isRootInlineBox() ? inlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
+            auto parentInlineBoxContentBoxTop = parentInlineBox->logicalTop() + (!parentInlineBox->isRootInlineBox() ? parentInlineBox->renderer().borderAndPaddingBefore() : LayoutUnit(0_lu));
+            decoratingBoxLocation.moveBy(FloatPoint { 0.f, decoratingBoxContentBoxTop - parentInlineBoxContentBoxTop + textBoxEdgeAdjustmentForUnderline(parentInlineBox->style()) });
+        } else
+            decoratingBoxLocation.moveBy(FloatPoint { 0.f, textBoxEdgeAdjustmentForUnderline(inlineBox->style()) });
+        auto& decorationStyleToUse = useOverriderDecorationStyle == UseOverriderDecorationStyle::Yes ? overrideDecorationStyle : computedDecorationStyle();
+        decoratingBoxList.append({ inlineBox, style, decorationStyleToUse, decoratingBoxLocation });
     };
 
     // FIXME: Figure out if the decoration styles coming from the styled marked text should be used only on the closest inline box (direct parent).
@@ -825,22 +854,22 @@ void TextBoxPainter::paintBackgroundDecorations(TextDecorationPainter& decoratio
     auto decoratingBoxList = DecoratingBoxList { };
     collectDecoratingBoxesForBackgroundPainting(decoratingBoxList, textBox, textBoxPaintRect.location(), markedText.style.textDecorationStyles);
 
-    for (auto& decoratingBox : makeReversedRange(decoratingBoxList)) {
-        auto computedTextDecorationType = WebCore::computedTextDecorationType(decoratingBox.style, decoratingBox.textDecorationStyles);
+    for (auto& decoratingBox : decoratingBoxList | std::views::reverse) {
+        auto computedTextDecorationType = WebCore::computedTextDecorationType(decoratingBox.style.get(), decoratingBox.textDecorationStyles);
         auto computedBackgroundDecorationGeometry = [&] {
-            auto textDecorationThickness = computedTextDecorationThickness(decoratingBox.style, m_document.deviceScaleFactor());
+            auto textDecorationThickness = computedTextDecorationThickness(decoratingBox.style.get(), m_document->deviceScaleFactor());
             auto underlineOffset = [&] {
                 if (!computedTextDecorationType.hasUnderline())
                     return 0.f;
-                auto baseOffset = underlineOffsetForTextBoxPainting(*decoratingBox.inlineBox, decoratingBox.style);
+                auto baseOffset = underlineOffsetForTextBoxPainting(*decoratingBox.inlineBox, decoratingBox.style.get());
                 auto wavyOffset = decoratingBox.textDecorationStyles.underline.decorationStyle == TextDecorationStyle::Wavy ? wavyOffsetFromDecoration() : 0.f;
                 return baseOffset + wavyOffset;
             };
-            auto autoTextDecorationThickness = computedAutoTextDecorationThickness(decoratingBox.style, m_document.deviceScaleFactor());
+            auto autoTextDecorationThickness = computedAutoTextDecorationThickness(decoratingBox.style.get(), m_document->deviceScaleFactor());
             auto overlineOffset = [&] {
                 if (!computedTextDecorationType.hasOverline())
                     return 0.f;
-                auto baseOffset = overlineOffsetForTextBoxPainting(*decoratingBox.inlineBox, decoratingBox.style);
+                auto baseOffset = overlineOffsetForTextBoxPainting(*decoratingBox.inlineBox, decoratingBox.style.get());
                 baseOffset += (autoTextDecorationThickness - textDecorationThickness);
                 auto wavyOffset = decoratingBox.textDecorationStyles.overline.decorationStyle == TextDecorationStyle::Wavy ? wavyOffsetFromDecoration() : 0.f;
                 return baseOffset - wavyOffset;
@@ -848,14 +877,14 @@ void TextBoxPainter::paintBackgroundDecorations(TextDecorationPainter& decoratio
 
             return TextDecorationPainter::BackgroundDecorationGeometry {
                 textOriginFromPaintRect(textBoxPaintRect),
-                roundPointToDevicePixels(LayoutPoint { decoratingBox.location }, m_document.deviceScaleFactor(), m_paintTextRun.ltr()),
+                roundPointToDevicePixels(LayoutPoint { decoratingBox.location }, m_document->deviceScaleFactor(), m_paintTextRun.ltr()),
                 textBoxPaintRect.width(),
                 textDecorationThickness,
                 underlineOffset(),
                 overlineOffset(),
-                computedLinethroughCenter(decoratingBox.style, textDecorationThickness, autoTextDecorationThickness),
-                decoratingBox.style.metricsOfPrimaryFont().intAscent() + 2.f,
-                wavyStrokeParameters(decoratingBox.style.computedFontSize())
+                computedLinethroughCenter(decoratingBox.style.get(), textDecorationThickness, autoTextDecorationThickness),
+                decoratingBox.style->metricsOfPrimaryFont().intAscent() + 2.f,
+                wavyStrokeParameters(decoratingBox.style->computedFontSize())
             };
         };
 
@@ -890,7 +919,7 @@ void TextBoxPainter::paintForegroundDecorations(TextDecorationPainter& decoratio
     if (m_isCombinedText)
         m_paintInfo.context().concatCTM(rotation(m_paintRect, RotationDirection::Clockwise));
 
-    auto deviceScaleFactor = m_document.deviceScaleFactor();
+    auto deviceScaleFactor = m_document->deviceScaleFactor();
     auto textDecorationThickness = computedTextDecorationThickness(styleForDecoration, deviceScaleFactor);
     auto linethroughCenter = computedLinethroughCenter(styleForDecoration, textDecorationThickness, computedAutoTextDecorationThickness(styleForDecoration, deviceScaleFactor));
     decorationPainter.paintForegroundDecorations({ textBoxPaintRect.location()
@@ -987,7 +1016,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
         // All other marked text underlines are 1px thick.
         // If there's not enough space the underline will touch or overlap characters.
         int lineThickness = 1;
-        int baseline = m_style.metricsOfPrimaryFont().intAscent();
+        int baseline = m_style->metricsOfPrimaryFont().intAscent();
         if (underline.thick && m_logicalRect.height() - baseline >= 2)
             lineThickness = 2;
 
@@ -996,7 +1025,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
         start += 1;
         width -= 2;
 
-        auto underlineColor = underline.compositionUnderlineColor == CompositionUnderlineColor::TextColor ? m_style.visitedDependentColorWithColorFilter(CSSPropertyWebkitTextFillColor) : m_style.colorByApplyingColorFilter(underline.color);
+        auto underlineColor = underline.compositionUnderlineColor == CompositionUnderlineColor::TextColor ? m_style->visitedDependentColorWithColorFilter(CSSPropertyWebkitTextFillColor) : m_style->colorByApplyingColorFilter(underline.color);
 
         auto& context = m_paintInfo.context();
         context.setStrokeColor(underlineColor);
@@ -1013,7 +1042,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
     // All other marked text underlines are 1px thick.
     // If there's not enough space the underline will touch or overlap characters.
     int lineThickness = 1;
-    int baseline = m_style.metricsOfPrimaryFont().intAscent();
+    int baseline = m_style->metricsOfPrimaryFont().intAscent();
     if (m_logicalRect.height() - baseline >= 2)
         lineThickness = 2;
 
@@ -1023,7 +1052,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
 #else
         auto cssColorValue = CSSValueAppleSystemBlue;
 #endif
-        auto styleColorOptions = m_renderer.styleColorOptions();
+        auto styleColorOptions = m_renderer->styleColorOptions();
         return RenderTheme::singleton().systemColor(cssColorValue, styleColorOptions | StyleColorOptions::UseSystemAppearance);
     }();
 
@@ -1047,7 +1076,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
     // If we're the only box in the path, then we fallback to unconditionally drawing rounded edges.
     // If not, we flatten out the right, left, or both edges depending on whether we're at the start, end, or middle of a path, respectively.
     auto fragmentLocation = textBoxFragmentLocationWithinLayoutBox(m_textBox);
-    auto deviceScaleFactor = m_document.deviceScaleFactor();
+    auto deviceScaleFactor = m_document->deviceScaleFactor();
     if (fragmentLocation.containsAll({ TextBoxFragmentLocationWithinLayoutBox::First, TextBoxFragmentLocationWithinLayoutBox::Last }))
         context.fillRoundedRect(FloatRoundedRect { rect, radii }, underlineColor);
     else if (fragmentLocation == TextBoxFragmentLocationWithinLayoutBox::First)
@@ -1067,7 +1096,7 @@ void TextBoxPainter::fillCompositionUnderline(float start, float width, const Co
 
 void TextBoxPainter::paintCompositionUnderlines()
 {        
-    auto& underlines = m_renderer.frame().editor().customCompositionUnderlines();
+    auto& underlines = m_renderer->frame().editor().customCompositionUnderlines();
     auto underlineCount = underlines.size();
 
     if (!underlineCount)
@@ -1137,7 +1166,7 @@ void TextBoxPainter::paintCompositionUnderline(const CompositionUnderline& under
     if (paintStart <= underline.startOffset) {
         paintStart = underline.startOffset;
         useWholeWidth = false;
-        start = m_renderer.width(textBox().start(), paintStart - textBox().start(), textPosition(), m_isFirstLine);
+        start = m_renderer->width(textBox().start(), paintStart - textBox().start(), textPosition(), m_isFirstLine);
     }
     if (paintEnd != underline.endOffset) {
         paintEnd = std::min(paintEnd, (unsigned)underline.endOffset);
@@ -1148,7 +1177,7 @@ void TextBoxPainter::paintCompositionUnderline(const CompositionUnderline& under
         useWholeWidth = false;
     }
     if (!useWholeWidth) {
-        width = m_renderer.width(paintStart, paintEnd - paintStart, textPosition() + start, m_isFirstLine);
+        width = m_renderer->width(paintStart, paintEnd - paintStart, textPosition() + start, m_isFirstLine);
         mirrorRTLSegment(m_logicalRect.width(), textBox().direction(), start, width);
     }
 
@@ -1278,7 +1307,7 @@ static void drawWritingToolsUnderline(GraphicsContext& context, const FloatRect&
 void TextBoxPainter::paintPlatformDocumentMarker(const MarkedText& markedText)
 {
     // Never print document markers (rdar://5327887)
-    if (m_document.printing())
+    if (m_document->printing())
         return;
 
     auto bounds = calculateDocumentMarkerBounds(makeIterator(), markedText);
@@ -1286,7 +1315,7 @@ void TextBoxPainter::paintPlatformDocumentMarker(const MarkedText& markedText)
 
 #if ENABLE(WRITING_TOOLS)
     if (markedText.type == MarkedText::Type::WritingToolsTextSuggestion) {
-        drawWritingToolsUnderline(m_paintInfo.context(), bounds,  m_renderer.frame().view()->size());
+        drawWritingToolsUnderline(m_paintInfo.context(), bounds,  m_renderer->frame().view()->size());
         return;
     }
 #endif
@@ -1358,15 +1387,15 @@ bool TextBoxPainter::computeHaveSelection() const
     if (m_isPrinting || m_paintInfo.phase == PaintPhase::TextClip)
         return false;
 
-    return m_renderer.view().selection().highlightStateForTextBox(m_renderer, m_selectableRange) != RenderObject::HighlightState::None;
+    return m_renderer->view().selection().highlightStateForTextBox(m_renderer, m_selectableRange) != RenderObject::HighlightState::None;
 }
 
 const FontCascade& TextBoxPainter::fontCascade() const
 {
     if (m_isCombinedText)
-        return downcast<RenderCombineText>(m_renderer).textCombineFont();
+        return downcast<RenderCombineText>(m_renderer.get()).textCombineFont();
 
-    return m_style.fontCascade();
+    return m_style->fontCascade();
 }
 
 FloatPoint TextBoxPainter::textOriginFromPaintRect(const FloatRect& paintRect) const
@@ -1374,15 +1403,15 @@ FloatPoint TextBoxPainter::textOriginFromPaintRect(const FloatRect& paintRect) c
     FloatPoint textOrigin { paintRect.x(), paintRect.y() + fontCascade().metricsOfPrimaryFont().intAscent() };
 
     if (m_isCombinedText) {
-        if (auto newOrigin = downcast<RenderCombineText>(m_renderer).computeTextOrigin(paintRect))
+        if (auto newOrigin = downcast<RenderCombineText>(m_renderer.get()).computeTextOrigin(paintRect))
             textOrigin = newOrigin.value();
     }
 
     auto writingMode = textBox().writingMode();
     if (writingMode.isHorizontal())
-        textOrigin.setY(roundToDevicePixel(LayoutUnit { textOrigin.y() }, m_document.deviceScaleFactor()));
+        textOrigin.setY(roundToDevicePixel(LayoutUnit { textOrigin.y() }, m_document->deviceScaleFactor()));
     else
-        textOrigin.setX(roundToDevicePixel(LayoutUnit { textOrigin.x() }, m_document.deviceScaleFactor()));
+        textOrigin.setX(roundToDevicePixel(LayoutUnit { textOrigin.x() }, m_document->deviceScaleFactor()));
 
     return textOrigin;
 }

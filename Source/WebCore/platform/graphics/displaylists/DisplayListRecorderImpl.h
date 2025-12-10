@@ -72,7 +72,7 @@ public:
     void endTransparencyLayer() final;
     void drawFilteredImageBuffer(ImageBuffer*, const FloatRect&, Filter&, FilterResults&) final;
     void drawImageBuffer(ImageBuffer&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions) final;
-    void drawNativeImageInternal(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions) final;
+    void drawNativeImage(NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint& point1, const FloatPoint& point2) final;
@@ -97,7 +97,7 @@ public:
     void drawGlyphsImmediate(const Font&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint& localAnchor, FontSmoothingMode) final;
     void drawDisplayList(const DisplayList&, ControlFactory&) final;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(VideoFrame&, const FloatRect& destination, ImageOrientation, bool shouldDiscardAlpha) final;
+    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ImageOrientation, bool shouldDiscardAlpha) final;
 #endif
     void strokeRect(const FloatRect&, float) final;
     void strokeEllipse(const FloatRect&) final;
@@ -114,6 +114,13 @@ public:
     void endPage() final;
 
     void setURLForRect(const URL&, const FloatRect&) final;
+
+    // Appends a deferred placeholder command.
+    // The function is called during the display list playback, drawDisplayList().
+    // The function may be called multiple times.
+    // The function may be called from an arbitrary thread.
+    // The function should always produce the same GraphicsContext calls.
+    WEBCORE_EXPORT void drawPlaceholder(Function<void(GraphicsContext&)>&&);
 
 private:
     void appendStateChangeItemIfNecessary() final;

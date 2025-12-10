@@ -725,7 +725,8 @@ TEST(KeyboardInputTests, DisableSpellChecking)
     checkSmartQuotesAndDashesType(UITextSmartDashesTypeDefault, UITextSmartQuotesTypeDefault, UITextSpellCheckingTypeDefault);
 }
 
-TEST(KeyboardInputTests, SelectionClipRectsWhenPresentingInputView)
+// FIXME: rdar://163669257 (REGRESSION(iOS26):TestWebKitAPI.KeyboardInputTests.SelectionClipRectsWhenPresentingInputView is a constant failure (301658))
+TEST(KeyboardInputTests, DISABLED_SelectionClipRectsWhenPresentingInputView)
 {
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
     auto inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
@@ -1376,10 +1377,7 @@ TEST(KeyboardInputTests, AutocorrectionIndicatorColorNotAffectedByAuthorDefinedA
     CGImagePixelReader snapshotReaderExpected { expected.get() };
     CGImagePixelReader snapshotReaderActual { actual.get() };
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    // FIXME: <rdar://155548417> ([ Build-Failure ] [ iOS26+ ] error: 'mainScreen' is deprecated: first deprecated in iOS 26.0)
-    auto scale = UIScreen.mainScreen.scale;
-ALLOW_DEPRECATED_DECLARATIONS_END
+    auto scale = UITraitCollection.currentTraitCollection.displayScale;
 
     for (int x = 0; x < frame.size.width * scale; ++x) {
         for (int y = 0; y < frame.size.height * scale; ++y)

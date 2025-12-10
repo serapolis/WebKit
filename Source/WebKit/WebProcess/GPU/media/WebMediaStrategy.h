@@ -46,13 +46,13 @@ private:
 #if ENABLE(WEB_AUDIO)
     Ref<WebCore::AudioDestination> createAudioDestination(const WebCore::AudioDestinationCreationOptions&) override;
 #endif
+#if ENABLE(VIDEO) && ENABLE(GPU_PROCESS)
+    RefPtr<WebCore::AudioVideoRenderer> createAudioVideoRenderer(LoggerHelper*, WebCore::HTMLMediaElementIdentifier, WebCore::MediaPlayerIdentifier) const final;
+#endif
     std::unique_ptr<WebCore::NowPlayingManager> createNowPlayingManager() const final;
     bool hasThreadSafeMediaSourceSupport() const final;
 #if ENABLE(MEDIA_SOURCE)
     void enableMockMediaSource() final;
-#endif
-#if PLATFORM(COCOA) && ENABLE(VIDEO)
-    void nativeImageFromVideoFrame(const WebCore::VideoFrame&, CompletionHandler<void(std::optional<RefPtr<WebCore::NativeImage>>&&)>&&) final;
 #endif
 
 #if ENABLE(GPU_PROCESS)

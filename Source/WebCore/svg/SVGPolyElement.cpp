@@ -23,13 +23,14 @@
 #include "SVGPolyElement.h"
 
 #include "ContainerNodeInlines.h"
-#include "DocumentInlines.h"
 #include "LegacyRenderSVGPath.h"
 #include "LegacyRenderSVGResource.h"
+#include "NodeDocument.h"
 #include "RenderSVGPath.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGParserUtilities.h"
 #include "SVGPropertyOwnerRegistry.h"
+#include "Settings.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
@@ -40,10 +41,11 @@ WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(SVGPolyElement);
 SVGPolyElement::SVGPolyElement(const QualifiedName& tagName, Document& document)
     : SVGGeometryElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::pointsAttr, &SVGPolyElement::m_points>();
-    });
+    }
 }
 
 void SVGPolyElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)

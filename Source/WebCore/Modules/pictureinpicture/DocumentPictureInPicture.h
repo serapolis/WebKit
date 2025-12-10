@@ -28,7 +28,6 @@
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
 
-#include <WebCore/HTMLVideoElement.h>
 #include <WebCore/Supplementable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -49,8 +48,13 @@ public:
 
 private:
     static ASCIILiteral supplementName() { return "DocumentPictureInPicture"_s; };
+    bool isDocumentPictureInPicture() const final { return true; }
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::DocumentPictureInPicture)
+    static bool isType(const WebCore::SupplementBase& supplement) { return supplement.isDocumentPictureInPicture(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // ENABLE(PICTURE_IN_PICTURE_API)

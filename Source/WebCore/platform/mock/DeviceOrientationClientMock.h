@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef DeviceOrientationClientMock_h
-#define DeviceOrientationClientMock_h
+#pragma once
 
 #include <WebCore/DeviceOrientationClient.h>
 #include <WebCore/DeviceOrientationData.h>
@@ -40,29 +39,36 @@ class DeviceOrientationController;
 // A mock implementation of DeviceOrientationClient used to test the feature in
 // DumpRenderTree. Embedders should should configure the Page object to use this
 // client when running DumpRenderTree.
-class DeviceOrientationClientMock final : public DeviceOrientationClient {
+class DeviceOrientationClientMock final : public DeviceOrientationClient, public CanMakeCheckedPtr<DeviceOrientationClientMock> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(DeviceOrientationClientMock, WEBCORE_EXPORT);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DeviceOrientationClientMock);
 public:
     WEBCORE_EXPORT DeviceOrientationClientMock();
+    ~DeviceOrientationClientMock();
 
     // DeviceOrientationClient
     WEBCORE_EXPORT void setController(DeviceOrientationController*) override;
-    WEBCORE_EXPORT void startUpdating(const SecurityOriginData&) override;
+    WEBCORE_EXPORT void startUpdating() override;
     WEBCORE_EXPORT void stopUpdating() override;
     DeviceOrientationData* lastOrientation() const override { return m_orientation.get(); }
     void deviceOrientationControllerDestroyed() override { }
 
     WEBCORE_EXPORT void setOrientation(RefPtr<DeviceOrientationData>&&);
 
+    // DeviceOrientationClient.
+    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
+    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
+
 private:
     void timerFired();
 
     RefPtr<DeviceOrientationData> m_orientation;
-    DeviceOrientationController* m_controller;
+    CheckedPtr<DeviceOrientationController> m_controller;
     Timer m_timer;
-    bool m_isUpdating;
+    bool m_isUpdating { false };
 };
 
 } // namespace WebCore
-
-#endif // DeviceOrientationClientMock_h

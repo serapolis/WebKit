@@ -26,7 +26,7 @@
 #include "config.h"
 #include "ScrollingThread.h"
 
-#if ENABLE(SCROLLING_THREAD) || ENABLE(THREADED_ANIMATION_RESOLUTION)
+#if ENABLE(SCROLLING_THREAD) || ENABLE(THREADED_ANIMATIONS)
 
 #include <mutex>
 #include <wtf/MainThread.h>
@@ -36,12 +36,7 @@ namespace WebCore {
 
 ScrollingThread& ScrollingThread::singleton()
 {
-    static LazyNeverDestroyed<ScrollingThread> scrollingThread;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        scrollingThread.construct();
-    });
-
+    static NeverDestroyed<ScrollingThread> scrollingThread;
     return scrollingThread;
 }
 
@@ -69,4 +64,4 @@ void ScrollingThread::dispatchBarrier(Function<void ()>&& function)
 
 } // namespace WebCore
 
-#endif // ENABLE(SCROLLING_THREAD) || ENABLE(THREADED_ANIMATION_RESOLUTION)
+#endif // ENABLE(SCROLLING_THREAD) || ENABLE(THREADED_ANIMATIONS)

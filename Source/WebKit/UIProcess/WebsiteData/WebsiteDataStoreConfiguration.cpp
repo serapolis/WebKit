@@ -118,6 +118,7 @@ void WebsiteDataStoreConfiguration::initializePaths()
 #if PLATFORM(COCOA)
     setCookieStorageFile(WebsiteDataStore::defaultCookieStorageFile(m_baseDataDirectory));
     setSearchFieldHistoryDirectory(WebsiteDataStore::defaultSearchFieldHistoryDirectory(m_baseDataDirectory));
+    setEnhancedSecurityDirectory(WebsiteDataStore::defaultEnhancedSecurityDirectory(m_baseDataDirectory));
 #endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -178,6 +179,7 @@ Ref<WebsiteDataStoreConfiguration> WebsiteDataStoreConfiguration::copy() const
 #if HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
     copy->m_webContentRestrictionsConfigurationFile = this->m_webContentRestrictionsConfigurationFile;
 #endif
+    copy->m_additionalDomainsWithUserInteractionForTesting = this->m_additionalDomainsWithUserInteractionForTesting;
 
     return copy;
 }
@@ -215,6 +217,7 @@ WebsiteDataStoreConfiguration::Directories WebsiteDataStoreConfiguration::Direct
 #if ENABLE(CONTENT_EXTENSIONS)
         crossThreadCopy(resourceMonitorThrottlerDirectory),
 #endif
+        crossThreadCopy(enhancedSecurityDirectory),
     };
 }
 
@@ -246,6 +249,7 @@ WebsiteDataStoreConfiguration::Directories WebsiteDataStoreConfiguration::Direct
 #if ENABLE(CONTENT_EXTENSIONS)
         crossThreadCopy(WTFMove(resourceMonitorThrottlerDirectory)),
 #endif
+        crossThreadCopy(WTFMove(enhancedSecurityDirectory)),
     };
 }
 

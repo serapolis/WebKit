@@ -29,6 +29,7 @@
 #if ENABLE(COCOA_WEBM_PLAYER)
 
 #include <WebCore/AudioVideoRenderer.h>
+#include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/MediaPlayerPrivate.h>
 #include <WebCore/PlatformLayer.h>
 #include <WebCore/SourceBufferParserWebM.h>
@@ -77,7 +78,7 @@ class MediaPlayerPrivateWebM
     , public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaPlayerPrivateWebM, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED(MediaPlayerPrivateWebM);
 public:
-    MediaPlayerPrivateWebM(MediaPlayer*);
+    static Ref<MediaPlayerPrivateWebM> create(MediaPlayer&);
     ~MediaPlayerPrivateWebM();
 
     constexpr MediaPlayerType mediaPlayerType() const final { return MediaPlayerType::CocoaWebM; }
@@ -87,6 +88,8 @@ public:
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:
+    explicit MediaPlayerPrivateWebM(MediaPlayer&);
+
     void setPreload(MediaPlayer::Preload) final;
     void doPreload();
     void load(const URL&, const LoadOptions&) final;
@@ -252,9 +255,9 @@ private:
     bool m_shouldMaintainAspectRatio { true };
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
-    const String& defaultSpatialTrackingLabel() const final;
+    String defaultSpatialTrackingLabel() const final;
     void setDefaultSpatialTrackingLabel(const String&) final;
-    const String& spatialTrackingLabel() const final;
+    String spatialTrackingLabel() const final;
     void setSpatialTrackingLabel(const String&) final;
     void updateSpatialTrackingLabel();
 #endif
@@ -277,10 +280,16 @@ private:
 
     using TrackIdentifier = TracksRendererManager::TrackIdentifier;
     TrackIdentifier trackIdentifierFor(TrackID) const;
+    std::optional<TrackIdentifier> maybeTrackIdentifierFor(TrackID) const;
 
     void setLayerRequiresFlush();
     void setAllTracksForReenqueuing();
     void setTrackForReenqueuing(TrackID);
+
+    // Remote layer support
+    WebCore::HostingContext hostingContext() const final;
+    void setVideoLayerSizeFenced(const WebCore::FloatSize&, WTF::MachSendRightAnnotated&&) final;
+    std::optional<MediaPlayerIdentifier> identifier() const final { return m_playerIdentifier; }
 
     const Logger& logger() const final { return m_logger.get(); }
     Ref<const Logger> protectedLogger() const { return logger(); }
@@ -296,12 +305,15 @@ private:
     void maybeFinishLoading();
     void readyToProcessData();
 
+    void monitorReadyState();
+
+    static Ref<AudioVideoRenderer> createRenderer(LoggerHelper&, HTMLMediaElementIdentifier, MediaPlayerIdentifier);
+
     URL m_assetURL;
     MediaPlayer::Preload m_preload { MediaPlayer::Preload::Auto };
     ThreadSafeWeakPtr<MediaPlayer> m_player;
-    RefPtr<VideoFrameCV> m_lastVideoFrame;
+    RefPtr<VideoFrame> m_lastVideoFrame;
     RefPtr<NativeImage> m_lastImage;
-    std::unique_ptr<PixelBufferConformerCV> m_rgbConformer;
     RefPtr<WebMResourceClient> m_resourceClient;
     bool m_needsResourceClient { true };
 
@@ -349,6 +361,7 @@ private:
     bool m_hasAudio { false };
     bool m_hasVideo { false };
     bool m_hasAvailableVideoFrame { false };
+    bool m_readyStateIsWaitingForAvailableFrame { true };
     bool m_visible { false };
     mutable bool m_loadingProgressed { false };
     bool m_loadFinished { false };
@@ -370,12 +383,13 @@ private:
     MediaTime m_lastSeekTime;
     std::optional<SeekTarget> m_pendingSeek;
     std::optional<GenericPromise::Producer> m_waitForTimeBufferedPromise;
-    NativePromiseRequest m_rendererSeekRequest;
+    const Ref<NativePromiseRequest> m_rendererSeekRequest;
     bool m_seeking { false };
 #if HAVE(SPATIAL_TRACKING_LABEL)
     String m_defaultSpatialTrackingLabel;
     String m_spatialTrackingLabel;
 #endif
+    const MediaPlayerIdentifier m_playerIdentifier;
     const Ref<AudioVideoRenderer> m_renderer;
 };
 

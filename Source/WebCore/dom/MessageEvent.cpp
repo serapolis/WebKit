@@ -31,6 +31,7 @@
 #include "Blob.h"
 #include "EventNames.h"
 #include "JSMessageEvent.h"
+#include "SecurityOrigin.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -56,17 +57,17 @@ inline MessageEvent::MessageEvent(const AtomString& type, Init&& initializer, Is
 {
 }
 
-inline MessageEvent::MessageEvent(const AtomString& type, DataType&& data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
+inline MessageEvent::MessageEvent(const AtomString& type, DataType&& data, RefPtr<SecurityOrigin>&& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
     : Event(EventInterfaceType::MessageEvent, type, CanBubble::No, IsCancelable::No)
     , m_data(WTFMove(data))
-    , m_origin(origin)
+    , m_origin(WTFMove(origin))
     , m_lastEventId(lastEventId)
     , m_source(WTFMove(source))
     , m_ports(WTFMove(ports))
 {
 }
 
-auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports) -> MessageEventWithStrongData
+auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScriptValue>&& data, RefPtr<SecurityOrigin>&& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports) -> MessageEventWithStrongData
 {
     auto& vm = globalObject.vm();
     Locker<JSC::JSLock> locker(vm.apiLock());
@@ -80,21 +81,21 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 
     auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;
-    Ref event = adoptRef(*new MessageEvent(eventType, MessageEvent::JSValueTag { }, origin, lastEventId, WTFMove(source), WTFMove(ports)));
+    Ref event = adoptRef(*new MessageEvent(eventType, MessageEvent::JSValueTag { }, WTFMove(origin), lastEventId, WTFMove(source), WTFMove(ports)));
     JSC::Strong<JSC::JSObject> strongWrapper(vm, JSC::jsCast<JSC::JSObject*>(toJS(&globalObject, JSC::jsCast<JSDOMGlobalObject*>(&globalObject), event.get())));
     event->jsData().set(vm, strongWrapper.get(), deserialized);
 
     return MessageEventWithStrongData { event, WTFMove(strongWrapper) };
 }
 
-Ref<MessageEvent> MessageEvent::create(const AtomString& type, DataType&& data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
+Ref<MessageEvent> MessageEvent::create(const AtomString& type, DataType&& data, RefPtr<SecurityOrigin>&& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
 {
-    return adoptRef(*new MessageEvent(type, WTFMove(data), origin, lastEventId, WTFMove(source), WTFMove(ports)));
+    return adoptRef(*new MessageEvent(type, WTFMove(data), WTFMove(origin), lastEventId, WTFMove(source), WTFMove(ports)));
 }
 
-Ref<MessageEvent> MessageEvent::create(DataType&& data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
+Ref<MessageEvent> MessageEvent::create(DataType&& data, RefPtr<SecurityOrigin>&& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
 {
-    return create(eventNames().messageEvent, WTFMove(data), origin, lastEventId, WTFMove(source), WTFMove(ports));
+    return create(eventNames().messageEvent, WTFMove(data), WTFMove(origin), lastEventId, WTFMove(source), WTFMove(ports));
 }
 
 Ref<MessageEvent> MessageEvent::createForBindings()
@@ -108,6 +109,22 @@ Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initialize
 }
 
 MessageEvent::~MessageEvent() = default;
+
+String MessageEvent::origin() const
+{
+    return WTF::switchOn(m_origin, [](const RefPtr<SecurityOrigin>& origin) {
+        return origin ? origin->toString() : emptyString();
+    },
+    [](const String& origin) {
+        return origin;
+    });
+}
+
+const RefPtr<SecurityOrigin> MessageEvent::securityOrigin() const
+{
+    auto* origin = std::get_if<RefPtr<SecurityOrigin>>(&m_origin);
+    return origin ? *origin : nullptr;
+}
 
 void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool cancelable, JSValue data, const String& origin, const String& lastEventId, std::optional<MessageEventSource>&& source, Vector<Ref<MessagePort>>&& ports)
 {
@@ -134,15 +151,15 @@ void MessageEvent::initMessageEvent(const AtomString& type, bool canBubble, bool
 size_t MessageEvent::memoryCost() const
 {
     Locker locker { m_concurrentDataAccessLock };
-    return WTF::switchOn(m_data, [] (JSValueTag) -> size_t {
+    return WTF::switchOn(m_data, [](JSValueTag) -> size_t {
         return 0;
-    }, [] (const Ref<SerializedScriptValue>& data) -> size_t {
+    }, [](const Ref<SerializedScriptValue>& data) -> size_t {
         return data->memoryCost();
-    }, [] (const String& string) -> size_t {
+    }, [](const String& string) -> size_t {
         return string.sizeInBytes();
-    }, [] (const Ref<Blob>& blob) -> size_t {
+    }, [](const Ref<Blob>& blob) -> size_t {
         return blob->memoryCost();
-    }, [] (const Ref<ArrayBuffer>& buffer) -> size_t {
+    }, [](const Ref<ArrayBuffer>& buffer) -> size_t {
         return buffer->byteLength();
     });
 }

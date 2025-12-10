@@ -115,13 +115,6 @@ RefPtr<PixelBuffer> Float16ArrayPixelBuffer::createScratchPixelBuffer(const IntS
     return Float16ArrayPixelBuffer::tryCreate(m_format, size);
 }
 
-std::span<const uint8_t> Float16ArrayPixelBuffer::span() const
-{
-    Ref data = m_data;
-    ASSERT(data->byteLength() == (m_size.area() * 4 * sizeof(Float16)));
-    return data->span();
-}
-
 } // namespace WebCore
 
 #endif // ENABLE(PIXEL_FORMAT_RGBA16F)

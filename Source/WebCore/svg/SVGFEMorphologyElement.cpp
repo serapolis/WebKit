@@ -39,12 +39,13 @@ inline SVGFEMorphologyElement::SVGFEMorphologyElement(const QualifiedName& tagNa
 {
     ASSERT(hasTagName(SVGNames::feMorphologyTag));
     
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    static bool didRegistration = false;
+    if (!didRegistration) [[unlikely]] {
+        didRegistration = true;
         PropertyRegistry::registerProperty<SVGNames::inAttr, &SVGFEMorphologyElement::m_in1>();
         PropertyRegistry::registerProperty<SVGNames::operatorAttr, MorphologyOperatorType, &SVGFEMorphologyElement::m_svgOperator>();
         PropertyRegistry::registerProperty<SVGNames::radiusAttr, &SVGFEMorphologyElement::m_radiusX, &SVGFEMorphologyElement::m_radiusY>();
-    });
+    }
 }
 
 Ref<SVGFEMorphologyElement> SVGFEMorphologyElement::create(const QualifiedName& tagName, Document& document)
@@ -56,7 +57,7 @@ void SVGFEMorphologyElement::attributeChanged(const QualifiedName& name, const A
 {
     switch (name.nodeName()) {
     case AttributeNames::operatorAttr: {
-        MorphologyOperatorType propertyValue = SVGPropertyTraits<MorphologyOperatorType>::fromString(newValue);
+        MorphologyOperatorType propertyValue = SVGPropertyTraits<MorphologyOperatorType>::fromString(*this, newValue);
         if (propertyValue != MorphologyOperatorType::Unknown)
             Ref { m_svgOperator }->setBaseValInternal<MorphologyOperatorType>(propertyValue);
         break;

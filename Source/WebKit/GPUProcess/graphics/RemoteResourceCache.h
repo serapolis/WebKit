@@ -52,7 +52,7 @@ public:
     RemoteResourceCache();
     ~RemoteResourceCache();
 
-    void cacheNativeImage(Ref<WebCore::NativeImage>&&);
+    bool cacheNativeImage(WebCore::RenderingResourceIdentifier, Ref<WebCore::NativeImage>&&);
     bool releaseNativeImage(WebCore::RenderingResourceIdentifier);
     RefPtr<WebCore::NativeImage> cachedNativeImage(WebCore::RenderingResourceIdentifier) const;
 
@@ -78,7 +78,6 @@ public:
 
     void releaseAllResources();
     void releaseMemory();
-    void releaseNativeImages();
 
 private:
     HashMap<WebCore::RenderingResourceIdentifier, Ref<WebCore::ImageBuffer>> m_imageBuffers;

@@ -28,10 +28,9 @@
 #include "ContentSecurityPolicyDirectiveList.h"
 
 #include "ContentSecurityPolicyDirectiveNames.h"
-#include "Document.h"
-#include "DocumentInlines.h"
+#include "DocumentSecurityOrigin.h"
 #include "HTTPParsers.h"
-#include "LocalFrame.h"
+#include "LocalFrameInlines.h"
 #include "SecurityContext.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -622,11 +621,12 @@ void ContentSecurityPolicyDirectiveList::parseRequireTrustedTypesFor(ParsedDirec
             }
 
             auto begin = buffer.position();
-            if (skipExactlyIgnoringASCIICase(buffer, "'script'"_s))
+            if (skipExactlyIgnoringASCIICase(buffer, "'script'"_s) && (buffer.atEnd() || isUnicodeCompatibleASCIIWhitespace(*buffer)))
                 m_requireTrustedTypesForScript = true;
             else {
+                skipWhile<isNotASCIISpace>(buffer);
                 m_policy->reportInvalidTrustedTypesSinkGroup(std::span { begin, buffer.position() });
-                return;
+                continue;
             }
 
             ASSERT(buffer.atEnd() || isUnicodeCompatibleASCIIWhitespace(*buffer));

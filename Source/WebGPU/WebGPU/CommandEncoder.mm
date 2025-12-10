@@ -35,8 +35,10 @@
 #import "QuerySet.h"
 #import "RenderPassEncoder.h"
 #import "Texture.h"
+#import "TextureOrTextureView.h"
 #if ENABLE(WEBGPU_SWIFT)
-#import "WebGPUSwiftInternal.h"
+#import "CxxBridging.h"
+#import "WebGPUSwift-Generated.h"
 #endif
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/IndexedRange.h>
@@ -143,8 +145,10 @@ CommandEncoder::CommandEncoder(id<MTLCommandBuffer> commandBuffer, Device& devic
                 continue;
             apiBuffer->removeSkippedValidationCommandEncoder(commandEncoder.uniqueId());
             if (apiBuffer->mustTakeSlowIndexValidationPath()) {
-                for (DrawIndexCacheContainerValue& key : skippedDrawIndexedValidationKeys) {
-                    apiBuffer->takeSlowIndexValidationPath(commandBuffer, key.firstIndex, key.indexCount, key.vertexCount, key.instanceCount, key.indexType(), key.firstInstance, key.baseVertex, key.minInstanceCount, key.primitiveOffset());
+                for (auto& keyValuePair : skippedDrawIndexedValidationKeys) {
+                    auto& key = keyValuePair.first;
+                    auto& value = keyValuePair.second;
+                    apiBuffer->takeSlowIndexValidationPath(commandBuffer, key.firstIndex, key.indexCount, key.indexType(), key.primitiveOffset(), value);
                     commandBuffer.addPostCommitHandler([bufferIdentifier, device = Ref { commandBuffer.device() }](id<MTLCommandBuffer>) {
                         if (RefPtr apiBuffer = device->lookupBuffer(bufferIdentifier))
                             apiBuffer->clearMustTakeSlowIndexValidationPath();
@@ -176,6 +180,7 @@ CommandEncoder::~CommandEncoder()
     m_device->protectedQueue()->removeMTLCommandBuffer(m_commandBuffer);
     retainTimestampsForOneUpdateLoop();
     m_commandBuffer = nil; // Do not remove, this is needed to workaround rdar://143905417
+    clearTracking();
     m_device->removeCommandEncoder(m_uniqueId);
 }
 
@@ -277,19 +282,19 @@ Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDe
 
     MTLComputePassDescriptor* computePassDescriptor = [MTLComputePassDescriptor new];
     computePassDescriptor.dispatchType = MTLDispatchTypeSerial;
-    std::pair<id<MTLCounterSampleBuffer>, uint32_t> counterSampleBuffer;
+    QuerySet::CounterSampleBuffer counterSampleBuffer;
     if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
         Ref timestampWrites = protectedFromAPI(wgpuTimestampWrites->querySet);
         counterSampleBuffer = timestampWrites->counterSampleBufferWithOffset();
         timestampWrites->setCommandEncoder(*this);
     }
 
-    if (m_device->enableEncoderTimestamps() || counterSampleBuffer.first) {
+    if (m_device->enableEncoderTimestamps() || counterSampleBuffer.buffer) {
         auto* timestampWrites = descriptor.timestampWrites;
-        computePassDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer.first ?: m_device->timestampsBuffer(m_commandBuffer, 2);
-        computePassDescriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->beginningOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second) : 0;
-        computePassDescriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second) : 1;
-        m_device->trackTimestampsBuffer(m_commandBuffer, counterSampleBuffer.first);
+        computePassDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer.buffer ?: m_device->timestampsBuffer(m_commandBuffer, 2);
+        computePassDescriptor.sampleBufferAttachments[0].startOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->beginningOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset) : 0;
+        computePassDescriptor.sampleBufferAttachments[0].endOfEncoderSampleIndex = timestampWrites ? timestampWriteIndex(timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset) : 1;
+        m_device->trackTimestampsBuffer(m_commandBuffer, counterSampleBuffer.buffer);
     }
 
     id<MTLComputeCommandEncoder> computeCommandEncoder = [m_commandBuffer computeCommandEncoderWithDescriptor:computePassDescriptor];
@@ -367,10 +372,8 @@ bool Device::isStencilOnlyFormat(MTLPixelFormat format)
 
 id<MTLFunction> Device::nopVertexFunction(id<MTLDevice> device)
 {
-    static id<MTLFunction> function = nil;
-    NSError *error = nil;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
+    static id<MTLFunction> function = [&] {
+        NSError *error = nil;
         MTLCompileOptions* options = [MTLCompileOptions new];
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         options.fastMathEnabled = YES;
@@ -378,8 +381,8 @@ id<MTLFunction> Device::nopVertexFunction(id<MTLDevice> device)
         id<MTLLibrary> library = [device newLibraryWithSource:@"[[vertex]] float4 vsNop() { return (float4)0; }" options:options error:&error];
         if (error)
             WTFLogAlways("%@", error); // NOLINT
-        function = [library newFunctionWithName:@"vsNop"];
-    });
+        return [library newFunctionWithName:@"vsNop"];
+    }();
 
     return function;
 }
@@ -509,66 +512,6 @@ static bool isMultisampleTexture(id<MTLTexture> texture)
     return texture.textureType == MTLTextureType2DMultisample || texture.textureType == MTLTextureType2DMultisampleArray;
 }
 
-class TextureOrTextureView {
-public:
-    TextureOrTextureView(Texture& texture)
-        : m_texture(&texture)
-    {
-    }
-    TextureOrTextureView(TextureView& view)
-        : m_view(&view)
-    {
-    }
-
-#define TEXTURE_OR_VIEW_INVOKE(x) return m_view ? RefPtr { m_view }->x() : RefPtr { m_texture }->x()
-#define TEXTURE_OR_VIEW_HELPER(x) auto x() const { TEXTURE_OR_VIEW_INVOKE(x); }
-#define TEXTURE_OR_VIEW_HELPER_NONCONST(x) auto x() { TEXTURE_OR_VIEW_INVOKE(x); }
-#define TEXTURE_OR_VIEW_HELPER_REF(x) const auto& x() const { TEXTURE_OR_VIEW_INVOKE(x); }
-
-    TEXTURE_OR_VIEW_HELPER(width)
-    TEXTURE_OR_VIEW_HELPER(height)
-    TEXTURE_OR_VIEW_HELPER(is2DTexture)
-    TEXTURE_OR_VIEW_HELPER(is2DArrayTexture)
-    TEXTURE_OR_VIEW_HELPER(is3DTexture)
-    TEXTURE_OR_VIEW_HELPER(sampleCount)
-    TEXTURE_OR_VIEW_HELPER(format)
-    TEXTURE_OR_VIEW_HELPER(isDestroyed)
-    TEXTURE_OR_VIEW_HELPER(depthOrArrayLayers)
-    TEXTURE_OR_VIEW_HELPER(baseArrayLayer)
-    TEXTURE_OR_VIEW_HELPER(baseMipLevel)
-    TEXTURE_OR_VIEW_HELPER(parentTexture)
-    TEXTURE_OR_VIEW_HELPER(parentRelativeSlice)
-    TEXTURE_OR_VIEW_HELPER(previouslyCleared)
-    TEXTURE_OR_VIEW_HELPER_NONCONST(setPreviouslyCleared)
-    TEXTURE_OR_VIEW_HELPER(texture)
-    TEXTURE_OR_VIEW_HELPER(isValid)
-    TEXTURE_OR_VIEW_HELPER(usage)
-    TEXTURE_OR_VIEW_HELPER(mipLevelCount)
-    TEXTURE_OR_VIEW_HELPER(arrayLayerCount)
-
-    TEXTURE_OR_VIEW_HELPER_REF(apiParentTexture)
-    TEXTURE_OR_VIEW_HELPER_REF(device)
-
-    void setCommandEncoder(CommandEncoder& encoder)
-    {
-        m_view ? RefPtr { m_view }->setCommandEncoder(encoder) : RefPtr { m_texture }->setCommandEncoder(encoder);
-    }
-
-#undef TEXTURE_OR_VIEW_INVOKE
-#undef TEXTURE_OR_VIEW_HELPER
-#undef TEXTURE_OR_VIEW_HELPER_REF
-#undef TEXTURE_OR_VIEW_HELPER_NONCONST
-
-private:
-    RefPtr<Texture> m_texture;
-    RefPtr<TextureView> m_view;
-};
-
-static bool isRenderableTextureView(const auto& texture)
-{
-    return (texture.usage() & WGPUTextureUsage_RenderAttachment) && (texture.is2DTexture() || texture.is2DArrayTexture() || texture.is3DTexture()) && texture.mipLevelCount() == 1 && texture.arrayLayerCount() <= 1;
-}
-
 Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescriptor& descriptor)
 {
 #if ENABLE(WEBGPU_SWIFT)
@@ -590,21 +533,21 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         return RenderPassEncoder::createInvalid(*this, m_device, @"command buffer has already been committed");
 
     MTLRenderPassDescriptor* mtlDescriptor = [MTLRenderPassDescriptor new];
-    std::pair<id<MTLCounterSampleBuffer>, uint32_t> counterSampleBuffer;
+    QuerySet::CounterSampleBuffer counterSampleBuffer;
     if (auto* wgpuTimestampWrites = descriptor.timestampWrites) {
         Ref timestampWrites = protectedFromAPI(wgpuTimestampWrites->querySet);
         timestampWrites->setCommandEncoder(*this);
         counterSampleBuffer = timestampWrites->counterSampleBufferWithOffset();
     }
 
-    if (m_device->enableEncoderTimestamps() || counterSampleBuffer.first) {
-        if (counterSampleBuffer.first) {
-            mtlDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer.first;
-            mtlDescriptor.sampleBufferAttachments[0].startOfVertexSampleIndex = timestampWriteIndex(descriptor.timestampWrites->beginningOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second);
-            mtlDescriptor.sampleBufferAttachments[0].endOfVertexSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second);
-            mtlDescriptor.sampleBufferAttachments[0].startOfFragmentSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second);
-            mtlDescriptor.sampleBufferAttachments[0].endOfFragmentSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.second);
-            m_device->trackTimestampsBuffer(m_commandBuffer, counterSampleBuffer.first);
+    if (m_device->enableEncoderTimestamps() || counterSampleBuffer.buffer) {
+        if (counterSampleBuffer.buffer) {
+            mtlDescriptor.sampleBufferAttachments[0].sampleBuffer = counterSampleBuffer.buffer;
+            mtlDescriptor.sampleBufferAttachments[0].startOfVertexSampleIndex = timestampWriteIndex(descriptor.timestampWrites->beginningOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset);
+            mtlDescriptor.sampleBufferAttachments[0].endOfVertexSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset);
+            mtlDescriptor.sampleBufferAttachments[0].startOfFragmentSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset);
+            mtlDescriptor.sampleBufferAttachments[0].endOfFragmentSampleIndex = timestampWriteIndex(descriptor.timestampWrites->endOfPassWriteIndex, MTLCounterDontSample, counterSampleBuffer.offset);
+            m_device->trackTimestampsBuffer(m_commandBuffer, counterSampleBuffer.buffer);
         } else {
             mtlDescriptor.sampleBufferAttachments[0].sampleBuffer = m_device->timestampsBuffer(m_commandBuffer, 4);
             mtlDescriptor.sampleBufferAttachments[0].startOfVertexSampleIndex = 0;
@@ -707,7 +650,7 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
             textureToClear = mtlAttachment.texture;
 
         auto compositorTexture = texture;
-        if (attachment.resolveTarget) {
+        if (attachment.resolveTarget || attachment.resolveTexture) {
             auto resolveTarget = attachment.resolveTarget ? TextureOrTextureView(fromAPI(attachment.resolveTarget)) : TextureOrTextureView(fromAPI(attachment.resolveTexture));
             compositorTexture = resolveTarget;
 
@@ -734,10 +677,11 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
         if (textureToClear) {
             TextureAndClearColor *textureWithResolve = [[TextureAndClearColor alloc] initWithTexture:textureToClear];
             [attachmentsToClear setObject:textureWithResolve forKey:@(i)];
-            if (textureToClear)
-                texture.setPreviouslyCleared();
+            texture.setPreviouslyCleared();
             if (attachment.resolveTarget)
                 protectedFromAPI(attachment.resolveTarget)->setPreviouslyCleared();
+            if (attachment.resolveTexture)
+                protectedFromAPI(attachment.resolveTexture)->setPreviouslyCleared();
         }
     }
 
@@ -854,8 +798,10 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     }
 
     if (attachmentsToClear.count || depthStencilAttachmentToClear) {
-        if (const auto* attachment = descriptor.depthStencilAttachment; depthStencilAttachmentToClear)
-            protectedFromAPI(attachment->view)->setPreviouslyCleared();
+        if (const auto* attachment = descriptor.depthStencilAttachment; depthStencilAttachmentToClear) {
+            auto textureView = attachment->view ? TextureOrTextureView(fromAPI(attachment->view)) : TextureOrTextureView(fromAPI(attachment->texture));
+            textureView.setPreviouslyCleared();
+        }
 
         runClearEncoder(attachmentsToClear, depthStencilAttachmentToClear, depthAttachmentToClear, stencilAttachmentToClear);
     }
@@ -2325,8 +2271,8 @@ void CommandEncoder::resolveQuerySet(const QuerySet& querySet, uint32_t firstQue
         [m_commandBuffer encodeSignalEvent:workaround value:1];
         [m_commandBuffer encodeWaitForEvent:workaround value:1];
         ensureBlitCommandEncoder();
-        std::pair<id<MTLCounterSampleBuffer>, uint32_t> counterSampleBuffer = querySet.counterSampleBufferWithOffset();
-        [m_blitCommandEncoder resolveCounters:counterSampleBuffer.first inRange:NSMakeRange(firstQuery + counterSampleBuffer.second, queryCount) destinationBuffer:destination.buffer() destinationOffset:destinationOffset];
+        auto counterSampleBuffer = querySet.counterSampleBufferWithOffset();
+        [m_blitCommandEncoder resolveCounters:counterSampleBuffer.buffer inRange:NSMakeRange(firstQuery + counterSampleBuffer.offset, queryCount) destinationBuffer:destination.buffer() destinationOffset:destinationOffset];
         break;
     }
     default:
@@ -2368,17 +2314,64 @@ void CommandEncoder::lock(bool shouldLock)
         setExistingEncoder(nil);
 }
 
-size_t CommandEncoder::computeSize(Vector<uint64_t>& container, const Device& device)
+size_t CommandEncoder::computeSize(TrackedResourceContainer& container, const Device& device)
 {
-    container.removeAllMatching([&](auto commandEncoder) {
+    container.removeIf([&](auto commandEncoder) {
         return !device.commandEncoderFromIdentifier(commandEncoder);
     });
     return container.size();
 }
 
-void CommandEncoder::trackEncoder(CommandEncoder& commandEncoder, Vector<uint64_t>& encoderContainer)
+void CommandEncoder::trackEncoder(TrackedResourceContainer& encoderContainer)
 {
-    encoderContainer.append(commandEncoder.uniqueId());
+    encoderContainer.add(uniqueId());
+}
+
+void CommandEncoder::clearTracking()
+{
+    auto identifier = uniqueId();
+    for (auto& resource : m_trackedBuffers)
+        resource->removeEncoder(identifier);
+    for (auto& resource : m_trackedTextures)
+        resource->removeEncoder(identifier);
+    for (auto& resource : m_trackedTextureViews)
+        resource->removeEncoder(identifier);
+    for (auto& resource : m_trackedExternalTextures)
+        resource->removeEncoder(identifier);
+    for (auto& resource : m_trackedQuerySets)
+        resource->removeEncoder(identifier);
+
+    m_trackedBuffers.clear();
+    m_trackedTextures.clear();
+    m_trackedTextureViews.clear();
+    m_trackedExternalTextures.clear();
+    m_trackedQuerySets.clear();
+}
+
+void CommandEncoder::trackEncoderForBuffer(const Buffer& buffer, TrackedResourceContainer& encoderContainer)
+{
+    trackEncoder(encoderContainer);
+    m_trackedBuffers.append(&buffer);
+}
+void CommandEncoder::trackEncoderForTexture(const Texture& texture, TrackedResourceContainer& encoderContainer)
+{
+    trackEncoder(encoderContainer);
+    m_trackedTextures.append(&texture);
+}
+void CommandEncoder::trackEncoderForTextureView(const TextureView& textureView, TrackedResourceContainer& encoderContainer)
+{
+    trackEncoder(encoderContainer);
+    m_trackedTextureViews.append(&textureView);
+}
+void CommandEncoder::trackEncoderForExternalTexture(const ExternalTexture& externalTexture, TrackedResourceContainer& encoderContainer)
+{
+    trackEncoder(encoderContainer);
+    m_trackedExternalTextures.append(&externalTexture);
+}
+void CommandEncoder::trackEncoderForQuerySet(const QuerySet& querySet, TrackedResourceContainer& encoderContainer)
+{
+    trackEncoder(encoderContainer);
+    m_trackedQuerySets.append(&querySet);
 }
 
 void CommandEncoder::trackEncoder(CommandEncoder& commandEncoder, HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>& encoderContainer)
@@ -2410,7 +2403,7 @@ bool CommandEncoder::useResidencySet(id<MTLResidencySet> residencySet)
 
 void CommandEncoder::skippedDrawIndexedValidation(uint64_t bufferIdentifier, DrawIndexCacheContainerIterator it)
 {
-    m_skippedDrawIndexedValidationKeys.add(bufferIdentifier, Vector<DrawIndexCacheContainerValue> { }).iterator->value.append(DrawIndexCacheContainerValue(it->key));
+    m_skippedDrawIndexedValidationKeys.add(bufferIdentifier, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>> { }).iterator->value.append(std::make_pair(DrawIndexCacheContainerValue(it->key.key()), it->value));
 }
 
 void CommandEncoder::rebindSamplersPreCommit(const BindGroup* group)
