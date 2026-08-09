@@ -5,7 +5,7 @@
  * Integration (minimal, 3 touch-points in the tree):
  *   1) webkit-build: link LuaJIT (set env LUAJIT_DIR), add this file to MiniBrowser_SOURCES.
  *   2) WebKitBrowserWindow.cpp : after clients are set, call
- *        extern "C" void MiniBrowserLuaInit(void* page, void* hwnd);
+ *        extern "C" int MiniBrowserLuaInit(WKPageRef page, HWND hwnd);
  *        extern "C" void MiniBrowserLuaOnEvent(const char* type, const char* json);
  *        extern "C" void MiniBrowserLuaShutdown();
  *      (init once at page creation; forward title/url/load events via MiniBrowserLuaOnEvent;
