@@ -53,6 +53,11 @@
 #include <sstream>
 #include <vector>
 
+// Lua bridge entry points (implemented in MiniBrowserLua.cpp; compiled only when LuaJIT present).
+extern "C" int  MiniBrowserLuaInit(void* page, void* hwnd);
+extern "C" void MiniBrowserLuaOnEvent(const char* type, const char* json);
+extern "C" void MiniBrowserLuaShutdown();
+
 std::wstring createString(WKURLRef wkURL)
 {
     if (!wkURL)
@@ -205,6 +210,8 @@ WebKitBrowserWindow::WebKitBrowserWindow(BrowserWindowClient& client, WKPageConf
     updateProxySettings();
 
     adjustScaleFactors();
+
+    MiniBrowserLuaInit(WKViewGetPage(m_view.get()), m_hMainWnd);
 }
 
 void WebKitBrowserWindow::updateProxySettings()
@@ -490,6 +497,10 @@ void WebKitBrowserWindow::didChangeTitle(const void* clientInfo)
     WKRetainPtr<WKStringRef> title = adoptWK(WKPageCopyTitle(page));
     std::wstring titleString = createString(title.get()) + L" [WebKit]";
     SetWindowText(thisWindow.m_hMainWnd, titleString.c_str());
+
+    auto rawTitle = createString(title.get());
+    std::string t = createUTF8String(rawTitle.c_str(), rawTitle.length());
+    MiniBrowserLuaOnEvent("title", t.c_str());
 }
 
 void WebKitBrowserWindow::didChangeIsLoading(const void* clientInfo)
@@ -511,6 +522,10 @@ void WebKitBrowserWindow::didChangeActiveURL(const void* clientInfo)
     auto page = WKViewGetPage(thisWindow.m_view.get());
     WKRetainPtr<WKURLRef> url = adoptWK(WKPageCopyActiveURL(page));
     thisWindow.m_client.activeURLChanged(createString(url.get()));
+
+    auto rawURL = createString(url.get());
+    std::string u = createUTF8String(rawURL.c_str(), rawURL.length());
+    MiniBrowserLuaOnEvent("activeURL", u.c_str());
 }
 
 void WebKitBrowserWindow::decidePolicyForNavigationResponse(WKPageRef, WKNavigationResponseRef navigationResponse, WKFramePolicyListenerRef listener, WKTypeRef, const void* clientInfo)
