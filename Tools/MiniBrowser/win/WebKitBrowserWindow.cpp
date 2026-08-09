@@ -54,7 +54,7 @@
 #include <vector>
 
 // Lua bridge entry points (implemented in MiniBrowserLua.cpp; compiled only when LuaJIT present).
-extern "C" int  MiniBrowserLuaInit(void* page, void* hwnd);
+extern "C" int  MiniBrowserLuaInit(WKPageRef page, HWND hwnd);
 extern "C" void MiniBrowserLuaOnEvent(const char* type, const char* json);
 extern "C" void MiniBrowserLuaShutdown();
 

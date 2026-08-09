@@ -35,7 +35,8 @@
 
 #ifndef MINIBROWSER_LUAJIT
 // LuaJIT not in this build: no-op entry points keep the tree linkable without Lua.
-extern "C" int  MiniBrowserLuaInit(void* page, void* hwnd) { (void)page; (void)hwnd; return 0; }
+// (WKPageRef/HWND are in scope here because WebKit2_C.h + windows.h are included above.)
+extern "C" int  MiniBrowserLuaInit(WKPageRef page, HWND hwnd) { (void)page; (void)hwnd; return 0; }
 extern "C" void MiniBrowserLuaOnEvent(const char* t, const char* j) { (void)t; (void)j; }
 extern "C" void MiniBrowserLuaShutdown(void) {}
 #else
@@ -136,7 +137,6 @@ namespace {
     // forward
     bool executeJob(Job& job);
     void runLuaMain(Bridge&);
-    void enableLuaIfRequested();
 }
 
 namespace {
@@ -268,7 +268,8 @@ namespace {
     bool registerMsgClass() {
         static bool done = false;
         if (done) return true;
-        WNDCLASSEXW wc = { sizeof(wc) };
+        WNDCLASSEXW wc = { };
+        wc.cbSize = sizeof(wc);
         wc.lpfnWndProc = LuaMsgWndProc;
         wc.lpszClassName = L"MiniBrowserLuaMsg";
         if (!RegisterClassExW(&wc)) {
@@ -374,7 +375,7 @@ namespace {
         return luaJob(L, J_SET_FEATURE, key, on ? 1 : 0, false);
     }
     static int luab_quit(lua_State* L) { return luaJob(L, J_QUIT, nullptr, 0, false); }
-    static int luab_pump(lua_State* L) { pumpEvents(g_bridge); return 0; }
+    static int luab_pump(lua_State* L) { (void)L; pumpEvents(g_bridge); return 0; }
 
     static int luab_on(lua_State* L);   // defined below
 
@@ -483,12 +484,12 @@ namespace {
     }
 }
 
-extern "C" int MiniBrowserLuaInit(void* page, void* hwnd) {
+extern "C" int MiniBrowserLuaInit(WKPageRef page, HWND hwnd) {
     if (cmdlineArgValue("lua").empty())
         return 0;                 // not requested -> stay disabled, zero behavior change
     bool first = !g_bridge.enabled;
-    g_bridge.pageRaw = page;
-    g_bridge.mainHwnd = (HWND)hwnd;
+    g_bridge.pageRaw = (void*)page;
+    g_bridge.mainHwnd = hwnd;
     g_bridge.enabled = true;
     if (first) {
         createMsgWindow(g_bridge);
