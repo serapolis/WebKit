@@ -1,4 +1,4 @@
-name: WebKit Windows Build
+name: WebKitWinCairoBuild
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ wpewebkit-2.49.4-branch ]
 
 jobs:
-  WenKit-Build-For-Release:
+  Building:
     runs-on: windows-latest
     
     steps:
@@ -23,7 +23,7 @@ jobs:
         vs-version: latest
         msbuild-architecture: x64
 
-    - name: Build LuaJIT (embedded scripting bridge)
+    - name: Prepare LuaJIT
       run: |
         git clone --depth 1 https://github.com/LuaJIT/LuaJIT.git C:\LuaJIT
         set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
