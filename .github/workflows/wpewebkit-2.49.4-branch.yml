@@ -104,6 +104,17 @@ jobs:
         $buildScript | Out-File -FilePath "webkit-build.ps1" -Encoding UTF8
       shell: powershell
       
+    - name: Build LuaJIT (embedded scripting bridge)
+      run: |
+        git clone --depth 1 --branch v2.0.5 https://github.com/LuaJIT/LuaJIT.git C:\LuaJIT
+        set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+        for /F "usebackq delims=" %%I in (`"%VSWHERE%" -latest -property installationPath`) do set "VSPATH=%%I"
+        call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+        cd /d C:\LuaJIT\src
+        call msvcbuild
+        echo LUAJIT_DIR=C:\LuaJIT\src>>%GITHUB_ENV%
+      shell: cmd
+
     - name: Setup WebKit environment and build
       run: |
         # Get VCPKG_ROOT from environment
