@@ -40,11 +40,9 @@ extern "C" void MiniBrowserLuaOnEvent(const char* t, const char* j) { (void)t; (
 extern "C" void MiniBrowserLuaShutdown(void) {}
 #else
 #include <lua.hpp>
-#endif
 
-using WK::WKRetainPtr;
-using WK::adoptWK;
-
+// NOTE: WKRetainPtr and adoptWK are already imported into the global namespace
+// by <WebKit/WKRetainPtr.h> (via "using WebKit::WKRetainPtr; using WebKit::adoptWK;").
 namespace {
     // ---- generic helpers ----
     std::string utf8FromWide(const wchar_t* s, int len) {
@@ -82,7 +80,7 @@ namespace {
     }
     std::string wkURLToUTF8(WKURLRef u) {
         if (!u) return {};
-        return wkStringToUTF8(WKURLCopyString(u));
+        return wkStringToUTF8(adoptWK(WKURLCopyString(u)).get());
     }
 
     // job kind enum
@@ -102,8 +100,9 @@ namespace {
         JobKind kind = J_NAV;
         std::string s;   // url / script / ua string / feature key
         double d = 0;    // zoom factor / bool-as-double
+        bool set = false;// true = "write" op, false = "read" op (settings)
         bool done = false;
-        bool ok = false;
+        bool ok = false; // success flag only
         std::string result;     // textual result
         std::string error;
     };
@@ -164,10 +163,11 @@ namespace {
         return "null";
     }
 
-    void evalCb(WKTypeRef result, WKErrorRef, void* ctx) {
+    void evalCb(WKTypeRef result, WKErrorRef error, void* ctx) {
         Job* job = (Job*)ctx;
-        job->ok = true;
-        job->result = wkTypeToString(result);
+        job->ok = (error == nullptr);
+        job->result = error ? "" : wkTypeToString(result);
+        job->error = error ? "js error" : "";
         signalDone(g_bridge, *job);
     }
     void contentsCb(WKStringRef text, WKErrorRef, void* ctx) {
@@ -183,14 +183,15 @@ namespace {
         Bridge& b = g_bridge;
         WKPageRef page = (WKPageRef)b.pageRaw;
         bool sync = true;
+        job.ok = true;   // optimistic success; async callbacks / error paths override
         switch (job.kind) {
         case J_NAV:        WKPageLoadURL(page, makeWKURL(job.s).get()); break;
         case J_BACK:       WKPageGoBack(page); break;
         case J_FORWARD:    WKPageGoForward(page); break;
         case J_RELOAD:     WKPageReload(page); break;
         case J_STOP:       WKPageStopLoading(page); break;
-        case J_URL:        job.result = wkURLToUTF8(WKPageCopyActiveURL(page)); break;
-        case J_TITLE:      job.result = wkStringToUTF8(WKPageCopyTitle(page)); break;
+        case J_URL:        job.result = wkURLToUTF8(adoptWK(WKPageCopyActiveURL(page)).get()); break;
+        case J_TITLE:      job.result = wkStringToUTF8(adoptWK(WKPageCopyTitle(page)).get()); break;
         case J_CONTENTS:   WKPageGetContentsAsString(page, &job, contentsCb); sync = false; break;
         case J_EVAL:
         case J_EXEC_SYNC:  WKPageEvaluateJavaScriptInMainFrame(page, makeWKString(job.s).get(), &job, evalCb); sync = false; break;
@@ -205,21 +206,21 @@ namespace {
         case J_SCRIPT_ENABLED: {
             auto conf = adoptWK(WKPageCopyPageConfiguration(page));
             auto pref = WKPageConfigurationGetPreferences(conf.get());
-            if (job.ok) WKPreferencesSetJavaScriptEnabled(pref, job.d != 0);
+            if (job.set) WKPreferencesSetJavaScriptEnabled(pref, job.d != 0);
             else { job.result = WKPreferencesGetJavaScriptEnabled(pref) ? "true" : "false"; }
             break;
         }
         case J_DEVTOOLS: {
             auto conf = adoptWK(WKPageCopyPageConfiguration(page));
             auto pref = WKPageConfigurationGetPreferences(conf.get());
-            if (job.ok) WKPreferencesSetDeveloperExtrasEnabled(pref, job.d != 0);
+            if (job.set) WKPreferencesSetDeveloperExtrasEnabled(pref, job.d != 0);
             else { job.result = WKPreferencesGetDeveloperExtrasEnabled(pref) ? "true" : "false"; }
             break;
         }
         case J_IMAGES: {
             auto conf = adoptWK(WKPageCopyPageConfiguration(page));
             auto pref = WKPageConfigurationGetPreferences(conf.get());
-            if (job.ok) WKPreferencesSetLoadsImagesAutomatically(pref, job.d != 0);
+            if (job.set) WKPreferencesSetLoadsImagesAutomatically(pref, job.d != 0);
             else { job.result = WKPreferencesGetLoadsImagesAutomatically(pref) ? "true" : "false"; }
             break;
         }
@@ -310,7 +311,7 @@ namespace {
         j.kind = k;
         j.s = s ? s : "";
         j.d = d;
-        j.ok = isSet;
+        j.set = isSet;
         dispatch(g_bridge, j);
         if (j.ok) {
             lua_pushstring(L, j.result.c_str());
@@ -326,9 +327,12 @@ namespace {
         return "(function(){'use strict';var __r=(function(){return (" +
                std::string(expr) + ");})();return JSON.stringify(__r===undefined?null:__r);})()";
     }
+    // Wrap a user "function body" (may use `return`) inside an inner IIFE; capture its value as JSON.
+    // args: optional ES6 default-parameter list, e.g. "a = 3, b = 4".
     static std::string wrapFunction(const char* body, const char* args) {
-        return "(function(" + std::string(args) + "){'use strict';var __r=" +
-               std::string(body) + ";return JSON.stringify(__r===undefined?null:__r);})()";
+        std::string inner = (args && *args) ? std::string(args) : "";
+        return "(function(){'use strict';var __r=(function(" + inner + "){\n" +
+               std::string(body) + "\n})();return JSON.stringify(__r===undefined?null:__r);})()";
     }
 
     static int luab_nav(lua_State* L) { const char* u = luaL_checkstring(L, 1); return luaJob(L, J_NAV, u, 0, false); }
