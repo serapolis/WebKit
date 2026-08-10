@@ -24,6 +24,8 @@
 #include <windows.h>
 #include <WebKit/WebKit2_C.h>
 #include <WebKit/WKPreferencesRefPrivate.h>
+#include <WebKit/WKWebsiteDataStoreRef.h>
+#include <WebKit/WKWebsiteDataStoreRefCurl.h>
 #include <WebKit/WKRetainPtr.h>
 
 #include <string>
@@ -68,9 +70,11 @@ namespace {
     std::string wkStringToUTF8(WKStringRef s) {
         if (!s) return {};
         size_t len = WKStringGetLength(s);
-        std::string out(len + 1, '\0');
-        size_t n = WKStringGetUTF8CString(s, &out[0], out.size());
+        std::string out(len * 3 + 16, '\0');   // UTF-8 can be up to 3 bytes/UTF-16 unit
+        size_t n = WKStringGetUTF8CString(s, &out[0], out.size() - 1);
+        if (n > out.size() - 1) n = out.size() - 1;
         out.resize(n);
+        if (!out.empty() && out.back() == '\0') out.pop_back();   // strip trailing NUL if any
         return out;
     }
     WKRetainPtr<WKStringRef> makeWKString(const std::string& s) {
@@ -93,6 +97,7 @@ namespace {
         J_ZOOM, J_GET_ZOOM, J_ZOOM_RESET,
         J_SCRIPT_ENABLED, J_DEVTOOLS, J_IMAGES,
         J_FEATURES, J_SET_FEATURE,
+        J_PROXY,
         J_QUIT
     };
 
@@ -250,6 +255,21 @@ namespace {
             WKPreferencesSetExperimentalFeatureForKey(pref, job.d != 0, makeWKString(job.s).get());
             break;
         }
+        case J_PROXY: {
+            WKWebsiteDataStoreRef ds = WKPageGetWebsiteDataStore(page);
+            int mode = (int)job.d;   // 0=disable, 1=default, 2=custom
+            if (mode == 0)
+                WKWebsiteDataStoreDisableNetworkProxySettings(ds);
+            else if (mode == 1)
+                WKWebsiteDataStoreEnableDefaultNetworkProxySettings(ds);
+            else if (mode == 2) {
+                size_t tab = job.s.find('\t');
+                std::string url = job.s.substr(0, tab);
+                std::string excl = (tab == std::string::npos) ? "" : job.s.substr(tab + 1);
+                WKWebsiteDataStoreEnableCustomNetworkProxySettings(ds, makeWKURL(url).get(), makeWKString(excl).get());
+            }
+            break;
+        }
         case J_QUIT: PostMessageW(b.mainHwnd, WM_CLOSE, 0, 0); break;
         }
         return sync;
@@ -315,7 +335,7 @@ namespace {
         j.set = isSet;
         dispatch(g_bridge, j);
         if (j.ok) {
-            lua_pushstring(L, j.result.c_str());
+            lua_pushlstring(L, j.result.data(), j.result.size());   // survives embedded NUL
             return 1;
         }
         lua_pushnil(L);
@@ -325,15 +345,17 @@ namespace {
 
     // Wrap a user expression so eval always returns a JSON string.
     static std::string wrapEval(const char* expr) {
-        return "(function(){'use strict';var __r=(function(){return (" +
-               std::string(expr) + ");})();return JSON.stringify(__r===undefined?null:__r);})()";
+        return "(function(){'use strict';try{var __r=(function(){return (" +
+               std::string(expr) + ");})();return JSON.stringify(__r===undefined?null:__r);}"
+               "catch(__e){return JSON.stringify({__lua_err__:String(__e&&__e.message||__e)});}})()";
     }
     // Wrap a user "function body" (may use `return`) inside an inner IIFE; capture its value as JSON.
     // args: optional ES6 default-parameter list, e.g. "a = 3, b = 4".
     static std::string wrapFunction(const char* body, const char* args) {
         std::string inner = (args && *args) ? std::string(args) : "";
-        return "(function(){'use strict';var __r=(function(" + inner + "){\n" +
-               std::string(body) + "\n})();return JSON.stringify(__r===undefined?null:__r);})()";
+        return "(function(){'use strict';try{var __r=(function(" + inner + "){\n" +
+               std::string(body) + "\n})();return JSON.stringify(__r===undefined?null:__r);}"
+               "catch(__e){return JSON.stringify({__lua_err__:String(__e&&__e.message||__e)});}})()";
     }
 
     static int luab_nav(lua_State* L) { const char* u = luaL_checkstring(L, 1); return luaJob(L, J_NAV, u, 0, false); }
@@ -344,12 +366,34 @@ namespace {
     static int luab_url(lua_State* L) { return luaJob(L, J_URL, nullptr, 0, false); }
     static int luab_title(lua_State* L) { return luaJob(L, J_TITLE, nullptr, 0, false); }
     static int luab_contents(lua_State* L) { return luaJob(L, J_CONTENTS, nullptr, 0, false); }
-    static int luab_eval(lua_State* L) { std::string s = wrapEval(luaL_checkstring(L, 1)); return luaJob(L, J_EVAL, s.c_str(), 0, false); }
+    // Eval/execute path: JS errors surface as {"__lua_err__":"..."} from the wrapper -> nil,err.
+    static int runScriptJob(lua_State* L, const std::string& script) {
+        Job j;
+        j.id = g_bridge.nextId++;
+        j.kind = J_EXEC_SYNC;
+        j.s = script;
+        j.set = false;
+        dispatch(g_bridge, j);
+        if (!j.ok) { lua_pushnil(L); lua_pushstring(L, j.error.empty() ? "js error" : j.error.c_str()); return 2; }
+        std::string res = j.result;
+        static const std::string sent = "{\"__lua_err__\":";
+        if (res.compare(0, sent.size(), sent) == 0) {
+            size_t q1 = res.find('"', sent.size());
+            size_t q2 = res.rfind('"');
+            std::string msg = (q1 != std::string::npos && q2 > q1) ? res.substr(q1 + 1, q2 - q1 - 1) : "js error";
+            lua_pushnil(L);
+            lua_pushstring(L, msg.c_str());
+            return 2;
+        }
+        lua_pushlstring(L, res.data(), res.size());
+        return 1;
+    }
+
+    static int luab_eval(lua_State* L) { return runScriptJob(L, wrapEval(luaL_checkstring(L, 1))); }
     static int luab_execute(lua_State* L) {
         std::string body = luaL_optstring(L, 1, "return null");
         std::string args = luaL_optstring(L, 2, "");
-        std::string s = wrapFunction(body.c_str(), args.c_str());
-        return luaJob(L, J_EXEC_SYNC, s.c_str(), 0, false);
+        return runScriptJob(L, wrapFunction(body.c_str(), args.c_str()));
     }
     static int luab_set_ua(lua_State* L) { return luaJob(L, J_SET_UA, luaL_checkstring(L, 1), 0, false); }
     static int luab_get_ua(lua_State* L) { return luaJob(L, J_GET_UA, nullptr, 0, false); }
@@ -374,6 +418,14 @@ namespace {
         bool on = lua_toboolean(L, 2);
         return luaJob(L, J_SET_FEATURE, key, on ? 1 : 0, false);
     }
+    static int luab_proxy_disable(lua_State* L) { return luaJob(L, J_PROXY, "", 0, false); }
+    static int luab_proxy_default(lua_State* L) { return luaJob(L, J_PROXY, "", 1, false); }
+    static int luab_proxy_custom(lua_State* L) {
+        const char* url = luaL_checkstring(L, 1);
+        const char* excl = luaL_optstring(L, 2, "");
+        std::string s = std::string(url ? url : "") + "\t" + (excl ? excl : "");
+        return luaJob(L, J_PROXY, s.c_str(), 2, false);
+    }
     static int luab_quit(lua_State* L) { return luaJob(L, J_QUIT, nullptr, 0, false); }
     static int luab_pump(lua_State* L) { (void)L; pumpEvents(g_bridge); return 0; }
 
@@ -390,6 +442,8 @@ namespace {
             { "script_enabled", luab_script_enabled }, { "devtools_enabled", luab_devtools_enabled },
             { "images_enabled", luab_images_enabled },
             { "features", luab_features }, { "set_feature", luab_set_feature },
+            { "proxy_disable", luab_proxy_disable }, { "proxy_default", luab_proxy_default },
+            { "proxy_custom", luab_proxy_custom },
             { "on", luab_on }, { "pump_events", luab_pump }, { "quit", luab_quit },
             { nullptr, nullptr }
         };
@@ -421,17 +475,19 @@ namespace {
     static void dispatchEvent(lua_State* L, const std::string& type, const std::string& json) {
         if (!L) return;
         ensureEvTable(L);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, evTableRef);
-        lua_getfield(L, -1, type.c_str());
+        lua_rawgeti(L, LUA_REGISTRYINDEX, evTableRef);    // [table]
+        lua_getfield(L, -1, type.c_str());                // [table, func|nil]
         if (lua_isfunction(L, -1)) {
-            lua_pushstring(L, json.c_str());
-            if (lua_pcall(L, 1, 0, 0) != 0) {
+            lua_pushstring(L, json.c_str());              // [table, func, json]
+            if (lua_pcall(L, 1, 0, 0) != 0) {             // [table, err?]
                 const char* e = lua_tostring(L, -1);
                 fprintf(stderr, "[lua] %s\n", e ? e : "?");
-                lua_pop(L, 1);
-            }
+                lua_pop(L, 1);                            // [table]
+            }                                             // success: [table]
+        } else {
+            lua_pop(L, 1);                                // drop nil -> [table]
         }
-        lua_pop(L, 2);
+        lua_pop(L, 1);                                    // drop table -> balanced
     }
 
     void pumpEvents(Bridge& b) {
